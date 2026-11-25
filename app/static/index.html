@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#090b0a"><title>QUANT NEXUS</title>
+<style>
+:root{--bg:#090b0a;--panel:#111512;--line:#263329;--gold:#d6b45d;--green:#9cff57;--muted:#9aa69a}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 80% 0,#1b281b 0,transparent 45%),var(--bg);color:#f2f4ed;font:15px Inter,system-ui,sans-serif}
+header{display:flex;align-items:center;justify-content:space-between;padding:22px 5%;border-bottom:1px solid var(--line);gap:12px;flex-wrap:wrap}
+.brand{font-weight:900;letter-spacing:2px;color:var(--gold);font-size:20px}.pill{border:1px solid #547a3d;color:var(--green);padding:8px 12px;border-radius:30px;font-size:11px;letter-spacing:1px}
+main{max-width:1200px;margin:auto;padding:42px 5%}.eyebrow{color:var(--green);letter-spacing:3px;font-size:11px}h1{font-size:clamp(34px,6vw,64px);line-height:1.02;margin:14px 0;color:var(--gold)}.sub{color:var(--muted);max-width:650px;line-height:1.7}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin:34px 0}.card{background:linear-gradient(145deg,#151d17,#0e120f);border:1px solid var(--line);border-radius:14px;padding:20px}.card small{color:var(--muted)}.card h3{margin:10px 0;color:var(--green)}
+section{margin-top:34px}.section-title{color:var(--gold);letter-spacing:1px}.notice{border-left:3px solid var(--green);padding:14px 18px;background:#111a12;color:#b9c7b5;line-height:1.6}
+footer{padding:28px 5%;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+button{background:var(--green);border:0;border-radius:8px;padding:12px 18px;font-weight:800;cursor:pointer}#status{color:var(--green);margin-left:10px}
+</style></head><body>
+<header><div class="brand">◈ QUANT NEXUS</div><div class="pill">SIMULATION ONLY · LIVE DISABLED</div></header>
+<main><div class="eyebrow">MULTI-MARKET INTELLIGENCE PLATFORM</div><h1>See the market.<br>Read the signal.</h1>
+<p class="sub">A unified workspace for crypto, forex, equities, indices and commodities. Built for disciplined analysis and paper trading — real-money execution is not available.</p>
+<div class="grid">
+<div class="card"><small>MARKET COVERAGE</small><h3>05 Markets</h3><small>Crypto · Forex · Stocks · Indices · Commodities</small></div>
+<div class="card"><small>TRADE PRODUCTS</small><h3>Spot + Futures</h3><small>Analysis and simulated positions</small></div>
+<div class="card"><small>EXECUTION MODE</small><h3>Paper Trading</h3><small>Live trading permanently disabled in this build</small></div>
+<div class="card"><small>PLATFORM</small><h3>Web + Android</h3><small>Responsive web foundation; native Android client planned</small></div>
+</div>
+<section><h2 class="section-title">SYSTEM STATUS</h2><div class="notice">Market-data providers are not connected yet. Do not treat demo screens or future signals as live market recommendations.</div><p><button onclick="checkHealth()">Check system</button><span id="status"></span></p></section>
+</main><footer>QUANT NEXUS · Independent project · Simulation environment</footer>
+<script>async function checkHealth(){const s=document.getElementById('status');s.textContent='Checking…';try{const r=await fetch('/health');const d=await r.json();s.textContent=d.status==='ok'?'API online · LIVE TRADING DISABLED':'API unavailable'}catch(e){s.textContent='API unavailable'}}</script>
+</body></html>
