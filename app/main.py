@@ -142,7 +142,7 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = 30,
     tickers = (await bybit_get("/v5/market/tickers", {"category":category})).get("list", [])
     tickers.sort(key=lambda x: float(x.get("turnover24h") or 0), reverse=True)
     candidates = [x for x in tickers if x.get("symbol","").endswith("USDT")
-                  and float(x.get("turnover24h") or 0) >= min_turnover][:min(max(limit,1),60)]
+                  and float(x.get("turnover24h") or 0) >= min_turnover][:min(max(limit,1),256)]
     semaphore = asyncio.Semaphore(10)
     async def one(ticker):
         async with semaphore:
