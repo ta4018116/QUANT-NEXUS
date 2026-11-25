@@ -135,7 +135,7 @@ async def klines(symbol: str, category: str = "spot", interval: str = "15m", lim
     return analysis
 
 @app.get("/api/scan")
-async def scan(category: str = "spot", interval: str = "15m", limit: int = 30,
+async def scan(category: str = "spot", interval: str = "15m", limit: int = Query(30, ge=1, le=256),
                min_turnover: float = 0, direction: str = "all"):
     if category not in ("spot","linear") or interval not in INTERVALS:
         raise HTTPException(status_code=400, detail="Invalid scan configuration")
