@@ -26,10 +26,19 @@ INTERVALS = {"1m":"1", "3m":"3", "5m":"5", "15m":"15", "30m":"30",
              "1h":"60", "2h":"120", "4h":"240", "1d":"D", "1w":"W"}
 
 async def bybit_get(path: str, params: dict):
-    async with httpx.AsyncClient(timeout=TIMEOUT, headers={"User-Agent":"QUANT-NEXUS/1.0"}) as client:
-        response = await client.get(BYBIT + path, params=params)
-        response.raise_for_status()
-        payload = response.json()
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT, headers={"User-Agent":"QUANT-NEXUS/1.0"}) as client:
+            response = await client.get(BYBIT + path, params=params)
+            response.raise_for_status()
+            payload = response.json()
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="Market provider timed out; retry shortly") from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Market provider returned HTTP {exc.response.status_code}") from exc
+    except (httpx.RequestError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="Market provider connection or response error") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=502, detail="Market provider returned an invalid response")
     if payload.get("retCode") != 0:
         raise HTTPException(status_code=502, detail=f"Market provider: {payload.get('retMsg','unknown error')}")
     return payload.get("result", {})
@@ -139,7 +148,12 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
                min_turnover: float = 0, direction: str = "all"):
     if category not in ("spot","linear") or interval not in INTERVALS:
         raise HTTPException(status_code=400, detail="Invalid scan configuration")
-    tickers = (await bybit_get("/v5/market/tickers", {"category":category})).get("list", [])
+    try:
+        tickers = (await bybit_get("/v5/market/tickers", {"category":category})).get("list", [])
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Unable to retrieve market tickers") from exc
     tickers.sort(key=lambda x: float(x.get("turnover24h") or 0), reverse=True)
     candidates = [x for x in tickers if x.get("symbol","").endswith("USDT")
                   and float(x.get("turnover24h") or 0) >= min_turnover][:min(max(limit,1),256)]
