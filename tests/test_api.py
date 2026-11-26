@@ -431,3 +431,22 @@ def test_engine_registry_is_read_only_and_does_not_expose_live_order_routes(clie
     paths = {route.path for route in main.app.routes}
     assert "/api/engines" in paths
     assert not any("live-order" in path for path in paths)
+
+
+def test_responsive_card_dashboard_exposes_real_pages_opportunities_and_engine_registry(client):
+    html = client.get("/").text
+    assert 'id="dashboardHome"' in html
+    assert 'data-open-page="opportunities"' in html
+    assert 'data-open-page="orders"' in html
+    assert 'data-open-page="intelligence"' in html
+    assert "function openPage(key)" in html
+    assert "function renderOpportunityCards(items)" in html
+    assert "api('/api/engines')" in html
+    assert "أسلوب الدخول" in html
+    assert "وقف الخسارة" in html
+    assert "الهدف الأول" in html
+    assert "الهدف الثاني" in html
+    assert "QUANT NEXUS X responsive card workspace" in html
+    assert html.count("<script>") == 1
+    assert html.count("</script>") == 1
+    assert client.get("/api/engines").json()["live_trading_enabled"] is False

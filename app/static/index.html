@@ -116,25 +116,73 @@
   .signalrow { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 
+
+/* QUANT NEXUS X responsive card workspace */
+:root{--page-bg:#02070d}
+.dashboard-view .layout>.col>.panel{display:none}.dashboard-view .layout>.nav{display:none}.dashboard-home{margin:10px 8px 14px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.home-title{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 4px;font-weight:900;font-size:18px}
+.home-card{min-height:116px;text-align:right;padding:15px;border:1px solid #08738a;border-radius:14px;background:linear-gradient(145deg,#0a2230,#04101a);color:var(--white);box-shadow:0 0 18px #00cfff12;display:flex;flex-direction:column;justify-content:space-between;gap:8px;cursor:pointer;transition:.18s}
+.home-card:hover,.home-card:focus-visible{border-color:var(--green);box-shadow:0 0 18px #20ff8330;transform:translateY(-2px);outline:none}
+.home-card b{font-size:15px}.home-card small{color:var(--muted);line-height:1.6}.home-card .card-icon{font-size:25px;color:var(--cyan)}
+.page-toolbar{display:none;margin:8px;padding:10px;border:1px solid var(--line);border-radius:12px;background:#061522;align-items:center;justify-content:space-between;gap:10px}
+.page-mode .page-toolbar{display:flex}.page-mode .dashboard-home{display:none}
+.page-mode .layout{display:block;min-height:50vh}
+.page-mode .layout>.col{display:contents}
+.page-mode .layout>.col>.panel{display:none}
+.page-mode .layout>.col>.panel.page-visible{display:block;max-width:1100px;margin:0 auto 12px}
+.page-mode .layout>.nav{display:none}
+.page-mode .stats{display:none}
+.page-mode .layout>.col>.panel.page-visible .body{min-width:0}
+.opportunity-card{border:1px solid #11617a;border-radius:12px;padding:12px;margin:8px 0;background:linear-gradient(130deg,#071b27,#030b13);cursor:pointer}
+.opportunity-card:hover{border-color:var(--green)}
+.opp-top{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.opp-score{font-size:20px;font-weight:900;color:var(--green)}
+.opp-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin-top:10px}
+.opp-grid div{padding:8px;background:#061522;border:1px solid #12384a;border-radius:8px;min-width:0}
+.opp-grid small{display:block;color:var(--muted);font-size:10px;margin-bottom:4px}
+.engine-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.engine-card{padding:11px;border:1px solid #12465a;border-radius:10px;background:#061522;min-width:0}
+.engine-card b{display:block;margin-bottom:6px}.engine-card small{display:block;color:var(--muted);line-height:1.6}
+.engine-status{display:inline-block;border-radius:20px;padding:4px 8px;font-size:10px;margin-bottom:7px}
+.engine-status.implemented{color:#20ff83;border:1px solid #20ff83}.engine-status.partial{color:#ffc928;border:1px solid #ffc928}.engine-status.planned{color:#c58bff;border:1px solid #a66bdf}
+.page-back{border:1px solid var(--green);background:#08251b;color:var(--green);border-radius:9px;padding:10px 14px;font-weight:900;min-height:42px}
+@media(max-width:900px){.dashboard-home{grid-template-columns:repeat(3,minmax(0,1fr))}.engine-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.dashboard-home{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:7px 5px}.home-card{min-height:105px;padding:11px;border-radius:11px}.home-card b{font-size:13px}.home-card small{font-size:10px}.home-card .card-icon{font-size:22px}.page-toolbar{margin:6px;padding:8px}.page-mode .layout{padding:0 6px}.opp-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.opp-score{font-size:18px}.engine-grid{grid-template-columns:1fr}.opportunity-card{padding:10px}.home-title{font-size:15px}}
+@media(max-width:360px){.dashboard-home{grid-template-columns:repeat(2,minmax(0,1fr))}.home-card{min-height:96px;padding:9px}}
 </style></head><body>
 <header class="top"><div class="brand">◈ QUANT <em>NEXUS</em><small>منصة التحليل الكمي الذكي</small></div><span class="pill mode">● PAPER TRADING (تجريبي)</span><span class="pill disabled-live">⛔ التداول الحقيقي: معطّل</span><button id="stop" class="btn stop" disabled>■ إيقاف</button><button id="run" class="btn run">▶ تشغيل الماسح</button><label>السوق <select id="category"><option value="spot">Spot</option><option value="linear">Futures</option></select></label><label>العمق <select id="depth"><option>32</option><option>64</option><option>128</option><option>256</option><option>AUTO</option></select></label><label>الإطار <select id="tf"><option>5m</option><option>15m</option><option>1h</option><option>4h</option><option>1d</option></select></label></header>
 <section class="stats"><div class="stat"><span>فرص قوية</span><b id="strong">—</b></div><div class="stat"><span>تحتاج تأكيد</span><b class="gold" id="confirm">—</b></div><div class="stat"><span>مخاطر مرتفعة</span><b class="negative" id="risk">—</b></div><div class="stat"><span>العملات المرصودة</span><b id="tracked">—</b></div><div class="stat"><span>حالة الماسح</span><b id="status">متوقف</b></div><div class="stat"><span>مصدر البيانات</span><b id="provider" style="font-size:14px">—</b></div></section>
-<main class="layout">
+<section id="dashboardHome" class="dashboard-home">
+<div class="home-title"><span>QUANT NEXUS X · مركز القيادة</span><span class="pill mode">● تداول تجريبي فقط</span></div>
+<button class="home-card" data-open-page="opportunities"><span class="card-icon">◎</span><b>فرص التداول</b><small>قوة الإشارة · الدخول · وقف الخسارة · الأهداف</small><strong id="homeOppCount">افتح الفرص ←</strong></button>
+<button class="home-card" data-open-page="scanner"><span class="card-icon">◉</span><b>ماسح السوق والرادار</b><small>مسح Spot وFutures وعمق 32–256 وAUTO</small><strong>فتح الماسح ←</strong></button>
+<button class="home-card" data-open-page="orders"><span class="card-icon">▣</span><b>الأوامر والمحفظة</b><small>شراء وبيع تجريبي ومتابعة الصفقات</small><strong>فتح التداول التجريبي ←</strong></button>
+<button class="home-card" data-open-page="chart"><span class="card-icon">▥</span><b>الرسم البياني</b><small>شموع ومؤشرات وتحليل العملة</small><strong>فتح الرسم ←</strong></button>
+<button class="home-card" data-open-page="coins"><span class="card-icon">◈</span><b>قائمة العملات والبث</b><small>الأسعار والتغيرات والترتيب</small><strong>فتح القائمة ←</strong></button>
+<button class="home-card" data-open-page="commands"><span class="card-icon">⌘</span><b>مكتبة الأوامر</b><small>أوامر التحليل الفني والسيولة والتدفق</small><strong>فتح المكتبة ←</strong></button>
+<button class="home-card" data-open-page="intelligence"><span class="card-icon">✧</span><b>QUANT BRAIN</b><small>سجل المحركات الخمسة عشر وحالة التنفيذ</small><strong>عرض المحركات ←</strong></button>
+<button class="home-card" data-open-page="history"><span class="card-icon">◷</span><b>سجل المسح والصفقات</b><small>نتائج المسح والتنفيذ التجريبي</small><strong>فتح السجل ←</strong></button>
+<button class="home-card" data-open-page="strategy"><span class="card-icon">⚗</span><b>Strategy Lab</b><small>اختبار تاريخي وتحليل متعدد الأطر</small><strong>فتح المختبر ←</strong></button>
+<button class="home-card" data-open-page="risk"><span class="card-icon">⚖</span><b>إدارة المخاطر</b><small>حجم المركز والمخاطرة والعائد</small><strong>فتح إدارة المخاطر ←</strong></button>
+<button class="home-card" data-open-page="settings"><span class="card-icon">⚙</span><b>إعدادات المسح</b><small>السوق والعمق والإطار الزمني والفلاتر</small><strong>فتح الإعدادات ←</strong></button>
+<button class="home-card" data-open-page="analysis"><span class="card-icon">◉</span><b>التحليل الفني</b><small>RSI وEMA والدعم والمقاومة</small><strong>فتح التحليل ←</strong></button>
+</section>
+<div id="pageToolbar" class="page-toolbar"><button class="page-back" id="pageBack">← لوحة التحكم</button><strong id="pageTitle">الصفحة</strong><span class="muted">QUANT NEXUS X</span></div><main class="layout">
 <section class="col"><div class="panel"><div class="head">▣ تحليل العملة المختارة <strong id="selectedName">—</strong></div><div class="body"><div class="bigprice" id="price">—</div><div id="change" class="positive">—</div><div class="kv"><div><small>الدعم</small><b id="support">—</b></div><div><small>المقاومة</small><b id="resistance">—</b></div><div><small>RSI (14)</small><b id="rsi">—</b></div><div><small>EMA 20 / 50</small><b id="ema">—</b></div><div><small>حجم التداول</small><b id="volume">—</b></div><div><small>قوة الإشارة</small><b id="score">—</b></div></div></div></div>
-<div class="panel"><div class="head">▤ سجل المسح <span class="muted">LIVE</span></div><div class="body" id="log"><div class="muted">شغّل الماسح لبدء تسجيل النتائج</div></div></div>
-<div class="panel"><div class="head">⌘ مكتبة الأوامر التحليلية</div><div class="body"><input id="cmdSearch" class="field" style="width:100%" placeholder="ابحث في الأوامر..."><div id="commands" class="commands"></div></div></div></section>
-<section class="col"><div class="panel"><div class="head">◎ رادار السوق الذكي <strong id="radarState">READY</strong></div><div class="radarwrap"><div class="radarinfo">قائمة المسح: <b id="pool">TOP 50</b><br>المطابقات: <b id="matches">0</b><br>قرب الدعم: <b id="near">0</b><br>حجم مرتفع: <b id="highvol">0</b><br>الحالة: <b class="positive" id="radarRun">READY</b></div><div class="radar" id="radar"><span class="radarlabel" style="top:48%;left:57%">SCAN</span></div><div class="filters"><b>⚑ فلاتر المسح</b><label><input type="checkbox" id="fSupport" checked> مناطق الدعم</label><label><input type="checkbox" id="fVolume" checked> حجم تداول مرتفع</label><label><input type="checkbox" id="fNear" checked> قرب الدعم ≤ 1%</label><label><input type="checkbox" id="fUnv"> حجم غير معتاد</label><label><input type="checkbox" id="fBreak"> اختراق النطاق</label><small class="muted">الإطار الزمني: <b id="tfLabel">5m</b></small></div></div></div>
-<div class="panel"><div class="charthead"><b>▥ <span id="chartSymbol">—</span> · <span id="chartTf">5m</span></b><b class="bigprice" style="font-size:21px" id="chartPrice">—</b></div><canvas id="chart" class="chart"></canvas><div class="indicators"><span class="tag" id="rsiTag">RSI —</span><span class="tag" id="emaTag">EMA —</span><span class="tag" id="macdTag">MACD —</span><span class="tag" id="vwapTag">VWAP —</span><span class="tag" id="rrTag">R:R —</span></div></div>
-<div class="panel"><div class="head">🎯 أفضل فرص اليوم <span class="muted">حسب التقييم</span></div><div class="body" id="signals"><div class="muted">لا توجد نتائج بعد</div></div></div></section>
-<section class="col"><div class="panel"><div class="head">◉ البث المباشر <span class="muted">(TOP SCAN)</span></div><div id="feed"><div class="body muted">بانتظار بيانات السوق...</div></div></div>
-<div class="panel"><div class="head">♧ تقييم الإشارة الذكي</div><div class="body"><div class="bigprice" id="aiScore">—</div><p id="aiText" class="muted">اختر عملة لعرض تحليلها وأسباب التقييم.</p><div id="reasons" class="muted" style="font-size:11px;margin:8px 0">أسباب التقييم ستظهر هنا.</div><div class="kv"><div><small>الدخول</small><b id="entry">—</b></div><div><small>وقف الخسارة</small><b id="sl">—</b></div><div><small>الهدف الأول</small><b id="tp1">—</b></div><div><small>الهدف الثاني</small><b id="tp2">—</b></div></div></div></div>
-<div class="panel"><div class="head">🎮 محفظة التداول التجريبي</div><div class="body"><small class="muted">الرصيد التجريبي</small><div class="bigprice" id="balance">$10,000</div><div class="kv"><div><small>صفقات مفتوحة</small><b id="openCount">0</b></div><div><small>الربح/الخسارة المحققة</small><b id="pnl">—</b></div><div><small>قيمة المحفظة التقديرية</small><b id="equity">—</b></div><div><small>الربح العائم بعد الرسوم</small><b id="unrealized">—</b></div></div><div style="margin-top:12px"><label class="muted">الكمية</label><input class="field" id="qty" type="number" min=".0001" step=".0001" value="1" style="width:100%"><label class="muted">رافعة Futures التجريبية</label><select class="field" id="leverage" style="width:100%" disabled><option value="1">1x</option><option value="2">2x</option><option value="3">3x</option><option value="4">4x</option><option value="5">5x</option><option value="6">6x</option><option value="7">7x</option><option value="8">8x</option><option value="9">9x</option><option value="10">10x</option></select></div><div class="actions" style="margin-top:9px"><button class="btn run" id="paperLong">شراء تجريبي</button><button class="btn stop" id="paperShort" disabled>بيع تجريبي (Futures)</button></div><div id="trades" class="muted" style="margin-top:10px;font-size:11px">لا توجد صفقات</div></div></div>
-<div class="panel" id="strategyLab"><div class="head">✧ QUANT INTELLIGENCE LAB <span class="muted">بيانات مباشرة</span></div><div class="body">
+<div class="panel" id="historyPanel"><div class="head">▤ سجل المسح <span class="muted">LIVE</span></div><div class="body" id="log"><div class="muted">شغّل الماسح لبدء تسجيل النتائج</div></div></div>
+<div class="panel" id="commandsPanel"><div class="head">⌘ مكتبة الأوامر التحليلية</div><div class="body"><input id="cmdSearch" class="field" style="width:100%" placeholder="ابحث في الأوامر..."><div id="commands" class="commands"></div></div></div></section>
+<section class="col"><div class="panel" id="radarPanel"><div class="head">◎ رادار السوق الذكي <strong id="radarState">READY</strong></div><div class="radarwrap"><div class="radarinfo">قائمة المسح: <b id="pool">TOP 50</b><br>المطابقات: <b id="matches">0</b><br>قرب الدعم: <b id="near">0</b><br>حجم مرتفع: <b id="highvol">0</b><br>الحالة: <b class="positive" id="radarRun">READY</b></div><div class="radar" id="radar"><span class="radarlabel" style="top:48%;left:57%">SCAN</span></div><div class="filters"><b>⚑ فلاتر المسح</b><label><input type="checkbox" id="fSupport" checked> مناطق الدعم</label><label><input type="checkbox" id="fVolume" checked> حجم تداول مرتفع</label><label><input type="checkbox" id="fNear" checked> قرب الدعم ≤ 1%</label><label><input type="checkbox" id="fUnv"> حجم غير معتاد</label><label><input type="checkbox" id="fBreak"> اختراق النطاق</label><small class="muted">الإطار الزمني: <b id="tfLabel">5m</b></small></div></div></div>
+<div class="panel" id="chartPanel"><div class="charthead"><b>▥ <span id="chartSymbol">—</span> · <span id="chartTf">5m</span></b><b class="bigprice" style="font-size:21px" id="chartPrice">—</b></div><canvas id="chart" class="chart"></canvas><div class="indicators"><span class="tag" id="rsiTag">RSI —</span><span class="tag" id="emaTag">EMA —</span><span class="tag" id="macdTag">MACD —</span><span class="tag" id="vwapTag">VWAP —</span><span class="tag" id="rrTag">R:R —</span></div></div>
+<div class="panel" id="opportunitiesPanel"><div class="head">🎯 فرص التداول · قوة الإشارة وخطة الدخول والخروج <span class="muted">حسب التقييم</span></div><div class="body" id="signals"><div class="muted">لا توجد نتائج بعد</div></div></div></section>
+<section class="col"><div class="panel" id="coinsPanel"><div class="head">◉ قائمة العملات · البث المباشر <span class="muted">(TOP SCAN)</span></div><div id="feed"><div class="body muted">بانتظار بيانات السوق...</div></div></div>
+<div class="panel" id="analysisPanel"><div class="head">♧ تقييم الإشارة الذكي</div><div class="body"><div class="bigprice" id="aiScore">—</div><p id="aiText" class="muted">اختر عملة لعرض تحليلها وأسباب التقييم.</p><div id="reasons" class="muted" style="font-size:11px;margin:8px 0">أسباب التقييم ستظهر هنا.</div><div class="kv"><div><small>الدخول</small><b id="entry">—</b></div><div><small>وقف الخسارة</small><b id="sl">—</b></div><div><small>الهدف الأول</small><b id="tp1">—</b></div><div><small>الهدف الثاني</small><b id="tp2">—</b></div></div></div></div>
+<div class="panel" id="ordersPanel"><div class="head">🎮 محفظة التداول التجريبي</div><div class="body"><small class="muted">الرصيد التجريبي</small><div class="bigprice" id="balance">$10,000</div><div class="kv"><div><small>صفقات مفتوحة</small><b id="openCount">0</b></div><div><small>الربح/الخسارة المحققة</small><b id="pnl">—</b></div><div><small>قيمة المحفظة التقديرية</small><b id="equity">—</b></div><div><small>الربح العائم بعد الرسوم</small><b id="unrealized">—</b></div></div><div style="margin-top:12px"><label class="muted">الكمية</label><input class="field" id="qty" type="number" min=".0001" step=".0001" value="1" style="width:100%"><label class="muted">رافعة Futures التجريبية</label><select class="field" id="leverage" style="width:100%" disabled><option value="1">1x</option><option value="2">2x</option><option value="3">3x</option><option value="4">4x</option><option value="5">5x</option><option value="6">6x</option><option value="7">7x</option><option value="8">8x</option><option value="9">9x</option><option value="10">10x</option></select></div><div class="actions" style="margin-top:9px"><button class="btn run" id="paperLong">شراء تجريبي</button><button class="btn stop" id="paperShort" disabled>بيع تجريبي (Futures)</button></div><div id="trades" class="muted" style="margin-top:10px;font-size:11px">لا توجد صفقات</div></div></div>
+<div class="panel" id="strategyPanel"><div class="head">⚗ Strategy Lab</div><div class="body">أدوات المختبر أدناه</div></div><div class="panel" id="strategyLab"><div class="head">✧ QUANT INTELLIGENCE LAB <span class="muted">بيانات مباشرة</span></div><div class="body">
 <div class="actions"><button class="btn" id="mtfBtn">تحليل الأطر الزمنية</button><button class="btn" id="liquidityBtn">تحليل السيولة</button><button class="btn" id="flowBtn">تدفق الصفقات</button><button class="btn run" id="backtestBtn">اختبار تاريخي</button></div>
 <div id="intelOutput" class="logrow muted" style="margin-top:12px">اختر عملة ثم شغّل أحد محركات التحليل.</div>
 <div id="backtestOutput" class="kv" style="margin-top:12px"></div>
 </div></div>
-<div class="panel"><div class="head">⚖️ حاسبة حجم الصفقة وإدارة المخاطر</div><div class="body">
+<div class="panel" id="enginesPanel"><div class="head">🧠 QUANT BRAIN · سجل المحركات الخمسة عشر <span class="muted" id="engineCounts">جارٍ التحميل...</span></div><div class="body"><div id="engineSummary" class="kv"></div><div id="engineGrid" class="engine-grid" style="margin-top:12px"><div class="muted">جارٍ تحميل سجل المحركات...</div></div><div id="engineError" class="muted" style="margin-top:10px"></div></div></div><div class="panel" id="riskPanel"><div class="head">⚖️ حاسبة حجم الصفقة وإدارة المخاطر</div><div class="body">
 <div class="kv"><div><small>قيمة المحفظة</small><input class="field" id="riskEquity" type="number" value="10000" min="1"></div><div><small>المخاطرة % (حد أقصى 2%)</small><input class="field" id="riskPct" type="number" value="1" min=".1" max="2" step=".1"></div><div><small>سعر الدخول</small><input class="field" id="riskEntry" type="number" min=".0000001"></div><div><small>وقف الخسارة</small><input class="field" id="riskStop" type="number" min=".0000001"></div></div>
 <button class="btn run" id="calcRisk" style="margin-top:10px;width:100%">احسب حجم الصفقة</button><div id="riskResult" class="muted" style="margin-top:9px">سيتم حساب الكمية والمبلغ المعرض للخطر.</div>
 </div></div></section>
@@ -206,6 +254,62 @@ $('stop').onclick=()=>{if(timer)clearInterval(timer);timer=null;$('run').disable
 $('tf').onchange=()=>{if(selected)selectCoin(selected);$('tfLabel').textContent=tf()};$('category').onchange=()=>{$('leverage').disabled=cat()==='spot';$('paperShort').disabled=cat()==='spot';$('paperShort').title=cat()==='spot'?'البيع على المكشوف متاح في Futures التجريبي فقط':'';if(selected)selectCoin(selected);if(timer)scan().catch(e=>log(e.message,false))};
 $('depth').onchange=()=>{if(timer){scan().catch(e=>log(e.message,false));scheduleScan()}};
 async function init(){try{let h=await api('/health');if(h.live_trading_enabled!==false)throw Error('حالة التداول الحقيقي غير آمنة');$('provider').textContent='متصل';let engine=await api('/api/engine/status');$('intelOutput').textContent='المحرك '+engine.engine_version+' · مزودو Crypto Spot/Futures · تخزين '+engine.paper_storage+(engine.durable_storage_configured?' دائم مهيأ':' محلي/قد يكون مؤقتاً')+' · التداول الحقيقي معطّل';}catch(e){log('فحص الاتصال: '+e.message,false)}await refreshPaper();try{let d=await api('/api/markets?category=spot&limit=10');$('provider').textContent=d.provider||'—';if(d.items?.length){let x=d.items[0];selected=x.symbol;$('selectedName').textContent=x.symbol;$('chartSymbol').textContent=x.symbol;$('price').textContent=fmt(x.lastPrice);$('change').textContent=fmt(x.change24h)+'%';selectCoin(x.symbol)}}catch(e){log('تعذر جلب السوق: '+e.message,false)}}
+
+const PAGE_CONFIG={
+dashboard:{title:'لوحة التحكم',panels:[]},
+opportunities:{title:'فرص التداول',panels:['opportunitiesPanel','analysisPanel']},
+scanner:{title:'ماسح السوق والرادار',panels:['radarPanel']},
+orders:{title:'الأوامر والمحفظة التجريبية',panels:['ordersPanel']},
+chart:{title:'الرسم البياني',panels:['chartPanel']},
+coins:{title:'قائمة العملات والبث المباشر',panels:['coinsPanel']},
+commands:{title:'مكتبة الأوامر التحليلية',panels:['commandsPanel']},
+intelligence:{title:'QUANT BRAIN · المحركات',panels:['enginesPanel']},
+history:{title:'سجل المسح والصفقات',panels:['historyPanel','ordersPanel']},
+strategy:{title:'Strategy Lab',panels:['strategyLab']},
+risk:{title:'إدارة المخاطر',panels:['riskPanel']},
+settings:{title:'إعدادات المسح والفلاتر',panels:['radarPanel']}
+,analysis:{title:'التحليل الفني',panels:['analysisPanel']}
+};
+function openPage(key){
+ const cfg=PAGE_CONFIG[key]||PAGE_CONFIG.dashboard,home=key==='dashboard';
+ document.body.classList.toggle('page-mode',!home);document.body.classList.toggle('dashboard-view',home);
+ $('dashboardHome').style.display=home?'grid':'none';
+ $('pageTitle').textContent=cfg.title;
+ document.querySelectorAll('.layout>.col>.panel').forEach(p=>p.classList.toggle('page-visible',!home&&cfg.panels.includes(p.id)));
+ if(home){document.querySelectorAll('.layout>.col>.panel').forEach(p=>p.classList.remove('page-visible'))}
+ if(key==='intelligence')loadEngines();
+ if(key==='opportunities')renderOpportunityCards(lastItems);
+ if(key==='scanner'){$('run').focus()}
+ window.scrollTo({top:0,behavior:'smooth'});
+}
+$('dashboardHome').addEventListener('click',e=>{const b=e.target.closest('[data-open-page]');if(b)openPage(b.dataset.openPage)});
+$('pageBack').onclick=()=>openPage('dashboard');
+function renderOpportunityCards(items){
+ const host=$('signals');if(!host)return;
+ const sorted=[...(items||[])].sort((a,b)=>(b.score||0)-(a.score||0)).slice(0,12);
+ $('homeOppCount').textContent=sorted.length+' فرصة متاحة ←';
+ host.innerHTML=sorted.map(x=>{
+  const c=classification(x),direction=x.direction==='SHORT'?'بيع / هبوط':'شراء / صعود';
+  const entry=x.entry??x.price,stop=x.stopLoss,target1=x.target1,target2=x.target2;
+  const pattern=x.breakout==='UP'?'اختراق صاعد':x.breakout==='DOWN'?'اختراق هابط':(x.reasons||[]).slice(0,1).join('')||'إشارة مؤشرات مركبة';
+  return '<article class="opportunity-card" data-opp-symbol="'+x.symbol+'"><div class="opp-top"><b>'+x.symbol+' · '+direction+'</b><span class="opp-score">'+(x.score??'—')+'/100</span><span class="badge '+c[1]+'">'+c[0]+'</span></div><div class="muted" style="margin-top:7px;font-size:11px">نمط الإشارة: '+pattern+' · أسلوب الدخول: دخول مرجعي بعد تأكيد الإشارة؛ راجع الشمعة المكتملة قبل القرار</div><div class="opp-grid"><div><small>الدخول المرجعي</small><b>'+fmt(entry)+'</b></div><div><small>وقف الخسارة</small><b class="negative">'+fmt(stop)+'</b></div><div><small>الهدف الأول</small><b class="positive">'+fmt(target1)+'</b></div><div><small>الهدف الثاني</small><b class="positive">'+fmt(target2)+'</b></div></div><div class="muted" style="font-size:10px;margin-top:8px">اضغط لفتح التحليل التفصيلي للعملة · التقييم درجة فنية وليس احتمال نجاح إحصائياً</div></article>'
+ }).join('')||'<div class="muted">لا توجد فرص مطابقة حالياً. شغّل الماسح أو خفف الفلاتر.</div>';
+}
+$('signals').addEventListener('click',e=>{const card=e.target.closest('[data-opp-symbol]');if(card){selectCoin(card.dataset.oppSymbol);openPage('opportunities')}});
+async function loadEngines(){
+ $('engineError').textContent='';$('engineGrid').innerHTML='<div class="muted">جارٍ تحميل سجل المحركات...</div>';
+ try{
+  const d=await api('/api/engines');
+  $('engineCounts').textContent=d.total+' محرك';
+  $('engineSummary').innerHTML='<div><small>مكتملة</small><b class="positive">'+d.counts.implemented+'</b></div><div><small>جزئية</small><b class="gold">'+d.counts.partial+'</b></div><div><small>مخططة</small><b>'+d.counts.planned+'</b></div><div><small>وضع التشغيل</small><b>Simulation فقط</b></div>';
+  $('engineGrid').innerHTML=d.engines.map(x=>'<article class="engine-card"><span class="engine-status '+x.status+'">'+({implemented:'مكتمل',partial:'جزئي',planned:'مخطط'}[x.status]||x.status)+'</span><b>'+x.name_ar+'</b><small>'+x.name_en+'</small><small style="margin-top:7px">'+(x.capabilities||[]).join(' · ')+'</small>'+(x.gaps?.length?'<small class="gold" style="margin-top:7px">المتبقي: '+x.gaps.join(' · ')+'</small>':'')+'</article>').join('');
+  if(d.live_trading_enabled!==false)throw Error('فشل فحص الأمان: حالة التداول الحقيقي غير معطلة');
+ }catch(e){$('engineGrid').innerHTML='<div class="muted">تعذر تحميل المحركات.</div>';$('engineError').textContent=e.message+' · أعد فتح الصفحة للمحاولة.'}
+}
+const originalRender=render;
+render=function(items){originalRender(items);renderOpportunityCards(items)};
+
+openPage('dashboard');
 init();
 setInterval(async()=>{try{const m=await api('/api/paper/monitor',{method:'POST'});if(m.closed?.length){log('إغلاق تلقائي تجريبي: '+m.closed.map(x=>x.symbol+' '+x.reason).join('، '));await refreshPaper()}}catch(e){log('تعذر مراقبة أهداف الصفقات: '+e.message,false)}},15000);
 </script></body></html>
