@@ -494,7 +494,7 @@ async def market_flow(symbol: str, category: str = "spot"):
 
 
 class PaperTrade(BaseModel):
-    symbol: str = Field(min_length=2, max_length=30)
+    symbol: str = Field(min_length=2, max_length=30, pattern="^[A-Za-z0-9]{2,30}$")
     side: str
     category: str = "spot"
     leverage: int = Field(default=1, ge=1, le=10)
