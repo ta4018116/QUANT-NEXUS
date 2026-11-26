@@ -58,3 +58,97 @@ def test_monitoring_room_watchlist_renders_entry_details_and_animated_progress_c
     assert "room-progress-track" in script
     assert "roomProgressShimmer" in script
     assert "prefers-reduced-motion" in script
+
+
+def test_auto_paper_entry_requires_fresh_confirmed_setup(monkeypatch):
+    import app.main as main
+
+    async def fake_klines(symbol, category, interval, limit):
+        return [["0", "100", "101", "99", "100", "1000"]] * 60, "TEST"
+
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    monkeypatch.setattr(main, "analyze_klines", lambda rows: {
+        "price": 100.0, "entry": 100.0, "stopLoss": 98.0, "target2": 104.0,
+        "score": 99, "direction": "LONG"
+    })
+    monkeypatch.setattr(main, "evaluate_entry", lambda analysis: {
+        "state": "APPROACH", "confirmed": False, "progress": 65,
+        "reason": "شروط الشمعة المكتملة غير مكتملة"
+    })
+    client = TestClient(main.app)
+    response = client.post("/api/paper/auto-entry/TESTUSDT?category=spot&interval=15m")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["opened"] is False
+    assert payload["state"] == "APPROACH"
+    assert payload["live_trading_enabled"] is False
+
+
+def test_monitoring_room_connects_watchlist_to_paper_auto_monitor():
+    client = TestClient(__import__("app.main", fromlist=["app"]).app)
+    response = client.get("/static/monitoring-room.js")
+    assert response.status_code == 200
+    assert "/api/paper/auto-entry/" in response.text
+    assert "/api/paper/monitor" in response.text
+    assert "quantNexusManualWatchlist" in response.text
+    assert "setInterval(cycle,20000)" in response.text
+
+
+
+def test_auto_paper_entry_opens_simulation_only_after_confirmation(monkeypatch):
+    import app.main as main
+
+    async def fake_klines(symbol, category, interval, limit):
+        return [["0", "100", "101", "99", "100", "1000"]] * 60, "TEST"
+
+    async def fake_open(trade):
+        return {"trade": {"id": 77, "symbol": trade.symbol, "side": trade.side,
+                          "status": "OPEN"}, "live_trading_enabled": False}
+
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    monkeypatch.setattr(main, "analyze_klines", lambda rows: {
+        "price": 100.0, "entry": 100.0, "stopLoss": 98.0, "target2": 104.0,
+        "score": 90, "direction": "LONG"
+    })
+    monkeypatch.setattr(main, "evaluate_entry", lambda analysis: {
+        "state": "CONFIRMED", "confirmed": True, "progress": 100,
+        "reason": "تأكيد مكتمل"
+    })
+    monkeypatch.setattr(main, "open_paper_trade", fake_open)
+    monkeypatch.setattr(main, "PAPER_TRADES", [])
+    monkeypatch.setattr(main, "PAPER_BALANCE", 10000.0)
+    response = TestClient(main.app).post("/api/paper/auto-entry/TESTUSDT")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["opened"] is True
+    assert payload["state"] == "PAPER_OPEN"
+    assert payload["trade"]["id"] == 77
+    assert payload["live_trading_enabled"] is False
+
+
+def test_auto_paper_entry_blocks_duplicate_open_symbol(monkeypatch):
+    import app.main as main
+
+    async def fake_klines(symbol, category, interval, limit):
+        return [["0", "100", "101", "99", "100", "1000"]] * 60, "TEST"
+
+    async def fail_open(trade):
+        raise AssertionError("duplicate position must not be opened")
+
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    monkeypatch.setattr(main, "analyze_klines", lambda rows: {
+        "price": 100.0, "entry": 100.0, "stopLoss": 98.0, "target2": 104.0,
+        "score": 90, "direction": "LONG"
+    })
+    monkeypatch.setattr(main, "evaluate_entry", lambda analysis: {
+        "state": "CONFIRMED", "confirmed": True, "progress": 100,
+        "reason": "تأكيد مكتمل"
+    })
+    monkeypatch.setattr(main, "open_paper_trade", fail_open)
+    monkeypatch.setattr(main, "PAPER_TRADES", [
+        {"id": 1, "symbol": "TESTUSDT", "category": "spot", "status": "OPEN"}
+    ])
+    response = TestClient(main.app).post("/api/paper/auto-entry/TESTUSDT")
+    assert response.status_code == 200
+    assert response.json()["state"] == "ALREADY_OPEN"
+    assert response.json()["opened"] is False
