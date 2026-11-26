@@ -290,7 +290,7 @@ def test_futures_paper_position_uses_leverage_margin_and_realized_pnl(client):
     payload = opened.json()
     assert payload["trade"]["leverage"] == 5
     assert payload["trade"]["margin"] == 200
-    assert payload["balance"] == 9800
+    assert payload["balance"] == pytest.approx(9_799.4)
 
     closed = client.post(f"/api/paper/{payload['trade']['id']}/close?exit_price=95")
     assert closed.status_code == 200
