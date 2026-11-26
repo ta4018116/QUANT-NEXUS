@@ -51,8 +51,8 @@ def test_paper_trade_open_and_close(client):
     assert closed.status_code == 200
     assert closed.json()["trade"]["status"] == "CLOSED"
     assert closed.json()["trade"]["grossPnl"] == 20
-    assert closed.json()["trade"]["pnl"] == pytest.approx(19.874)
-    assert closed.json()["balance"] == pytest.approx(10_019.874)
+    assert closed.json()["trade"]["pnl"] == pytest.approx(19.748)
+    assert closed.json()["balance"] == pytest.approx(10_019.748)
     assert closed.json()["live_trading_enabled"] is False
 
 
