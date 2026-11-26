@@ -415,7 +415,7 @@ def test_engine_registry_reports_all_fifteen_with_truthful_statuses(client):
     payload = response.json()
     assert payload["total"] == 15
     assert len(payload["engines"]) == 15
-    assert payload["counts"] == {"implemented": 13, "partial": 1, "planned": 0}
+    assert payload["counts"] == {"implemented": 14, "partial": 1, "planned": 0}
     assert payload["trading_mode"] == "simulation"
     assert payload["live_trading_enabled"] is False
     ids = {item["id"] for item in payload["engines"]}
@@ -635,5 +635,5 @@ def test_engine_registry_marks_delivered_engines_and_keeps_derivatives_partial(c
     for engine_id in ("market_regime", "market_structure", "opportunity", "learning_monitoring"):
         assert by_id[engine_id]["status"] == "implemented"
     assert by_id["derivatives"]["status"] == "partial"
-    assert payload["counts"] == {"implemented":13,"partial":1,"planned":0}
+    assert payload["counts"] == {"implemented":14,"partial":1,"planned":0}
     assert payload["live_trading_enabled"] is False
