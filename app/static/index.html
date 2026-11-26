@@ -49,6 +49,36 @@
  .head{font-size:14px;padding:12px}
  .bottom{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+
+/* Final phone layout overrides */
+@media screen and (max-width:600px){
+ html,body{overflow-x:hidden!important;width:100%!important;min-width:0!important}
+ .top{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;width:100%!important;padding:8px!important;gap:6px!important}
+ .brand{grid-column:1/-1!important;white-space:normal!important;font-size:14px!important;text-align:center!important}
+ .top>*{min-width:0!important;max-width:100%!important}
+ .layout{display:flex!important;flex-direction:column!important;width:100%!important;padding:6px!important;gap:8px!important}
+ .layout>.left,.layout>.center,.layout>.right{display:flex!important;flex-direction:column!important;width:100%!important;min-width:0!important;max-width:100%!important}
+ .layout>.center{order:1!important}.layout>.right{order:2!important}.layout>.left{order:3!important}
+ .panel,.chartpanel,.log{width:100%!important;min-width:0!important;max-width:100%!important}
+ .chartpanel,.log{min-height:0!important}
+ .charttop{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:7px!important;padding:9px!important}
+ .charttop>*{min-width:0!important;max-width:100%!important;overflow-wrap:anywhere}
+ .chartbox{height:250px!important;width:100%!important;padding:0 4px 8px!important;overflow:hidden!important}
+ .charttools{display:flex!important;flex-wrap:wrap!important;padding:0 8px 9px!important;gap:5px!important}
+ .toolbtn{font-size:11px!important;padding:7px!important}
+ .pairs{width:100%!important;table-layout:fixed!important}.pairs th,.pairs td{font-size:11px!important;padding:8px 4px!important;overflow-wrap:anywhere}
+ .qgrid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:6px!important;padding:8px!important}
+ .q{min-width:0!important;padding:10px 5px!important;font-size:11px!important;overflow-wrap:anywhere}
+ .command-panel{padding:9px!important}.command-filters{display:grid!important;grid-template-columns:1fr 1fr!important;gap:6px!important}
+ .command-filters input,.command-filters select{grid-column:1/-1!important;width:100%!important;min-width:0!important}
+ .command-filters button{width:100%!important;min-width:0!important;padding:9px 5px!important;font-size:11px!important}
+ .command-grid{grid-template-columns:1fr!important;gap:6px!important}
+ .command-card{width:100%!important;min-height:60px!important;padding:8px!important}
+ .command-result{padding:10px!important;overflow-wrap:anywhere}
+ .section{margin:0 6px 8px!important;min-width:0!important}.section .panel{padding:10px!important}
+ .bottom{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:4px!important;padding:6px!important}
+ .bottom button{min-width:0!important;padding:9px 4px!important;font-size:11px!important}
+}
 </style></head><body>
 <header class="top">
  <div class="brand"><span>▥</span> منصة التحليل والتداول التجريبي · QUANT NEXUS</div>
