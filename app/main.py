@@ -57,19 +57,90 @@ async def bybit_get(path: str, params: dict):
             response.raise_for_status()
             payload = response.json()
     except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail="Market provider timed out; retry shortly") from exc
+        raise HTTPException(status_code=504, detail="Bybit timed out") from exc
     except httpx.HTTPStatusError as exc:
-        raise HTTPException(status_code=502, detail=f"Market provider returned HTTP {exc.response.status_code}") from exc
+        raise HTTPException(status_code=502, detail=f"Bybit returned HTTP {exc.response.status_code}") from exc
     except (httpx.RequestError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail="Market provider connection or response error") from exc
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=502, detail="Market provider returned an invalid response")
-    if payload.get("retCode") != 0:
-        raise HTTPException(status_code=502, detail=f"Market provider: {payload.get('retMsg','unknown error')}")
+        raise HTTPException(status_code=502, detail="Bybit connection or response error") from exc
+    if not isinstance(payload, dict) or payload.get("retCode") != 0:
+        raise HTTPException(status_code=502, detail="Bybit returned an invalid response")
     result = payload.get("result")
     if not isinstance(result, dict):
-        raise HTTPException(status_code=502, detail="Market provider returned an invalid result payload")
+        raise HTTPException(status_code=502, detail="Bybit returned an invalid result payload")
     return result
+
+async def okx_get(path: str, params: dict):
+    try:
+        async with httpx.AsyncClient(timeout=TIMEOUT, headers={"User-Agent":"QUANT-NEXUS/1.0"}) as client:
+            response = await client.get("https://www.okx.com" + path, params=params)
+            response.raise_for_status()
+            payload = response.json()
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="OKX timed out") from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"OKX returned HTTP {exc.response.status_code}") from exc
+    except (httpx.RequestError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="OKX connection or response error") from exc
+    if not isinstance(payload, dict) or payload.get("code") != "0" or not isinstance(payload.get("data"), list):
+        raise HTTPException(status_code=502, detail="OKX returned an invalid response")
+    return payload["data"]
+
+def okx_instrument(symbol: str, category: str) -> str:
+    base = symbol.upper().replace("-", "")
+    if category == "linear":
+        if base.endswith("USDT"):
+            return base[:-4] + "-USDT-SWAP"
+        raise HTTPException(status_code=400, detail="Only USDT linear swaps are supported")
+    if base.endswith("USDT"):
+        return base[:-4] + "-USDT"
+    raise HTTPException(status_code=400, detail="Only USDT spot pairs are supported")
+
+async def get_market_tickers(category: str):
+    try:
+        result = await bybit_get("/v5/market/tickers", {"category":category})
+        items = result.get("list", [])
+        if not isinstance(items, list):
+            raise HTTPException(status_code=502, detail="Bybit ticker list is invalid")
+        return items, "Bybit"
+    except HTTPException as bybit_error:
+        logger.warning("Bybit ticker request failed (%s); falling back to OKX", bybit_error.detail)
+        inst_type = "SWAP" if category == "linear" else "SPOT"
+        items = await okx_get("/api/v5/market/tickers", {"instType":inst_type})
+        normalized = []
+        for x in items:
+            inst_id = str(x.get("instId", ""))
+            if category == "linear" and not inst_id.endswith("-USDT-SWAP"):
+                continue
+            if category == "spot" and not inst_id.endswith("-USDT"):
+                continue
+            symbol = inst_id.replace("-", "").replace("SWAP", "")
+            last = safe_float(x.get("last"))
+            open24 = safe_float(x.get("open24h"))
+            change = ((last/open24)-1)*100 if open24 > 0 else 0
+            quote_volume = safe_float(x.get("volCcy24h")) * last
+            normalized.append({"symbol":symbol,"lastPrice":last,"price24hPcnt":change/100,
+                "highPrice24h":safe_float(x.get("high24h")),"lowPrice24h":safe_float(x.get("low24h")),
+                "turnover24h":quote_volume,"volume24h":safe_float(x.get("vol24h"))})
+        return normalized, "OKX"
+
+async def get_market_klines(symbol: str, category: str, interval: str, limit: int):
+    try:
+        result = await bybit_get("/v5/market/kline", {"category":category,"symbol":symbol.upper(),
+            "interval":INTERVALS[interval],"limit":max(60,min(limit,1000))})
+        rows = result.get("list", [])
+        if not isinstance(rows, list) or len(rows) < 20:
+            raise HTTPException(status_code=502, detail="Bybit returned insufficient candles")
+        return rows, "Bybit"
+    except HTTPException as bybit_error:
+        logger.warning("Bybit candles failed for %s (%s); falling back to OKX", symbol, bybit_error.detail)
+        bars = {"1m":"1m","3m":"3m","5m":"5m","15m":"15m","30m":"30m",
+                "1h":"1H","2h":"2H","4h":"4H","1d":"1D","1w":"1W"}
+        rows = await okx_get("/api/v5/market/candles", {
+            "instId":okx_instrument(symbol, category),"bar":bars[interval],
+            "limit":str(max(60,min(limit,300)))})
+        if len(rows) < 20:
+            raise HTTPException(status_code=502, detail="OKX returned insufficient candles")
+        return [[row[0],row[1],row[2],row[3],row[4],row[5]] for row in rows], "OKX"
 
 def ema(values, period):
     if len(values) < period:
@@ -166,13 +237,10 @@ async def overview():
 
 @app.get("/api/markets")
 async def markets(category: str = Query("spot", pattern="^(spot|linear)$"), limit: int = Query(100, ge=1, le=500)):
-    data = await bybit_get("/v5/market/tickers", {"category":category})
-    items = data.get("list", [])
-    if not isinstance(items, list):
-        raise HTTPException(status_code=502, detail="Market provider returned an invalid ticker list")
+    items, provider = await get_market_tickers(category)
     items = [x for x in items if isinstance(x, dict)]
     items.sort(key=lambda x: safe_float(x.get("turnover24h")), reverse=True)
-    return {"provider":"Bybit public market data","category":category,"count":len(items),
+    return {"provider":provider,"category":category,"count":len(items),
             "items":[{"symbol":x.get("symbol"),"lastPrice":safe_float(x.get("lastPrice")),
             "change24h":safe_float(x.get("price24hPcnt"))*100,
             "high24h":safe_float(x.get("highPrice24h")),"low24h":safe_float(x.get("lowPrice24h")),
@@ -183,16 +251,9 @@ async def markets(category: str = Query("spot", pattern="^(spot|linear)$"), limi
 async def klines(symbol: str, category: str = "spot", interval: str = "15m", limit: int = 200):
     if category not in ("spot","linear") or interval not in INTERVALS:
         raise HTTPException(status_code=400, detail="Invalid category or interval")
-    result = await bybit_get("/v5/market/kline", {"category":category,"symbol":symbol.upper(),
-                         "interval":INTERVALS[interval],"limit":max(60,min(limit,1000))})
-    rows = result.get("list", [])
-    if len(rows) < 20:
-        raise HTTPException(status_code=404, detail="Not enough candle data for analysis")
+    rows, provider = await get_market_klines(symbol, category, interval, limit)
     analysis = analyze_klines(rows)
-    analysis["symbol"] = symbol.upper()
-    analysis["category"] = category
-    analysis["interval"] = interval
-    analysis["provider"] = "Bybit"
+    analysis.update({"symbol":symbol.upper(),"category":category,"interval":interval,"provider":provider})
     return analysis
 
 @app.get("/api/scan")
@@ -200,9 +261,7 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
                min_turnover: float = Query(0, ge=0), direction: str = "all"):
     if category not in ("spot","linear") or interval not in INTERVALS:
         raise HTTPException(status_code=400, detail="Invalid scan configuration")
-    tickers = (await bybit_get("/v5/market/tickers", {"category":category})).get("list", [])
-    if not isinstance(tickers, list):
-        raise HTTPException(status_code=502, detail="Market provider returned an invalid ticker list")
+    tickers, ticker_provider = await get_market_tickers(category)
     tickers = [t for t in tickers if isinstance(t, dict) and str(t.get("symbol", "")).endswith("USDT")]
     tickers.sort(key=lambda x: safe_float(x.get("turnover24h")), reverse=True)
     candidates = [x for x in tickers if safe_float(x.get("turnover24h")) >= min_turnover][:limit]
@@ -211,22 +270,18 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
         async with semaphore:
             try:
                 symbol = str(ticker.get("symbol", "")).upper()
-                result = await bybit_get("/v5/market/kline", {"category":category,
-                    "symbol":symbol,"interval":INTERVALS[interval],"limit":100})
-                rows = result.get("list", [])
-                if not isinstance(rows, list) or len(rows) < 60:
+                rows, candle_provider = await get_market_klines(symbol, category, interval, 100)
+                if len(rows) < 20:
                     return None
                 a = analyze_klines(rows)
                 a.update({"symbol":symbol,"change24h":safe_float(ticker.get("price24hPcnt"))*100,
                           "turnover24h":safe_float(ticker.get("turnover24h")),
                           "volume24h":safe_float(ticker.get("volume24h")),
                           "high24h":safe_float(ticker.get("highPrice24h")),
-                          "low24h":safe_float(ticker.get("lowPrice24h"))})
+                          "low24h":safe_float(ticker.get("lowPrice24h")),"provider":candle_provider})
                 return a
-            except HTTPException:
-                return None
-            except (TypeError, ValueError, KeyError, IndexError, OverflowError):
-                logger.exception("Skipping malformed ticker %s", ticker.get("symbol"))
+            except HTTPException as exc:
+                logger.warning("Skipping %s: %s", ticker.get("symbol"), exc.detail)
                 return None
             except Exception:
                 logger.exception("Skipping failed market analysis for %s", ticker.get("symbol"))
@@ -234,7 +289,9 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
     results = await asyncio.gather(*(one(t) for t in candidates))
     results = [x for x in results if x and (direction == "all" or x["direction"].lower() == direction.lower())]
     results.sort(key=lambda x:safe_float(x.get("score")), reverse=True)
-    return {"provider":"Bybit","category":category,"interval":interval,"scanned":len(candidates),
+    providers = sorted(set(x["provider"] for x in results))
+    return {"provider":ticker_provider if len(providers)<=1 and not providers else (providers[0] if len(providers)==1 else "Mixed"),
+            "providers":providers,"category":category,"interval":interval,"scanned":len(candidates),
             "returned":len(results),"generatedAt":datetime.now(timezone.utc).isoformat(),"items":results}
 
 class PaperTrade(BaseModel):
