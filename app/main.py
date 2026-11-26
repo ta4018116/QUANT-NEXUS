@@ -2,6 +2,8 @@ import asyncio
 import math
 import os
 import logging
+import json
+import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,10 +45,66 @@ def safe_float(value, default=0.0):
 
 BYBIT = "https://api.bybit.com"
 TIMEOUT = httpx.Timeout(12.0, connect=5.0)
-PAPER_TRADES = []
-PAPER_BALANCE = 10000.0
 PAPER_LOCK = asyncio.Lock()
 LIVE_TRADING_ENABLED = False
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+DB_MODE = "postgres" if DATABASE_URL.startswith(("postgres://", "postgresql://")) else "sqlite"
+DB_PATH = Path(os.getenv("QUANT_NEXUS_DB_PATH", str(BASE.parent / "data" / "quant_nexus.sqlite3")))
+
+def _load_paper_state():
+    if DB_MODE == "postgres":
+        try:
+            import psycopg
+            from psycopg.types.json import Json
+        except ImportError as exc:
+            raise RuntimeError("DATABASE_URL is set but psycopg is not installed") from exc
+        url = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+        with psycopg.connect(url, connect_timeout=8) as conn:
+            conn.execute("""CREATE TABLE IF NOT EXISTS quant_paper_state (
+                id SMALLINT PRIMARY KEY CHECK (id = 1),
+                balance DOUBLE PRECISION NOT NULL,
+                trades JSONB NOT NULL
+            )""")
+            row = conn.execute("SELECT balance, trades FROM quant_paper_state WHERE id=1").fetchone()
+            if row is None:
+                conn.execute("INSERT INTO quant_paper_state(id,balance,trades) VALUES(1,%s,%s)",
+                             (10000.0, Json([])))
+                return 10000.0, []
+            trades = row[1] if isinstance(row[1], list) else json.loads(row[1])
+            return float(row[0]), trades
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(DB_PATH, timeout=8) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("""CREATE TABLE IF NOT EXISTS quant_paper_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            balance REAL NOT NULL,
+            trades TEXT NOT NULL
+        )""")
+        row = conn.execute("SELECT balance,trades FROM quant_paper_state WHERE id=1").fetchone()
+        if row is None:
+            conn.execute("INSERT INTO quant_paper_state(id,balance,trades) VALUES(1,?,?)",
+                         (10000.0, "[]"))
+            return 10000.0, []
+        return float(row[0]), json.loads(row[1])
+
+def _save_paper_state(balance, trades):
+    if DB_MODE == "postgres":
+        import psycopg
+        from psycopg.types.json import Json
+        url = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+        with psycopg.connect(url, connect_timeout=8) as conn:
+            conn.execute("""INSERT INTO quant_paper_state(id,balance,trades) VALUES(1,%s,%s)
+                ON CONFLICT(id) DO UPDATE SET balance=EXCLUDED.balance,trades=EXCLUDED.trades""",
+                (float(balance), Json(trades)))
+        return
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(DB_PATH, timeout=8) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("""INSERT INTO quant_paper_state(id,balance,trades) VALUES(1,?,?)
+            ON CONFLICT(id) DO UPDATE SET balance=excluded.balance,trades=excluded.trades""",
+            (float(balance), json.dumps(trades, ensure_ascii=False)))
+
+PAPER_BALANCE, PAPER_TRADES = _load_paper_state()
 INTERVALS = {"1m":"1", "3m":"3", "5m":"5", "15m":"15", "30m":"30",
              "1h":"60", "2h":"120", "4h":"240", "1d":"D", "1w":"W"}
 
@@ -207,7 +265,10 @@ def analyze_klines(rows):
     recent_volumes = volumes[-21:-1]
     avg_vol = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 0
     vol_ratio = volumes[-1] / avg_vol if avg_vol > 0 else None
-    recent_high, recent_low = max(highs[-20:]), min(lows[-20:])
+    reference_highs = highs[-21:-1] or highs[:-1]
+    reference_lows = lows[-21:-1] or lows[:-1]
+    recent_high, recent_low = max(reference_highs), min(reference_lows)
+    breakout = "UP" if last > recent_high else ("DOWN" if last < recent_low else "NONE")
     macd_line, macd_signal, macd_hist = macd(closes)
     typical=[(x['high']+x['low']+x['close'])/3 for x in candles]
     total_volume=sum(volumes)
@@ -233,7 +294,7 @@ def analyze_klines(rows):
         stop = target1 = target2 = None
     return {"price":last,"change24h":None,"rsi":round(strength,2) if strength is not None else None,
             "ema20":e20,"ema50":e50,"macd":macd_line,"macdSignal":macd_signal,"macdHistogram":macd_hist,"vwap":vwap,"volumeRatio":round(vol_ratio,2) if vol_ratio is not None else None,
-            "support":recent_low,"resistance":recent_high,"score":score,"direction":direction,
+            "support":recent_low,"resistance":recent_high,"breakout":breakout,"score":score,"direction":direction,
             "entry":last if direction != "NEUTRAL" else None,"stopLoss":stop,
             "target1":target1,"target2":target2,"candles":candles[-100:]}
 
@@ -280,7 +341,12 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
     tickers = [t for t in tickers if isinstance(t, dict) and str(t.get("symbol", "")).endswith("USDT")]
     tickers.sort(key=lambda x: safe_float(x.get("turnover24h")), reverse=True)
     eligible = [x for x in tickers if safe_float(x.get("turnover24h")) >= min_turnover]
-    effective_limit = min(len(eligible), {"32":32,"64":64,"128":128,"256":256}.get(depth, min(256,max(64,len(eligible)))))
+    depth_limit = {"32":32,"64":64,"128":256}.get(depth)
+    if depth == "256":
+        depth_limit = 256
+    elif depth == "AUTO":
+        depth_limit = min(256, max(64, len(eligible)))
+    effective_limit = min(len(eligible), limit, depth_limit)
     candidates = eligible[:effective_limit]
     semaphore = asyncio.Semaphore(12)
     async def one(ticker):
@@ -333,6 +399,188 @@ async def multi_timeframe(symbol: str, category: str = "spot"):
     return {"symbol": symbol.upper(), "frames": items, "averageScore": average,
             "aligned": len(directions) <= 1, "live_trading_enabled": False}
 
+
+class CommandRequest(BaseModel):
+    symbol: str = Field(min_length=2, max_length=30)
+    category: str = Field(default="spot")
+    interval: str = Field(default="15m")
+    command: str = Field(min_length=2, max_length=120)
+
+@app.post("/api/commands/execute")
+async def execute_command(request: CommandRequest):
+    if request.category not in ("spot", "linear") or request.interval not in INTERVALS:
+        raise HTTPException(status_code=400, detail="Invalid market or interval")
+    symbol = request.symbol.upper().replace("/", "")
+    if not symbol.endswith("USDT"):
+        raise HTTPException(status_code=400, detail="Only USDT pairs are currently supported")
+    command = request.command.strip().lower()
+    if "أفضل 3" in command:
+        result = await scan(category=request.category, interval=request.interval,
+                            limit=64, min_turnover=1_000_000, direction="all", depth="AUTO")
+        return {"command": request.command, "kind": "top_opportunities",
+                "summary": "أفضل الفرص حسب التقييم الكمي الحالي",
+                "items": result["items"][:3], "scanned": result["scanned"],
+                "live_trading_enabled": False}
+    if "spot و futures" in command or "مقارنة spot" in command:
+        async def one(cat):
+            rows, provider = await get_market_klines(symbol, cat, request.interval, 120)
+            a = analyze_klines(rows)
+            return {"category": cat, "direction": a["direction"], "score": a["score"],
+                    "price": a["price"], "provider": provider}
+        spot, futures = await asyncio.gather(one("spot"), one("linear"), return_exceptions=True)
+        items = [x for x in (spot, futures) if not isinstance(x, Exception)]
+        return {"command": request.command, "kind": "market_comparison", "items": items,
+                "summary": "مقارنة التحليل الفعلي بين السوق الفوري والعقود",
+                "live_trading_enabled": False}
+    if "متعدد الأطر" in command or "الأطر الزمنية" in command:
+        result = await multi_timeframe(symbol=symbol, category=request.category)
+        return {"command": request.command, "kind": "multi_timeframe",
+                "summary": "تحليل متزامن لأطر 5m و15m و1h و4h",
+                "data": result, "live_trading_enabled": False}
+    rows, provider = await get_market_klines(symbol, request.category, request.interval, 200)
+    a = analyze_klines(rows)
+    candles = a["candles"]
+    closes = [x["close"] for x in candles]
+    summary = ""
+    kind = "analysis"
+    data = {"price": a["price"], "score": a["score"], "direction": a["direction"]}
+    if "الاتجاه" in command:
+        kind = "trend"
+        aligned = a["ema20"] is not None and a["ema50"] is not None and a["ema20"] > a["ema50"]
+        summary = ("الاتجاه يميل للصعود" if aligned else "الاتجاه يميل للهبوط" if a["ema20"] and a["ema50"] and a["ema20"] < a["ema50"] else "الاتجاه غير محسوم")
+        data.update({"ema20": a["ema20"], "ema50": a["ema50"], "rsi": a["rsi"]})
+    elif "الدعم" in command or "المقاومة" in command:
+        kind = "levels"
+        summary = "مستويات الدعم والمقاومة محسوبة من آخر 20 شمعة مكتملة قبل الشمعة الحالية"
+        data.update({"support": a["support"], "resistance": a["resistance"],
+                     "distanceToSupportPct": round((a["price"]/a["support"]-1)*100, 3) if a["support"] else None,
+                     "distanceToResistancePct": round((a["resistance"]/a["price"]-1)*100, 3) if a["price"] else None})
+    elif "السيولة" in command:
+        kind = "liquidity_proxy"
+        ratio = a.get("volumeRatio")
+        summary = "نشاط الحجم مرتفع" if ratio is not None and ratio >= 1.5 else "لا يوجد ارتفاع حجم مؤكد"
+        summary += ". هذا تقدير من أحجام الشموع وليس قراءة دفتر الأوامر أو تدفق الحيتان."
+        data.update({"volumeRatio": ratio, "vwap": a["vwap"],
+                     "limitation": "volume-based proxy; order-book and whale-flow data are not connected"})
+    elif "اختراق" in command:
+        kind = "breakout"
+        summary = {"UP": "اختراق صاعد فوق أعلى مستوى للشموع المرجعية",
+                   "DOWN": "كسر هابط أسفل أدنى مستوى للشموع المرجعية",
+                   "NONE": "لا يوجد اختراق مؤكد حالياً"}[a["breakout"]]
+        data.update({"breakout": a["breakout"], "referenceHigh": a["resistance"],
+                     "referenceLow": a["support"]})
+    elif "النماذج" in command:
+        kind = "candle_pattern"
+        last = candles[-1]
+        prev = candles[-2]
+        bullish_engulf = prev["close"] < prev["open"] and last["close"] > last["open"] and last["close"] >= prev["open"] and last["open"] <= prev["close"]
+        bearish_engulf = prev["close"] > prev["open"] and last["close"] < last["open"] and last["open"] >= prev["close"] and last["close"] <= prev["open"]
+        body = abs(last["close"]-last["open"])
+        span = max(last["high"]-last["low"], 1e-12)
+        pattern = "ابتلاع شرائي" if bullish_engulf else ("ابتلاع بيعي" if bearish_engulf else ("شمعة صغيرة/تردد" if body/span < 0.12 else "لا يوجد نموذج بسيط مؤكد"))
+        summary = pattern
+        data.update({"pattern": pattern, "bodyToRange": round(body/span, 3)})
+    elif "تباعد" in command:
+        kind = "momentum_divergence"
+        prev_rsi = rsi(closes[-29:-14]) if len(closes) >= 29 else None
+        curr_rsi = rsi(closes[-15:]) if len(closes) >= 15 else None
+        price_up = closes[-1] > closes[-15] if len(closes) >= 15 else False
+        price_down = closes[-1] < closes[-15] if len(closes) >= 15 else False
+        bullish = price_down and prev_rsi is not None and curr_rsi is not None and curr_rsi > prev_rsi + 3
+        bearish = price_up and prev_rsi is not None and curr_rsi is not None and curr_rsi < prev_rsi - 3
+        summary = "احتمال تباعد إيجابي يحتاج تأكيداً" if bullish else ("احتمال تباعد سلبي يحتاج تأكيداً" if bearish else "لا يظهر تباعد مبسط واضح")
+        data.update({"previousRsi": prev_rsi, "currentRsi": curr_rsi,
+                     "bullishDivergence": bullish, "bearishDivergence": bearish})
+    elif "الحجم" in command:
+        kind = "volume"
+        summary = "حجم غير معتاد" if a.get("volumeRatio") is not None and a["volumeRatio"] >= 2 else "الحجم ضمن النطاق المعتاد نسبياً"
+        data.update({"volumeRatio": a["volumeRatio"], "vwap": a["vwap"]})
+    else:
+        kind = "risk_plan"
+        summary = "خطة مستويات افتراضية مبنية على تذبذب النطاق؛ ليست أمراً تنفيذياً"
+        data.update({"entry": a["entry"], "stopLoss": a["stopLoss"],
+                     "target1": a["target1"], "target2": a["target2"],
+                     "riskReward1": 1.5 if a["entry"] is not None else None,
+                     "riskReward2": 2.5 if a["entry"] is not None else None})
+    return {"command": request.command, "kind": kind, "symbol": symbol,
+            "interval": request.interval, "provider": provider,
+            "summary": summary, "data": data, "live_trading_enabled": False}
+
+def calculate_backtest(candles, fee_bps=10, initial_balance=10000.0):
+    closes = [x["close"] for x in candles]
+    trades = []
+    balance = initial_balance
+    peak = initial_balance
+    max_drawdown = 0.0
+    position = None
+    fee_pct = fee_bps / 100.0
+    for i in range(50, len(candles)):
+        history = closes[:i]
+        fast, slow = ema(history, 20), ema(history, 50)
+        previous_close = closes[i-1]
+        enter_signal = fast is not None and slow is not None and previous_close > fast > slow
+        exit_signal = fast is not None and slow is not None and (previous_close < fast or fast < slow)
+        fill = candles[i]["open"]
+        if position and exit_signal:
+            gross_pct = ((fill / position["entry"]) - 1) * 100
+            net_pct = gross_pct - 2 * fee_pct
+            pnl = balance * net_pct / 100
+            balance += pnl
+            trades.append({"entry": position["entry"], "exit": fill,
+                           "returnPct": round(net_pct, 4), "pnl": round(pnl, 4)})
+            position = None
+        elif not position and enter_signal:
+            position = {"entry": fill}
+        peak = max(peak, balance)
+        if peak > 0:
+            max_drawdown = max(max_drawdown, (peak-balance)/peak*100)
+    if position:
+        fill = candles[-1]["close"]
+        gross_pct = ((fill / position["entry"]) - 1) * 100
+        net_pct = gross_pct - 2 * fee_pct
+        pnl = balance * net_pct / 100
+        balance += pnl
+        trades.append({"entry": position["entry"], "exit": fill,
+                       "returnPct": round(net_pct, 4), "pnl": round(pnl, 4)})
+    wins = [t["pnl"] for t in trades if t["pnl"] > 0]
+    losses = [t["pnl"] for t in trades if t["pnl"] < 0]
+    gross_win, gross_loss = sum(wins), abs(sum(losses))
+    return {"strategy": "EMA20/EMA50 trend-following (long-only)",
+            "initialBalance": initial_balance, "finalBalance": round(balance, 4),
+            "netPnl": round(balance-initial_balance, 4),
+            "winRate": round(len(wins)/len(trades)*100, 2) if trades else 0,
+            "profitFactor": round(gross_win/gross_loss, 3) if gross_loss else (None if not wins else "infinite"),
+            "expectancy": round(sum(t["pnl"] for t in trades)/len(trades), 4) if trades else 0,
+            "maxDrawdownPct": round(max_drawdown, 3), "tradeCount": len(trades),
+            "trades": trades, "feesBpsPerSide": fee_bps}
+
+@app.get("/api/backtest/{symbol}")
+async def backtest(symbol: str, category: str = "spot", interval: str = "1h",
+                   limit: int = Query(500, ge=100, le=1000),
+                   fee_bps: float = Query(10, ge=0, le=100)):
+    if category not in ("spot", "linear") or interval not in INTERVALS:
+        raise HTTPException(status_code=400, detail="Invalid backtest configuration")
+    rows, provider = await get_market_klines(symbol.upper(), category, interval, limit)
+    candles = []
+    for row in rows:
+        try:
+            vals = [float(row[i]) for i in range(1, 6)]
+            if not all(math.isfinite(v) for v in vals) or min(vals[:4]) <= 0:
+                continue
+            candles.append({"time": int(float(row[0]))//1000, "open": vals[0],
+                            "high": vals[1], "low": vals[2], "close": vals[3],
+                            "volume": vals[4]})
+        except (TypeError, ValueError, IndexError, OverflowError):
+            continue
+    candles.sort(key=lambda x: x["time"])
+    if len(candles) < 60:
+        raise HTTPException(status_code=502, detail="Not enough valid candles for backtest")
+    result = calculate_backtest(candles, fee_bps=fee_bps)
+    result.update({"symbol": symbol.upper(), "category": category,
+                   "interval": interval, "candles": len(candles),
+                   "provider": provider, "live_trading_enabled": False})
+    return result
+
 @app.get("/api/engine/status")
 async def engine_status():
     return {"engine": "QUANT INTELLIGENCE",
@@ -340,6 +588,8 @@ async def engine_status():
             "scan_depths": [32, 64, 128, 256, "AUTO"],
             "markets": {"spot": True, "linear_futures": True, "forex": False,
                         "us_stocks": False, "indices": False, "commodities": False},
+            "storage": {"mode": DB_MODE, "durable_across_redeploys": DB_MODE == "postgres"},
+            "features": ["multi_timeframe", "command_engine", "ema_backtest", "paper_portfolio"],
             "trading_mode": "simulation", "live_trading_enabled": False}
 
 class PaperTrade(BaseModel):
@@ -355,21 +605,40 @@ async def paper_account():
     async with PAPER_LOCK:
         return {"balance":PAPER_BALANCE,"trades":PAPER_TRADES,
                 "openCount":sum(1 for t in PAPER_TRADES if t["status"]=="OPEN"),
-                "live_trading_enabled":False}
+                "closedCount":sum(1 for t in PAPER_TRADES if t["status"]=="CLOSED"),
+                "realizedPnl":round(sum(t.get("pnl", 0) for t in PAPER_TRADES if t["status"]=="CLOSED"), 8),
+                "storageMode":DB_MODE, "live_trading_enabled":False}
 
 @app.post("/api/paper")
 async def open_paper_trade(trade: PaperTrade):
     global PAPER_BALANCE
-    if trade.side.upper() not in ("LONG","SHORT"):
+    side = trade.side.upper()
+    if side not in ("LONG","SHORT"):
         raise HTTPException(status_code=400, detail="side must be LONG or SHORT")
+    if side == "LONG" and ((trade.stop_loss is not None and trade.stop_loss >= trade.entry) or
+                           (trade.take_profit is not None and trade.take_profit <= trade.entry)):
+        raise HTTPException(status_code=400, detail="LONG stop-loss must be below entry and take-profit above entry")
+    if side == "SHORT" and ((trade.stop_loss is not None and trade.stop_loss <= trade.entry) or
+                            (trade.take_profit is not None and trade.take_profit >= trade.entry)):
+        raise HTTPException(status_code=400, detail="SHORT stop-loss must be above entry and take-profit below entry")
     async with PAPER_LOCK:
-        if trade.quantity * trade.entry > PAPER_BALANCE:
+        reserved = trade.quantity * trade.entry
+        if reserved > PAPER_BALANCE:
             raise HTTPException(status_code=400, detail="Insufficient simulated balance")
-        item = {"id":(max((t["id"] for t in PAPER_TRADES), default=0)+1),"symbol":trade.symbol.upper(),"side":trade.side.upper(),
-                "entry":trade.entry,"quantity":trade.quantity,"stopLoss":trade.stop_loss,
-                "takeProfit":trade.take_profit,"status":"OPEN","openedAt":datetime.now(timezone.utc).isoformat()}
+        old_balance = PAPER_BALANCE
+        item = {"id":(max((t["id"] for t in PAPER_TRADES), default=0)+1),"symbol":trade.symbol.upper(),"side":side,
+                "entry":trade.entry,"quantity":trade.quantity,"reservedNotional":reserved,
+                "stopLoss":trade.stop_loss,"takeProfit":trade.take_profit,
+                "status":"OPEN","openedAt":datetime.now(timezone.utc).isoformat()}
         PAPER_TRADES.append(item)
-        PAPER_BALANCE -= trade.quantity * trade.entry
+        PAPER_BALANCE -= reserved
+        try:
+            _save_paper_state(PAPER_BALANCE, PAPER_TRADES)
+        except Exception as exc:
+            PAPER_TRADES.pop()
+            PAPER_BALANCE = old_balance
+            logger.exception("Could not persist paper trade")
+            raise HTTPException(status_code=503, detail="Paper portfolio storage is unavailable") from exc
     return {"trade":item,"balance":PAPER_BALANCE,"live_trading_enabled":False}
 
 @app.post("/api/paper/{trade_id}/close")
@@ -378,10 +647,21 @@ async def close_paper_trade(trade_id: int, exit_price: float = Query(gt=0)):
     async with PAPER_LOCK:
         item = next((t for t in PAPER_TRADES if t["id"]==trade_id and t["status"]=="OPEN"),None)
         if not item: raise HTTPException(status_code=404,detail="Open paper trade not found")
+        old_balance = PAPER_BALANCE
+        old_item = dict(item)
         pnl = (exit_price-item["entry"])*item["quantity"]*(1 if item["side"]=="LONG" else -1)
-        PAPER_BALANCE += item["quantity"]*exit_price
+        # Return reserved capital plus directional PnL; this treats LONG and SHORT symmetrically.
+        PAPER_BALANCE += item.get("reservedNotional", item["entry"]*item["quantity"]) + pnl
         item.update({"status":"CLOSED","exitPrice":exit_price,"pnl":round(pnl,8),
                      "closedAt":datetime.now(timezone.utc).isoformat()})
+        try:
+            _save_paper_state(PAPER_BALANCE, PAPER_TRADES)
+        except Exception as exc:
+            PAPER_BALANCE = old_balance
+            item.clear()
+            item.update(old_item)
+            logger.exception("Could not persist closed paper trade")
+            raise HTTPException(status_code=503, detail="Paper portfolio storage is unavailable") from exc
         return {"trade":item,"balance":PAPER_BALANCE,"live_trading_enabled":False}
 
 @app.get("/", response_class=HTMLResponse)
