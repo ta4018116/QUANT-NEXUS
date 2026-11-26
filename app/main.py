@@ -53,6 +53,25 @@ def safe_float(value, default=0.0):
 BYBIT = "https://api.bybit.com"
 BYBIT_LINEAR_WS = "wss://stream.bybit.com/v5/public/linear"
 TIMEOUT = httpx.Timeout(12.0, connect=5.0)
+HTTP_CLIENT: httpx.AsyncClient | None = None
+
+def shared_http_client() -> httpx.AsyncClient:
+    """Reuse pooled connections across market-data requests."""
+    global HTTP_CLIENT
+    if HTTP_CLIENT is None or HTTP_CLIENT.is_closed:
+        HTTP_CLIENT = httpx.AsyncClient(
+            timeout=TIMEOUT,
+            headers={"User-Agent":"QUANT-NEXUS/1.0"},
+            limits=httpx.Limits(max_connections=40, max_keepalive_connections=20),
+        )
+    return HTTP_CLIENT
+
+@app.on_event("shutdown")
+async def close_shared_http_client():
+    global HTTP_CLIENT
+    if HTTP_CLIENT is not None and not HTTP_CLIENT.is_closed:
+        await HTTP_CLIENT.aclose()
+    HTTP_CLIENT = None
 PAPER_STORE = PaperStore()
 PAPER_BALANCE, PAPER_TRADES = PAPER_STORE.load()
 PAPER_LOCK = asyncio.Lock()
@@ -72,10 +91,9 @@ INTERVALS = {"1m":"1", "3m":"3", "5m":"5", "15m":"15", "30m":"30",
 
 async def bybit_get(path: str, params: dict):
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT, headers={"User-Agent":"QUANT-NEXUS/1.0"}) as client:
-            response = await client.get(BYBIT + path, params=params)
-            response.raise_for_status()
-            payload = response.json()
+        response = await shared_http_client().get(BYBIT + path, params=params)
+        response.raise_for_status()
+        payload = response.json()
     except httpx.TimeoutException as exc:
         raise HTTPException(status_code=504, detail="Bybit timed out") from exc
     except httpx.HTTPStatusError as exc:
@@ -91,10 +109,9 @@ async def bybit_get(path: str, params: dict):
 
 async def okx_get(path: str, params: dict):
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT, headers={"User-Agent":"QUANT-NEXUS/1.0"}) as client:
-            response = await client.get("https://www.okx.com" + path, params=params)
-            response.raise_for_status()
-            payload = response.json()
+        response = await shared_http_client().get("https://www.okx.com" + path, params=params)
+        response.raise_for_status()
+        payload = response.json()
     except httpx.TimeoutException as exc:
         raise HTTPException(status_code=504, detail="OKX timed out") from exc
     except httpx.HTTPStatusError as exc:
