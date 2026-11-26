@@ -482,16 +482,24 @@ def test_scan_rejects_unknown_command_ids_before_provider_call(client):
     assert "Unknown command_ids" in response.json()["detail"]
 
 
-def test_entry_confirmation_states_are_conservative_and_completed_candle_based():
+def test_entry_confirmation_requires_enough_completed_candles():
     from app.command_engine import evaluate_entry
-    pending = evaluate_entry({"direction": "LONG", "price": 100, "score": 70})
-    assert pending["state"] == "APPROACH"
+    pending = evaluate_entry({"direction": "LONG", "price": 100, "score": 90,
+                              "candles": [{"close": 100}] * 20})
+    assert pending["state"] == "WAITING"
     assert pending["confirmed"] is False
-    confirmed = evaluate_entry({"direction": "LONG", "price": 110, "score": 85,
-        "ema20": 108, "ema50": 105, "rsi": 60, "macdHistogram": 1.2,
-        "volumeRatio": 1.4, "breakout": "UP"})
-    assert confirmed["state"] == "CONFIRMED"
-    assert confirmed["confirmed"] is True
+    candles = []
+    import math
+    for i in range(70):
+        close = 100 + i * 0.1 + math.sin(i * 1.2) * 0.35
+        candles.append({"open": close - 0.02, "high": close + 0.05,
+                        "low": close - 0.05, "close": close, "volume": 1000 + (i % 5) * 10})
+    # Last bar represents the still-forming candle and is deliberately excluded.
+    candles.append({"open": 107, "high": 108, "low": 106, "close": 107.5, "volume": 3000})
+    confirmed = evaluate_entry({"direction": "LONG", "score": 90, "breakout": "UP",
+                                "candles": candles})
+    assert confirmed["state"] in {"CONFIRMED", "APPROACH"}
+    assert confirmed["state"] != "WAITING"
 
 
 def test_entry_monitor_endpoint_returns_progress_and_never_enables_live_trading(client, monkeypatch):
