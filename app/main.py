@@ -49,6 +49,7 @@ TIMEOUT = httpx.Timeout(12.0, connect=5.0)
 PAPER_STORE = PaperStore()
 PAPER_BALANCE, PAPER_TRADES = PAPER_STORE.load()
 PAPER_LOCK = asyncio.Lock()
+PAPER_FEE_RATE = min(0.01, max(0.0, safe_float(os.getenv("PAPER_FEE_RATE"), 0.0006)))
 
 def persist_paper_state():
     PAPER_STORE.save(PAPER_BALANCE, PAPER_TRADES)
@@ -173,7 +174,7 @@ def rsi(values, period=14):
         gains = (gains * (period - 1) + max(change, 0)) / period
         losses = (losses * (period - 1) + max(-change, 0)) / period
     if losses == 0:
-        return 100.0
+        return 50.0 if gains == 0 else 100.0
     return 100 - 100 / (1 + gains / losses)
 
 def macd(values, fast=12, slow=26, signal=9):
@@ -288,11 +289,14 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
                min_turnover: float = Query(0, ge=0), direction: str = "all", depth: str = Query("AUTO", pattern="^(AUTO|32|64|128|256)$")):
     if category not in ("spot","linear") or interval not in INTERVALS:
         raise HTTPException(status_code=400, detail="Invalid scan configuration")
+    if direction.lower() not in ("all", "long", "short", "neutral"):
+        raise HTTPException(status_code=400, detail="Invalid scan direction")
     tickers, ticker_provider = await get_market_tickers(category)
     tickers = [t for t in tickers if isinstance(t, dict) and str(t.get("symbol", "")).endswith("USDT")]
     tickers.sort(key=lambda x: safe_float(x.get("turnover24h")), reverse=True)
     eligible = [x for x in tickers if safe_float(x.get("turnover24h")) >= min_turnover]
-    effective_limit = min(len(eligible), {"32":32,"64":64,"128":128,"256":256}.get(depth, min(256,max(64,len(eligible)))))
+    depth_limit = {"32":32,"64":64,"128":128,"256":256}.get(depth, min(256,max(64,len(eligible))))
+    effective_limit = min(len(eligible), limit, depth_limit)
     candidates = eligible[:effective_limit]
     semaphore = asyncio.Semaphore(12)
     async def one(ticker):
@@ -361,6 +365,7 @@ async def engine_status():
                             "not_configured": ["forex", "us_stocks", "indices", "commodities"]},
             "paper_storage": "sqlite",
             "durable_storage_configured": PAPER_STORE.durable_configured,
+            "paper_fee_rate_per_side": PAPER_FEE_RATE,
             "trading_mode": "simulation", "live_trading_enabled": False}
 
 @app.get("/api/strategies")
@@ -513,9 +518,58 @@ async def paper_account():
         return {"balance": PAPER_BALANCE, "availableBalance": PAPER_BALANCE, "equity": PAPER_BALANCE + reserved,
                 "trades": PAPER_TRADES, "openCount": len(open_trades),
                 "closedCount": len(closed_trades), "realizedPnl": round(realized, 8),
-                "reservedCapital": round(reserved, 8),
+                "reservedCapital": round(reserved, 8), "feeRatePerSide": PAPER_FEE_RATE,
                 "storage": {"backend": "sqlite", "durableConfigured": PAPER_STORE.durable_configured},
                 "live_trading_enabled": False}
+
+@app.get("/api/paper/summary")
+async def paper_summary():
+    async with PAPER_LOCK:
+        open_trades = [dict(t) for t in PAPER_TRADES if t["status"] == "OPEN"]
+        cash = PAPER_BALANCE
+        closed_trades = [dict(t) for t in PAPER_TRADES if t["status"] == "CLOSED"]
+    marks = {}
+    providers = set()
+    for category in ("spot", "linear"):
+        symbols = {t["symbol"] for t in open_trades if t.get("category", "spot") == category}
+        if not symbols:
+            continue
+        try:
+            tickers, provider = await get_market_tickers(category)
+            providers.add(provider)
+            for ticker in tickers:
+                symbol = str(ticker.get("symbol", "")).upper()
+                price = safe_float(ticker.get("lastPrice"))
+                if symbol in symbols and price > 0:
+                    marks[(category, symbol)] = price
+        except HTTPException as exc:
+            logger.warning("Paper summary mark refresh failed for %s: %s", category, exc.detail)
+    reserved = 0.0
+    gross_unrealized = 0.0
+    estimated_close_fees = 0.0
+    positions = []
+    for trade in open_trades:
+        category = trade.get("category", "spot")
+        mark = marks.get((category, trade["symbol"]), trade["entry"])
+        quantity = safe_float(trade["quantity"])
+        margin = safe_float(trade.get("margin"), trade["entry"] * quantity)
+        gross = (mark - trade["entry"]) * quantity * (1 if trade["side"] == "LONG" else -1)
+        close_fee = mark * quantity * PAPER_FEE_RATE
+        net = gross - safe_float(trade.get("entryFee")) - close_fee
+        reserved += margin
+        gross_unrealized += gross
+        estimated_close_fees += close_fee
+        positions.append({"id": trade["id"], "symbol": trade["symbol"], "side": trade["side"],
+                          "entry": trade["entry"], "markPrice": mark, "quantity": quantity,
+                          "unrealizedPnlAfterFees": round(net, 8),
+                          "leverage": trade.get("leverage", 1)})
+    realized = sum(safe_float(t.get("pnl")) for t in closed_trades)
+    return {"balance": round(cash, 8), "reservedMargin": round(reserved, 8),
+            "equity": round(cash + reserved + gross_unrealized - estimated_close_fees, 8),
+            "realizedPnl": round(realized, 8),
+            "unrealizedPnlAfterFees": round(gross_unrealized - sum(safe_float(t.get("entryFee")) for t in open_trades) - estimated_close_fees, 8),
+            "positions": positions, "providers": sorted(providers),
+            "feeRatePerSide": PAPER_FEE_RATE, "live_trading_enabled": False}
 
 @app.get("/api/paper/performance")
 async def paper_performance():
@@ -546,15 +600,17 @@ async def open_paper_trade(trade: PaperTrade):
     async with PAPER_LOCK:
         notional = trade.quantity * trade.entry
         margin = notional / trade.leverage
-        if margin > PAPER_BALANCE:
-            raise HTTPException(status_code=400, detail="Insufficient simulated margin")
+        entry_fee = notional * PAPER_FEE_RATE
+        if margin + entry_fee > PAPER_BALANCE:
+            raise HTTPException(status_code=400, detail="Insufficient simulated margin and entry fee")
         if trade.stop_loss is not None:
             invalid_stop = (trade.side.upper() == "LONG" and trade.stop_loss >= trade.entry) or (trade.side.upper() == "SHORT" and trade.stop_loss <= trade.entry)
             if invalid_stop:
                 raise HTTPException(status_code=400, detail="Stop loss is on the wrong side of the entry")
-            risk_amount = abs(trade.entry - trade.stop_loss) * trade.quantity
+            stop_exit_fee = trade.stop_loss * trade.quantity * PAPER_FEE_RATE
+            risk_amount = abs(trade.entry - trade.stop_loss) * trade.quantity + entry_fee + stop_exit_fee
             if risk_amount > PAPER_BALANCE * 0.02:
-                raise HTTPException(status_code=400, detail="Trade risk exceeds the 2% simulated-account limit")
+                raise HTTPException(status_code=400, detail="Trade risk including estimated fees exceeds the 2% simulated-account limit")
         if trade.take_profit is not None:
             invalid_target = (trade.side.upper() == "LONG" and trade.take_profit <= trade.entry) or (trade.side.upper() == "SHORT" and trade.take_profit >= trade.entry)
             if invalid_target:
@@ -562,10 +618,18 @@ async def open_paper_trade(trade: PaperTrade):
         item = {"id":(max((t["id"] for t in PAPER_TRADES), default=0)+1),"symbol":trade.symbol.upper(),"side":trade.side.upper(),
                 "category":trade.category, "leverage": trade.leverage, "notional": notional, "margin": margin,
                 "entry":trade.entry,"quantity":trade.quantity,"stopLoss":trade.stop_loss,
-                "takeProfit":trade.take_profit,"status":"OPEN","openedAt":datetime.now(timezone.utc).isoformat()}
+                "takeProfit":trade.take_profit,"entryFee":round(entry_fee, 8),
+                "feeRate":PAPER_FEE_RATE, "status":"OPEN","openedAt":datetime.now(timezone.utc).isoformat()}
+        previous_balance = PAPER_BALANCE
         PAPER_TRADES.append(item)
-        PAPER_BALANCE -= margin
-        persist_paper_state()
+        PAPER_BALANCE -= margin + entry_fee
+        try:
+            persist_paper_state()
+        except Exception as exc:
+            PAPER_TRADES.pop()
+            PAPER_BALANCE = previous_balance
+            logger.exception("Unable to save paper trade")
+            raise HTTPException(status_code=503, detail="Could not persist simulated trade") from exc
     return {"trade":item,"balance":PAPER_BALANCE,"live_trading_enabled":False}
 
 @app.post("/api/paper/{trade_id}/close")
@@ -574,12 +638,24 @@ async def close_paper_trade(trade_id: int, exit_price: float = Query(gt=0)):
     async with PAPER_LOCK:
         item = next((t for t in PAPER_TRADES if t["id"]==trade_id and t["status"]=="OPEN"),None)
         if not item: raise HTTPException(status_code=404,detail="Open paper trade not found")
-        pnl = (exit_price-item["entry"])*item["quantity"]*(1 if item["side"]=="LONG" else -1)
+        gross_pnl = (exit_price-item["entry"])*item["quantity"]*(1 if item["side"]=="LONG" else -1)
+        exit_fee = exit_price * item["quantity"] * PAPER_FEE_RATE
+        pnl = gross_pnl - safe_float(item.get("entryFee")) - exit_fee
         margin = safe_float(item.get("margin"), item["quantity"] * item["entry"])
-        PAPER_BALANCE += margin + pnl
-        item.update({"status":"CLOSED","exitPrice":exit_price,"pnl":round(pnl,8),
+        previous_balance = PAPER_BALANCE
+        previous_item = dict(item)
+        PAPER_BALANCE += margin + gross_pnl - exit_fee
+        item.update({"status":"CLOSED","exitPrice":exit_price,"grossPnl":round(gross_pnl,8),
+                     "exitFee":round(exit_fee,8),"pnl":round(pnl,8),
                      "closedAt":datetime.now(timezone.utc).isoformat()})
-        persist_paper_state()
+        try:
+            persist_paper_state()
+        except Exception as exc:
+            PAPER_BALANCE = previous_balance
+            item.clear()
+            item.update(previous_item)
+            logger.exception("Unable to persist paper close")
+            raise HTTPException(status_code=503, detail="Could not persist simulated trade close") from exc
         return {"trade":item,"balance":PAPER_BALANCE,"live_trading_enabled":False}
 
 @app.post("/api/paper/monitor")
@@ -604,6 +680,8 @@ async def monitor_paper_trades():
             logger.warning("Paper monitor cannot fetch %s marks: %s", category, exc.detail)
     closed = []
     async with PAPER_LOCK:
+        previous_balance = PAPER_BALANCE
+        previous_trades = [dict(t) for t in PAPER_TRADES]
         for item in PAPER_TRADES:
             if item["status"] != "OPEN":
                 continue
@@ -618,16 +696,25 @@ async def monitor_paper_trades():
             target_hit = target is not None and ((side == "LONG" and mark >= target) or (side == "SHORT" and mark <= target))
             if not (stop_hit or target_hit):
                 continue
-            pnl = (mark - item["entry"]) * item["quantity"] * (1 if side == "LONG" else -1)
+            gross_pnl = (mark - item["entry"]) * item["quantity"] * (1 if side == "LONG" else -1)
+            exit_fee = mark * item["quantity"] * PAPER_FEE_RATE
+            pnl = gross_pnl - safe_float(item.get("entryFee")) - exit_fee
             margin = safe_float(item.get("margin"), item["quantity"] * item["entry"])
-            PAPER_BALANCE += margin + pnl
-            item.update({"status": "CLOSED", "exitPrice": mark, "pnl": round(pnl, 8),
+            PAPER_BALANCE += margin + gross_pnl - exit_fee
+            item.update({"status": "CLOSED", "exitPrice": mark, "grossPnl": round(gross_pnl, 8),
+                         "exitFee": round(exit_fee, 8), "pnl": round(pnl, 8),
                          "closeReason": "STOP_LOSS" if stop_hit else "TAKE_PROFIT",
                          "closedAt": datetime.now(timezone.utc).isoformat()})
             closed.append({"id": item["id"], "symbol": item["symbol"],
                            "reason": item["closeReason"], "exitPrice": mark, "pnl": item["pnl"]})
         if closed:
-            persist_paper_state()
+            try:
+                persist_paper_state()
+            except Exception as exc:
+                PAPER_BALANCE = previous_balance
+                PAPER_TRADES[:] = previous_trades
+                logger.exception("Unable to persist paper monitor batch")
+                raise HTTPException(status_code=503, detail="Could not persist monitored paper trade exits") from exc
     return {"checked": len(open_trades), "closed": closed,
             "live_trading_enabled": False}
 

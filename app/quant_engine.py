@@ -79,6 +79,30 @@ def enrich_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
     analysis["classification"] = classification
     analysis["reasons"] = reasons
     analysis["riskReward"] = 1.5 if analysis.get("target1") and stop else None
+    pre_move_score = 0
+    pre_move_reasons: list[str] = []
+    if len(candles) >= 20 and price > 0:
+        recent = candles[-20:]
+        range_pct = (max(float(c["high"]) for c in recent) - min(float(c["low"]) for c in recent)) / price
+        if volume_ratio is not None and float(volume_ratio) >= 1.3:
+            pre_move_score += 30
+            pre_move_reasons.append("ارتفاع الحجم")
+        if range_pct <= 0.025:
+            pre_move_score += 20
+            pre_move_reasons.append("تضيق النطاق")
+        if len(closes := [float(c["close"]) for c in candles]) >= 6:
+            momentum5 = (closes[-1] / closes[-6] - 1.0) * 100.0 if closes[-6] else 0.0
+            if abs(momentum5) >= 0.2:
+                pre_move_score += 20
+                pre_move_reasons.append("تغير الزخم القصير")
+        recent_high = max(float(c["high"]) for c in recent)
+        recent_low = min(float(c["low"]) for c in recent)
+        if recent_high > recent_low and min(abs(price / recent_high - 1), abs(price / recent_low - 1)) <= 0.007:
+            pre_move_score += 30
+            pre_move_reasons.append("قرب حافة النطاق")
+    analysis["preMoveScore"] = min(100, pre_move_score)
+    analysis["preMoveLabel"] = "WATCH" if pre_move_score >= 60 else "LOW"
+    analysis["preMoveReasons"] = pre_move_reasons
     return analysis
 
 

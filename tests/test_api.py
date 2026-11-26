@@ -44,12 +44,14 @@ def test_paper_trade_open_and_close(client):
     trade = opened.json()["trade"]
     assert trade["status"] == "OPEN"
     assert opened.json()["live_trading_enabled"] is False
-    assert opened.json()["balance"] == 9_800
+    assert opened.json()["balance"] == pytest.approx(9_799.88)
 
     closed = client.post(f"/api/paper/{trade['id']}/close?exit_price=110")
     assert closed.status_code == 200
     assert closed.json()["trade"]["status"] == "CLOSED"
-    assert closed.json()["trade"]["pnl"] == 20
+    assert closed.json()["trade"]["grossPnl"] == 20
+    assert closed.json()["trade"]["pnl"] == pytest.approx(19.748)
+    assert closed.json()["balance"] == pytest.approx(10_019.748)
     assert closed.json()["live_trading_enabled"] is False
 
 
@@ -149,6 +151,8 @@ def test_analysis_exposes_atr_and_explainable_reasons():
     assert result["atrPercent"] > 0
     assert isinstance(result["reasons"], list)
     assert result["classification"] in {"STRONG", "NEEDS_CONFIRMATION", "HIGH_RISK", "WAIT"}
+    assert 0 <= result["preMoveScore"] <= 100
+    assert result["preMoveLabel"] in {"WATCH", "LOW"}
 
 
 def test_paper_trade_risk_guard_rejects_wrong_side_stop(client):
@@ -167,7 +171,7 @@ def test_paper_trade_state_is_saved_to_sqlite(client):
     })
     assert response.status_code == 200
     balance, trades = main.PAPER_STORE.load()
-    assert balance == 9900
+    assert balance == pytest.approx(9_899.94)
     assert len(trades) == 1
     assert trades[0]["symbol"] == "ETHUSDT"
 
@@ -259,7 +263,7 @@ def test_paper_monitor_closes_when_stop_is_hit(client, monkeypatch):
     account = client.get("/api/paper").json()
     assert account["openCount"] == 0
     assert account["closedCount"] == 1
-    assert account["trades"][0]["pnl"] == -11
+    assert account["trades"][0]["pnl"] == pytest.approx(-11.1134)
 
 
 def test_market_flow_liquidity_and_strategy_apis_are_registered(client):
@@ -286,12 +290,12 @@ def test_futures_paper_position_uses_leverage_margin_and_realized_pnl(client):
     payload = opened.json()
     assert payload["trade"]["leverage"] == 5
     assert payload["trade"]["margin"] == 200
-    assert payload["balance"] == 9800
+    assert payload["balance"] == pytest.approx(9_799.4)
 
     closed = client.post(f"/api/paper/{payload['trade']['id']}/close?exit_price=95")
     assert closed.status_code == 200
-    assert closed.json()["trade"]["pnl"] == 50
-    assert closed.json()["balance"] == 10050
+    assert closed.json()["trade"]["pnl"] == pytest.approx(48.83)
+    assert closed.json()["balance"] == pytest.approx(10_048.83)
 
 
 def test_spot_simulation_rejects_short_and_leverage(client):
@@ -305,3 +309,29 @@ def test_spot_simulation_rejects_short_and_leverage(client):
         "leverage": 2, "entry": 100, "quantity": 1, "stop_loss": 90
     })
     assert leveraged.status_code == 400
+
+
+def test_flat_market_rsi_is_neutral_not_overbought():
+    assert main.rsi([100.0] * 30) == 50.0
+
+
+def test_paper_summary_includes_mark_to_market_and_fee_estimate(client, monkeypatch):
+    async def fake_tickers(category):
+        return ([{"symbol": "BTCUSDT", "lastPrice": 110}], "Bybit")
+    monkeypatch.setattr(main, "get_market_tickers", fake_tickers)
+    opened = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "LONG", "category": "spot",
+        "entry": 100, "quantity": 1, "stop_loss": 95, "take_profit": 120
+    })
+    assert opened.status_code == 200
+    summary = client.get("/api/paper/summary")
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["equity"] > payload["balance"]
+    assert payload["unrealizedPnlAfterFees"] == pytest.approx(9.874)
+    assert payload["live_trading_enabled"] is False
+
+
+def test_scan_rejects_unknown_direction_before_market_request(client):
+    response = client.get("/api/scan?direction=sideways")
+    assert response.status_code == 400
