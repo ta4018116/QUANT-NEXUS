@@ -173,7 +173,7 @@ def test_backtest_calculator_returns_metrics():
     assert result["strategy"].startswith("EMA20/EMA50")
     assert result["tradeCount"] >= 1
     assert result["finalBalance"] > result["initialBalance"]
-    assert result["live_trading_enabled"] if "live_trading_enabled" in result else True
+    assert result["live_trading_enabled"] is False
 
 
 def test_analysis_command_executes_real_trend_analysis(client, monkeypatch):
