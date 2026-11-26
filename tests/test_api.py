@@ -6,8 +6,7 @@ from app import main
 
 @pytest.fixture()
 def client():
-    main.PAPER_TRADES.clear()
-    main.PAPER_BALANCE = 10_000.0
+    main.reset_paper_state(10_000.0)
     return TestClient(main.app)
 
 
@@ -130,3 +129,179 @@ def test_macd_returns_values_when_history_is_sufficient():
     assert line is not None
     assert signal is not None
     assert histogram == pytest.approx(line - signal)
+
+
+def make_rows(count=120):
+    rows = []
+    for i in range(count):
+        close = 100 + i * 0.15 + (i % 7) * 0.08
+        open_price = close - 0.05
+        high = close + 0.3
+        low = open_price - 0.25
+        rows.append([str(i * 60_000), str(open_price), str(high), str(low),
+                     str(close), str(1000 + i * 2)])
+    return rows
+
+
+def test_analysis_exposes_atr_and_explainable_reasons():
+    result = main.analyze_klines(make_rows())
+    assert result["atr14"] is not None
+    assert result["atrPercent"] > 0
+    assert isinstance(result["reasons"], list)
+    assert result["classification"] in {"STRONG", "NEEDS_CONFIRMATION", "HIGH_RISK", "WAIT"}
+
+
+def test_paper_trade_risk_guard_rejects_wrong_side_stop(client):
+    response = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "LONG", "entry": 100,
+        "quantity": 1, "stop_loss": 101, "take_profit": 110
+    })
+    assert response.status_code == 400
+    assert "Stop loss" in response.json()["detail"]
+
+
+def test_paper_trade_state_is_saved_to_sqlite(client):
+    response = client.post("/api/paper", json={
+        "symbol": "ETHUSDT", "side": "LONG", "entry": 100,
+        "quantity": 1, "stop_loss": 90, "take_profit": 120
+    })
+    assert response.status_code == 200
+    balance, trades = main.PAPER_STORE.load()
+    assert balance == 9900
+    assert len(trades) == 1
+    assert trades[0]["symbol"] == "ETHUSDT"
+
+
+def test_position_size_endpoint_caps_risk_at_two_percent(client):
+    response = client.post("/api/risk/position-size", json={
+        "equity": 10000, "risk_pct": 1, "entry": 100, "stop_loss": 95
+    })
+    assert response.status_code == 200
+    assert response.json()["riskAmount"] == 100
+    assert response.json()["quantity"] == 20
+    assert client.post("/api/risk/position-size", json={
+        "equity": 10000, "risk_pct": 3, "entry": 100, "stop_loss": 95
+    }).status_code == 422
+
+
+def test_strategy_list_and_backtest_endpoint(client, monkeypatch):
+    async def fake_klines(symbol, category, interval, limit):
+        return make_rows(), "Bybit"
+
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    strategies = client.get("/api/strategies")
+    assert strategies.status_code == 200
+    assert strategies.json()["strategies"][0]["id"] == "ema_crossover"
+    response = client.get("/api/backtest/BTCUSDT?fast_period=5&slow_period=15")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["symbol"] == "BTCUSDT"
+    assert payload["sampleBars"] == 120
+    assert "maxDrawdownPct" in payload
+    assert payload["live_trading_enabled"] is False
+
+
+def test_liquidity_endpoint_reports_depth_imbalance(client, monkeypatch):
+    async def fake_orderbook(symbol, category):
+        return ([["100", "10"], ["99.9", "5"]], [["100.1", "4"], ["100.2", "3"]], "Bybit")
+
+    monkeypatch.setattr(main, "get_orderbook", fake_orderbook)
+    response = client.get("/api/liquidity/BTCUSDT")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["spreadPct"] > 0
+    assert payload["depthImbalance"] > 0
+    assert payload["bias"] == "BUY_SIDE"
+
+
+def test_market_flow_marks_outliers_as_large_trade_prints(client, monkeypatch):
+    async def fake_trades(symbol, category):
+        return ([{"price": 100, "size": 1, "side": "BUY", "time": 1},
+                 {"price": 100, "size": 1, "side": "SELL", "time": 2},
+                 {"price": 100, "size": 500, "side": "BUY", "time": 3}], "Bybit")
+
+    monkeypatch.setattr(main, "get_recent_trades", fake_trades)
+    response = client.get("/api/flow/BTCUSDT")
+    assert response.status_code == 200
+    assert response.json()["largeTradePrints"]
+    assert "not proof" in response.json()["interpretation"]
+
+
+def test_engine_status_discloses_storage_and_market_coverage(client):
+    payload = client.get("/api/engine/status").json()
+    assert payload["paper_storage"] == "sqlite"
+    assert payload["markets"]["forex"] is False
+    assert payload["live_trading_enabled"] is False
+
+
+def test_paper_requires_stop_loss_for_every_position(client):
+    response = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "LONG", "entry": 100, "quantity": 1
+    })
+    assert response.status_code == 400
+    assert "stop loss is required" in response.json()["detail"].lower()
+
+
+def test_paper_monitor_closes_when_stop_is_hit(client, monkeypatch):
+    async def fake_tickers(category):
+        return ([{"symbol": "BTCUSDT", "lastPrice": 89}], "Bybit")
+
+    monkeypatch.setattr(main, "get_market_tickers", fake_tickers)
+    opened = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "LONG", "category": "spot",
+        "entry": 100, "quantity": 1, "stop_loss": 90, "take_profit": 120
+    })
+    assert opened.status_code == 200
+    monitored = client.post("/api/paper/monitor")
+    assert monitored.status_code == 200
+    payload = monitored.json()
+    assert payload["closed"][0]["reason"] == "STOP_LOSS"
+    account = client.get("/api/paper").json()
+    assert account["openCount"] == 0
+    assert account["closedCount"] == 1
+    assert account["trades"][0]["pnl"] == -11
+
+
+def test_market_flow_liquidity_and_strategy_apis_are_registered(client):
+    paths = {route.path for route in main.app.routes}
+    assert "/api/liquidity/{symbol}" in paths
+    assert "/api/flow/{symbol}" in paths
+    assert "/api/backtest/{symbol}" in paths
+    assert "/api/paper/monitor" in paths
+    assert "/api/risk/position-size" in paths
+
+
+def test_backtest_rejects_invalid_fast_slow_period_order(client):
+    response = client.get("/api/backtest/BTCUSDT?fast_period=30&slow_period=10")
+    assert response.status_code == 400
+
+
+def test_futures_paper_position_uses_leverage_margin_and_realized_pnl(client):
+    opened = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "SHORT", "category": "linear",
+        "leverage": 5, "entry": 100, "quantity": 10,
+        "stop_loss": 101, "take_profit": 90
+    })
+    assert opened.status_code == 200
+    payload = opened.json()
+    assert payload["trade"]["leverage"] == 5
+    assert payload["trade"]["margin"] == 200
+    assert payload["balance"] == 9800
+
+    closed = client.post(f"/api/paper/{payload['trade']['id']}/close?exit_price=95")
+    assert closed.status_code == 200
+    assert closed.json()["trade"]["pnl"] == 50
+    assert closed.json()["balance"] == 10050
+
+
+def test_spot_simulation_rejects_short_and_leverage(client):
+    short = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "SHORT", "category": "spot",
+        "entry": 100, "quantity": 1, "stop_loss": 110
+    })
+    assert short.status_code == 400
+    leveraged = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "LONG", "category": "spot",
+        "leverage": 2, "entry": 100, "quantity": 1, "stop_loss": 90
+    })
+    assert leveraged.status_code == 400

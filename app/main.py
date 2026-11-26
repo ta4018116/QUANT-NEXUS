@@ -13,6 +13,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .paper_store import PaperStore
+from .quant_engine import ema_crossover_backtest, enrich_analysis
+
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="QUANT NEXUS", version="1.0.0",
               description="Multi-market intelligence and paper trading only")
@@ -43,9 +46,18 @@ def safe_float(value, default=0.0):
 
 BYBIT = "https://api.bybit.com"
 TIMEOUT = httpx.Timeout(12.0, connect=5.0)
-PAPER_TRADES = []
-PAPER_BALANCE = 10000.0
+PAPER_STORE = PaperStore()
+PAPER_BALANCE, PAPER_TRADES = PAPER_STORE.load()
 PAPER_LOCK = asyncio.Lock()
+
+def persist_paper_state():
+    PAPER_STORE.save(PAPER_BALANCE, PAPER_TRADES)
+
+def reset_paper_state(balance: float = 10000.0):
+    global PAPER_BALANCE, PAPER_TRADES
+    PAPER_BALANCE = float(balance)
+    PAPER_TRADES = []
+    PAPER_STORE.reset(PAPER_BALANCE)
 LIVE_TRADING_ENABLED = False
 INTERVALS = {"1m":"1", "3m":"3", "5m":"5", "15m":"15", "30m":"30",
              "1h":"60", "2h":"120", "4h":"240", "1d":"D", "1w":"W"}
@@ -173,7 +185,7 @@ def macd(values, fast=12, slow=26, signal=9):
     sig=ema(line,signal) if len(line)>=signal else None
     return (line[-1],sig,line[-1]-sig) if sig is not None else (None,None,None)
 
-def analyze_klines(rows):
+def analyze_klines(rows, include_all_candles=False):
     if not isinstance(rows, list):
         raise HTTPException(status_code=502, detail="Market provider returned invalid candle data")
     candles = []
@@ -231,11 +243,11 @@ def analyze_klines(rows):
         stop, target1, target2 = last+risk, last-risk*1.5, last-risk*2.5
     else:
         stop = target1 = target2 = None
-    return {"price":last,"change24h":None,"rsi":round(strength,2) if strength is not None else None,
+    return enrich_analysis({"price":last,"change24h":None,"rsi":round(strength,2) if strength is not None else None,
             "ema20":e20,"ema50":e50,"macd":macd_line,"macdSignal":macd_signal,"macdHistogram":macd_hist,"vwap":vwap,"volumeRatio":round(vol_ratio,2) if vol_ratio is not None else None,
             "support":recent_low,"resistance":recent_high,"score":score,"direction":direction,
             "entry":last if direction != "NEUTRAL" else None,"stopLoss":stop,
-            "target1":target1,"target2":target2,"candles":candles[-100:]}
+            "target1":target1,"target2":target2,"candles":candles if include_all_candles else candles[-100:]})
 
 @app.get("/health")
 async def health():
@@ -330,21 +342,162 @@ async def multi_timeframe(symbol: str, category: str = "spot"):
     valid = [x for x in items if "score" in x]
     directions = {x["direction"] for x in valid if x["direction"] != "NEUTRAL"}
     average = round(sum(x["score"] for x in valid)/len(valid), 1) if valid else None
+    aligned = len(valid) >= 2 and len(directions) == 1 and all(x["direction"] != "NEUTRAL" for x in valid)
     return {"symbol": symbol.upper(), "frames": items, "averageScore": average,
-            "aligned": len(directions) <= 1, "live_trading_enabled": False}
+            "aligned": aligned, "validFrames": len(valid),
+            "consensus": next(iter(directions)) if aligned else "MIXED_OR_INSUFFICIENT",
+            "live_trading_enabled": False}
 
 @app.get("/api/engine/status")
 async def engine_status():
     return {"engine": "QUANT INTELLIGENCE",
-            "indicators": ["EMA20", "EMA50", "RSI14", "MACD12-26-9", "VWAP", "VolumeRatio"],
+            "engine_version": "2.0",
+            "capabilities": ["technical_analysis", "multi_timeframe", "adaptive_scanner", "signal_explanations", "historical_backtest", "paper_risk_controls"],
+            "indicators": ["EMA20", "EMA50", "RSI14", "MACD12-26-9", "VWAP", "VolumeRatio", "ATR14"],
             "scan_depths": [32, 64, 128, 256, "AUTO"],
             "markets": {"spot": True, "linear_futures": True, "forex": False,
                         "us_stocks": False, "indices": False, "commodities": False},
+            "market_data": {"connected": ["crypto_spot", "crypto_linear_futures"],
+                            "not_configured": ["forex", "us_stocks", "indices", "commodities"]},
+            "paper_storage": "sqlite",
+            "durable_storage_configured": PAPER_STORE.durable_configured,
             "trading_mode": "simulation", "live_trading_enabled": False}
 
+@app.get("/api/strategies")
+async def strategies():
+    return {"strategies": [{"id": "ema_crossover", "name": "EMA Crossover", "mode": "long_only",
+                            "description": "Enter after a completed fast/slow EMA bullish crossover; exit on bearish crossover.",
+                            "default_fast": 10, "default_slow": 30,
+                            "fees_and_slippage": "Included in backtest parameters"}],
+            "live_trading_enabled": False}
+
+@app.get("/api/backtest/{symbol}")
+async def backtest(symbol: str, category: str = "spot", interval: str = "1h",
+                   limit: int = Query(500, ge=60, le=1000),
+                   starting_balance: float = Query(10000, gt=0, le=100000000),
+                   position_fraction: float = Query(0.2, gt=0, le=1),
+                   fast_period: int = Query(10, ge=2, le=50),
+                   slow_period: int = Query(30, ge=5, le=200),
+                   fee_bps: float = Query(10, ge=0, le=100),
+                   slippage_bps: float = Query(5, ge=0, le=100)):
+    if category not in ("spot", "linear") or interval not in INTERVALS:
+        raise HTTPException(status_code=400, detail="Invalid backtest market or interval")
+    if slow_period <= fast_period:
+        raise HTTPException(status_code=400, detail="slow_period must be greater than fast_period")
+    rows, provider = await get_market_klines(symbol, category, interval, limit)
+    candles = analyze_klines(rows, include_all_candles=True)["candles"]
+    try:
+        result = ema_crossover_backtest(candles, starting_balance=starting_balance,
+            position_fraction=position_fraction, fast_period=fast_period,
+            slow_period=slow_period, fee_bps=fee_bps, slippage_bps=slippage_bps)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result.update({"symbol": symbol.upper(), "category": category, "interval": interval,
+                   "provider": provider, "generatedAt": datetime.now(timezone.utc).isoformat(),
+                   "trading_mode": "simulation", "live_trading_enabled": False})
+    return result
+
+class PositionSizeRequest(BaseModel):
+    equity: float = Field(gt=0, le=1000000000)
+    risk_pct: float = Field(gt=0, le=2.0)
+    entry: float = Field(gt=0)
+    stop_loss: float = Field(gt=0)
+
+@app.post("/api/risk/position-size")
+async def position_size(request: PositionSizeRequest):
+    distance = abs(request.entry - request.stop_loss)
+    if distance <= 0:
+        raise HTTPException(status_code=400, detail="Entry and stop loss must differ")
+    risk_amount = request.equity * request.risk_pct / 100.0
+    quantity = risk_amount / distance
+    return {"riskAmount": round(risk_amount, 8), "quantity": round(quantity, 10),
+            "notional": round(quantity * request.entry, 8), "riskPct": request.risk_pct,
+            "live_trading_enabled": False}
+
+
+async def get_orderbook(symbol: str, category: str):
+    try:
+        result = await bybit_get("/v5/market/orderbook", {"category": category, "symbol": symbol.upper(), "limit": 50})
+        return result.get("b", []), result.get("a", []), "Bybit"
+    except HTTPException as bybit_error:
+        logger.warning("Bybit orderbook unavailable for %s: %s", symbol, bybit_error.detail)
+        data = await okx_get("/api/v5/market/books", {"instId": okx_instrument(symbol, category), "sz": "50"})
+        if not data:
+            raise HTTPException(status_code=502, detail="No orderbook data from configured providers")
+        return data[0].get("bids", []), data[0].get("asks", []), "OKX"
+
+
+@app.get("/api/liquidity/{symbol}")
+async def liquidity(symbol: str, category: str = "spot"):
+    if category not in ("spot", "linear"):
+        raise HTTPException(status_code=400, detail="Invalid category")
+    bids, asks, provider = await get_orderbook(symbol, category)
+    if not bids or not asks:
+        raise HTTPException(status_code=502, detail="Orderbook is empty")
+    best_bid = safe_float(bids[0][0])
+    best_ask = safe_float(asks[0][0])
+    if best_bid <= 0 or best_ask <= 0 or best_ask < best_bid:
+        raise HTTPException(status_code=502, detail="Orderbook prices are invalid")
+    bid_depth = sum(safe_float(row[0]) * safe_float(row[1]) for row in bids[:20] if len(row) >= 2)
+    ask_depth = sum(safe_float(row[0]) * safe_float(row[1]) for row in asks[:20] if len(row) >= 2)
+    total_depth = bid_depth + ask_depth
+    imbalance = (bid_depth - ask_depth) / total_depth if total_depth > 0 else 0.0
+    return {"symbol": symbol.upper(), "category": category, "provider": provider,
+            "bestBid": best_bid, "bestAsk": best_ask,
+            "spreadPct": round((best_ask - best_bid) / ((best_ask + best_bid) / 2) * 100, 5),
+            "bidDepthNotional20": round(bid_depth, 2), "askDepthNotional20": round(ask_depth, 2),
+            "depthImbalance": round(imbalance, 4),
+            "bias": "BUY_SIDE" if imbalance >= 0.15 else ("SELL_SIDE" if imbalance <= -0.15 else "BALANCED"),
+            "interpretation": "Top-of-book depth snapshot only; it can change or be cancelled.",
+            "live_trading_enabled": False}
+
+
+async def get_recent_trades(symbol: str, category: str):
+    try:
+        result = await bybit_get("/v5/market/recent-trade", {"category": category, "symbol": symbol.upper(), "limit": 100})
+        rows = result.get("list", [])
+        normalized = [{"price": safe_float(x.get("price")), "size": safe_float(x.get("size")),
+                       "side": str(x.get("side", "")).upper(), "time": safe_float(x.get("time"))}
+                      for x in rows if isinstance(x, dict)]
+        return normalized, "Bybit"
+    except HTTPException as bybit_error:
+        logger.warning("Bybit recent trades unavailable for %s: %s", symbol, bybit_error.detail)
+        rows = await okx_get("/api/v5/market/trades", {"instId": okx_instrument(symbol, category), "limit": "100"})
+        normalized = [{"price": safe_float(x.get("px")), "size": safe_float(x.get("sz")),
+                       "side": str(x.get("side", "")).upper(), "time": safe_float(x.get("ts"))}
+                      for x in rows if isinstance(x, dict)]
+        return normalized, "OKX"
+
+
+@app.get("/api/flow/{symbol}")
+async def market_flow(symbol: str, category: str = "spot"):
+    if category not in ("spot", "linear"):
+        raise HTTPException(status_code=400, detail="Invalid category")
+    rows, provider = await get_recent_trades(symbol, category)
+    notionals = [x["price"] * x["size"] for x in rows if x["price"] > 0 and x["size"] > 0]
+    if not notionals:
+        raise HTTPException(status_code=502, detail="No valid recent trade data")
+    ordered = sorted(notionals)
+    median_notional = ordered[len(ordered) // 2]
+    threshold = max(median_notional * 5, 25000.0)
+    buys = sum(x["price"] * x["size"] for x in rows if x["side"] == "BUY")
+    sells = sum(x["price"] * x["size"] for x in rows if x["side"] == "SELL")
+    large = [{"price": x["price"], "size": x["size"], "side": x["side"],
+              "notional": round(x["price"] * x["size"], 2), "time": x["time"]}
+             for x in rows if x["price"] * x["size"] >= threshold]
+    return {"symbol": symbol.upper(), "category": category, "provider": provider,
+            "sampleTrades": len(rows), "buyNotional": round(buys, 2), "sellNotional": round(sells, 2),
+            "buySellRatio": round(buys / sells, 4) if sells > 0 else None,
+            "largeTradeThreshold": round(threshold, 2), "largeTradePrints": large[:20],
+            "interpretation": "Large prints are size outliers in the fetched trade sample, not proof of whale identity or intent.",
+            "live_trading_enabled": False}
+
+
 class PaperTrade(BaseModel):
-    symbol: str = Field(min_length=2, max_length=30)
+    symbol: str = Field(min_length=2, max_length=30, pattern="^[A-Za-z0-9]{2,30}$")
     side: str
+    category: str = "spot"
+    leverage: int = Field(default=1, ge=1, le=10)
     entry: float = Field(gt=0)
     quantity: float = Field(gt=0)
     stop_loss: Optional[float] = Field(default=None, gt=0)
@@ -353,23 +506,66 @@ class PaperTrade(BaseModel):
 @app.get("/api/paper")
 async def paper_account():
     async with PAPER_LOCK:
-        return {"balance":PAPER_BALANCE,"trades":PAPER_TRADES,
-                "openCount":sum(1 for t in PAPER_TRADES if t["status"]=="OPEN"),
-                "live_trading_enabled":False}
+        open_trades = [t for t in PAPER_TRADES if t["status"] == "OPEN"]
+        closed_trades = [t for t in PAPER_TRADES if t["status"] == "CLOSED"]
+        realized = sum(safe_float(t.get("pnl")) for t in closed_trades)
+        reserved = sum(safe_float(t.get("margin"), safe_float(t.get("entry")) * safe_float(t.get("quantity"))) for t in open_trades)
+        return {"balance": PAPER_BALANCE, "availableBalance": PAPER_BALANCE, "equity": PAPER_BALANCE + reserved,
+                "trades": PAPER_TRADES, "openCount": len(open_trades),
+                "closedCount": len(closed_trades), "realizedPnl": round(realized, 8),
+                "reservedCapital": round(reserved, 8),
+                "storage": {"backend": "sqlite", "durableConfigured": PAPER_STORE.durable_configured},
+                "live_trading_enabled": False}
+
+@app.get("/api/paper/performance")
+async def paper_performance():
+    async with PAPER_LOCK:
+        closed = [t for t in PAPER_TRADES if t["status"] == "CLOSED"]
+        pnls = [safe_float(t.get("pnl")) for t in closed]
+        wins = [p for p in pnls if p > 0]
+        losses = [p for p in pnls if p < 0]
+        gross_loss = abs(sum(losses))
+        return {"closedTrades": len(closed), "winRatePct": round(len(wins) / len(closed) * 100, 2) if closed else 0,
+                "netPnl": round(sum(pnls), 8), "profitFactor": round(sum(wins) / gross_loss, 4) if gross_loss else None,
+                "averagePnl": round(sum(pnls) / len(pnls), 8) if pnls else 0,
+                "live_trading_enabled": False}
 
 @app.post("/api/paper")
 async def open_paper_trade(trade: PaperTrade):
     global PAPER_BALANCE
     if trade.side.upper() not in ("LONG","SHORT"):
         raise HTTPException(status_code=400, detail="side must be LONG or SHORT")
+    if trade.category not in ("spot", "linear"):
+        raise HTTPException(status_code=400, detail="category must be spot or linear")
+    if trade.category == "spot" and trade.side.upper() == "SHORT":
+        raise HTTPException(status_code=400, detail="Spot short positions are not supported by this simulator")
+    if trade.category == "spot" and trade.leverage != 1:
+        raise HTTPException(status_code=400, detail="Spot simulation is limited to 1x")
+    if trade.stop_loss is None:
+        raise HTTPException(status_code=400, detail="A stop loss is required for every simulated trade")
     async with PAPER_LOCK:
-        if trade.quantity * trade.entry > PAPER_BALANCE:
-            raise HTTPException(status_code=400, detail="Insufficient simulated balance")
+        notional = trade.quantity * trade.entry
+        margin = notional / trade.leverage
+        if margin > PAPER_BALANCE:
+            raise HTTPException(status_code=400, detail="Insufficient simulated margin")
+        if trade.stop_loss is not None:
+            invalid_stop = (trade.side.upper() == "LONG" and trade.stop_loss >= trade.entry) or (trade.side.upper() == "SHORT" and trade.stop_loss <= trade.entry)
+            if invalid_stop:
+                raise HTTPException(status_code=400, detail="Stop loss is on the wrong side of the entry")
+            risk_amount = abs(trade.entry - trade.stop_loss) * trade.quantity
+            if risk_amount > PAPER_BALANCE * 0.02:
+                raise HTTPException(status_code=400, detail="Trade risk exceeds the 2% simulated-account limit")
+        if trade.take_profit is not None:
+            invalid_target = (trade.side.upper() == "LONG" and trade.take_profit <= trade.entry) or (trade.side.upper() == "SHORT" and trade.take_profit >= trade.entry)
+            if invalid_target:
+                raise HTTPException(status_code=400, detail="Take profit is on the wrong side of the entry")
         item = {"id":(max((t["id"] for t in PAPER_TRADES), default=0)+1),"symbol":trade.symbol.upper(),"side":trade.side.upper(),
+                "category":trade.category, "leverage": trade.leverage, "notional": notional, "margin": margin,
                 "entry":trade.entry,"quantity":trade.quantity,"stopLoss":trade.stop_loss,
                 "takeProfit":trade.take_profit,"status":"OPEN","openedAt":datetime.now(timezone.utc).isoformat()}
         PAPER_TRADES.append(item)
-        PAPER_BALANCE -= trade.quantity * trade.entry
+        PAPER_BALANCE -= margin
+        persist_paper_state()
     return {"trade":item,"balance":PAPER_BALANCE,"live_trading_enabled":False}
 
 @app.post("/api/paper/{trade_id}/close")
@@ -379,10 +575,62 @@ async def close_paper_trade(trade_id: int, exit_price: float = Query(gt=0)):
         item = next((t for t in PAPER_TRADES if t["id"]==trade_id and t["status"]=="OPEN"),None)
         if not item: raise HTTPException(status_code=404,detail="Open paper trade not found")
         pnl = (exit_price-item["entry"])*item["quantity"]*(1 if item["side"]=="LONG" else -1)
-        PAPER_BALANCE += item["quantity"]*exit_price
+        margin = safe_float(item.get("margin"), item["quantity"] * item["entry"])
+        PAPER_BALANCE += margin + pnl
         item.update({"status":"CLOSED","exitPrice":exit_price,"pnl":round(pnl,8),
                      "closedAt":datetime.now(timezone.utc).isoformat()})
+        persist_paper_state()
         return {"trade":item,"balance":PAPER_BALANCE,"live_trading_enabled":False}
+
+@app.post("/api/paper/monitor")
+async def monitor_paper_trades():
+    """Mark open simulations against current exchange tickers and close hit SL/TP."""
+    global PAPER_BALANCE
+    async with PAPER_LOCK:
+        open_trades = [t for t in PAPER_TRADES if t["status"] == "OPEN"]
+    if not open_trades:
+        return {"checked": 0, "closed": [], "live_trading_enabled": False}
+    categories = {t.get("category", "spot") for t in open_trades}
+    prices: dict[tuple[str, str], float] = {}
+    for category in categories:
+        try:
+            tickers, _provider = await get_market_tickers(category)
+            for ticker in tickers:
+                symbol = str(ticker.get("symbol", "")).upper()
+                mark = safe_float(ticker.get("lastPrice"))
+                if symbol and mark > 0:
+                    prices[(category, symbol)] = mark
+        except HTTPException as exc:
+            logger.warning("Paper monitor cannot fetch %s marks: %s", category, exc.detail)
+    closed = []
+    async with PAPER_LOCK:
+        for item in PAPER_TRADES:
+            if item["status"] != "OPEN":
+                continue
+            category = item.get("category", "spot")
+            mark = prices.get((category, item["symbol"]))
+            if not mark:
+                continue
+            stop = item.get("stopLoss")
+            target = item.get("takeProfit")
+            side = item["side"]
+            stop_hit = stop is not None and ((side == "LONG" and mark <= stop) or (side == "SHORT" and mark >= stop))
+            target_hit = target is not None and ((side == "LONG" and mark >= target) or (side == "SHORT" and mark <= target))
+            if not (stop_hit or target_hit):
+                continue
+            pnl = (mark - item["entry"]) * item["quantity"] * (1 if side == "LONG" else -1)
+            margin = safe_float(item.get("margin"), item["quantity"] * item["entry"])
+            PAPER_BALANCE += margin + pnl
+            item.update({"status": "CLOSED", "exitPrice": mark, "pnl": round(pnl, 8),
+                         "closeReason": "STOP_LOSS" if stop_hit else "TAKE_PROFIT",
+                         "closedAt": datetime.now(timezone.utc).isoformat()})
+            closed.append({"id": item["id"], "symbol": item["symbol"],
+                           "reason": item["closeReason"], "exitPrice": mark, "pnl": item["pnl"]})
+        if closed:
+            persist_paper_state()
+    return {"checked": len(open_trades), "closed": closed,
+            "live_trading_enabled": False}
+
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
