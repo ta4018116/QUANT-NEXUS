@@ -82,9 +82,11 @@ implementation state of all 15 logical modules. Status values are conservative:
 - `planned`: no verified production data path is wired yet.
 
 The registry is a capability inventory, not a claim that every proposed engine
-is complete. Derivatives analytics (open interest, funding and liquidations),
-full market-structure validation, explicit regime classification and
-statistically calibrated opportunity probabilities remain on the roadmap.
+is complete. The purple derivatives engine provides Bybit open-interest and funding context
+plus a read-only Bybit `allLiquidation` WebSocket proxy for normalized LONG/SHORT
+liquidation events and USDT notional. Cross-exchange positioning history remains
+unintegrated, so the engine is still correctly marked `partial`. Opportunity
+scores are heuristic and are not calibrated win probabilities.
 
 
 ## Command-driven scanning and entry monitoring
@@ -94,3 +96,11 @@ statistically calibrated opportunity probabilities remain on the roadmap.
 - `GET /api/entry-monitor/{symbol}` reports WAITING, APPROACH or CONFIRMED using completed-candle indicator alignment. The UI refreshes the entry status and price/target progress every eight seconds while a symbol is selected.
 - Confirmation is informational only. No exchange order is submitted and all trading remains simulation-only.
 - Rules include trend alignment, support/resistance proximity, completed-candle breakouts, retest watch, volatility compression, volume expansion/contraction, momentum, RSI extremes, VWAP, MACD, liquidity, and risk/reward filters.
+
+
+## Purple derivatives and liquidation monitor
+- `GET /api/derivatives/{symbol}` reports Bybit open interest and funding-rate context for a USDT linear symbol.
+- `/ws/derivatives/{symbol}/liquidations` proxies Bybit's public V5 linear `allLiquidation.{symbol}` stream without exchange credentials.
+- The central monitoring room displays live liquidation events, liquidated LONG/SHORT notional and a rolling recent-event list for the selected symbol.
+- The feed reports executed liquidation prints only; it is not a complete map of positions at risk. The stream is read-only and cannot place orders.
+- Live trading remains disabled; all portfolio and order workflows remain simulation-only.
