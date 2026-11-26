@@ -301,6 +301,11 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
         raise HTTPException(status_code=400, detail="Invalid scan configuration")
     if direction.lower() not in ("all", "long", "short", "neutral"):
         raise HTTPException(status_code=400, detail="Invalid scan direction")
+    selected_commands = [x.strip() for x in command_ids.split(",") if x.strip()]
+    known_commands = {x["id"] for x in COMMANDS}
+    unknown = sorted(set(selected_commands) - known_commands)
+    if unknown:
+        raise HTTPException(status_code=400, detail="Unknown command_ids: " + ", ".join(unknown))
     tickers, ticker_provider = await get_market_tickers(category)
     tickers = [t for t in tickers if isinstance(t, dict) and str(t.get("symbol", "")).endswith("USDT")]
     tickers.sort(key=lambda x: safe_float(x.get("turnover24h")), reverse=True)
@@ -331,11 +336,6 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
                 logger.exception("Skipping failed market analysis for %s", ticker.get("symbol"))
                 return None
     results = await asyncio.gather(*(one(t) for t in candidates))
-    selected_commands = [x.strip() for x in command_ids.split(",") if x.strip()]
-    known_commands = {x["id"] for x in COMMANDS}
-    unknown = sorted(set(selected_commands) - known_commands)
-    if unknown:
-        raise HTTPException(status_code=400, detail="Unknown command_ids: " + ", ".join(unknown))
     filtered = []
     for item in results:
         if not item or (direction != "all" and item["direction"].lower() != direction.lower()):
