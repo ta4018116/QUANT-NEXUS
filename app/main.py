@@ -2,13 +2,15 @@ import asyncio
 import math
 import os
 import logging
+import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+import websockets
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -17,7 +19,7 @@ from .paper_store import PaperStore
 from .quant_engine import ema_crossover_backtest, enrich_analysis
 from .engine_registry import engine_registry
 from .command_engine import COMMANDS, matches_command, evaluate_entry
-from .derivatives_engine import summarize_derivatives
+from .derivatives_engine import summarize_derivatives, normalize_liquidations
 from .advanced_engines import market_regime, market_structure, opportunity_assessment, learning_monitoring
 
 BASE = Path(__file__).resolve().parent
@@ -49,6 +51,7 @@ def safe_float(value, default=0.0):
         return default
 
 BYBIT = "https://api.bybit.com"
+BYBIT_LINEAR_WS = "wss://stream.bybit.com/v5/public/linear"
 TIMEOUT = httpx.Timeout(12.0, connect=5.0)
 PAPER_STORE = PaperStore()
 PAPER_BALANCE, PAPER_TRADES = PAPER_STORE.load()
@@ -501,6 +504,39 @@ async def derivatives(symbol: str):
     )
     return {"symbol": symbol, "provider": "Bybit", **summary,
             "trading_mode": "simulation", "live_trading_enabled": False}
+
+
+@app.websocket("/ws/derivatives/{symbol}/liquidations")
+async def derivatives_liquidation_stream(websocket: WebSocket, symbol: str):
+    """Proxy Bybit's public all-liquidation stream for one USDT linear symbol."""
+    symbol = symbol.upper()
+    if not symbol.endswith("USDT") or not symbol.replace("USDT", "").isalnum():
+        await websocket.close(code=1008, reason="Only USDT linear symbols are supported")
+        return
+    await websocket.accept()
+    try:
+        async with websockets.connect(BYBIT_LINEAR_WS, ping_interval=20, ping_timeout=20, open_timeout=8) as upstream:
+            await upstream.send(json.dumps({"op": "subscribe", "args": [f"allLiquidation.{symbol}"]}))
+            await websocket.send_json({"type": "status", "status": "connected", "provider": "Bybit", "feed": "allLiquidation", "symbol": symbol, "trading_mode": "simulation", "live_trading_enabled": False})
+            async for raw in upstream:
+                try:
+                    payload = json.loads(raw)
+                except (TypeError, ValueError):
+                    continue
+                if payload.get("topic") != f"allLiquidation.{symbol}":
+                    continue
+                events = normalize_liquidations(payload.get("data", []))
+                if events:
+                    await websocket.send_json({"type": "liquidations", "events": events, "trading_mode": "simulation", "live_trading_enabled": False})
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:
+        logger.warning("Bybit liquidation stream ended for %s: %s", symbol, exc)
+        try:
+            await websocket.send_json({"type": "status", "status": "disconnected", "provider": "Bybit", "reason": "upstream_unavailable", "live_trading_enabled": False})
+            await websocket.close(code=1011)
+        except Exception:
+            pass
 
 
 @app.get("/api/strategies")
