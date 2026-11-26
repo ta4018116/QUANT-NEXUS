@@ -450,3 +450,69 @@ def test_responsive_card_dashboard_exposes_real_pages_opportunities_and_engine_r
     assert html.count("<script>") == 1
     assert html.count("</script>") == 1
     assert client.get("/api/engines").json()["live_trading_enabled"] is False
+
+
+
+def test_command_catalog_exposes_rules_and_paper_only_mode(client):
+    response = client.get("/api/commands")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] >= 20
+    ids = {item["id"] for item in payload["commands"]}
+    assert {"trend_up", "breakout_up", "volume_surge", "risk_reward"} <= ids
+    assert payload["scanner_mode"] == "selected_commands_only"
+    assert payload["live_trading_enabled"] is False
+
+
+def test_command_matcher_uses_explicit_rule_not_unselected_commands():
+    from app.command_engine import matches_command
+    sample = {"price": 110, "ema20": 108, "ema50": 105, "direction": "LONG",
+              "score": 80, "breakout": "UP", "volumeRatio": 1.8,
+              "rsi": 60, "macdHistogram": 1.2, "riskReward": 1.5,
+              "entry": 110, "stopLoss": 108, "target1": 113}
+    assert matches_command(sample, "trend_up") is True
+    assert matches_command(sample, "breakout_up") is True
+    assert matches_command(sample, "rsi_oversold") is False
+    assert matches_command(sample, "not-a-command") is False
+
+
+def test_scan_rejects_unknown_command_ids_before_provider_call(client):
+    response = client.get("/api/scan?command_ids=unknown_rule")
+    assert response.status_code == 400
+    assert "Unknown command_ids" in response.json()["detail"]
+
+
+def test_entry_confirmation_states_are_conservative_and_completed_candle_based():
+    from app.command_engine import evaluate_entry
+    pending = evaluate_entry({"direction": "LONG", "price": 100, "score": 70})
+    assert pending["state"] == "APPROACH"
+    assert pending["confirmed"] is False
+    confirmed = evaluate_entry({"direction": "LONG", "price": 110, "score": 85,
+        "ema20": 108, "ema50": 105, "rsi": 60, "macdHistogram": 1.2,
+        "volumeRatio": 1.4, "breakout": "UP"})
+    assert confirmed["state"] == "CONFIRMED"
+    assert confirmed["confirmed"] is True
+
+
+def test_entry_monitor_endpoint_returns_progress_and_never_enables_live_trading(client, monkeypatch):
+    async def fake_klines(symbol, category, interval, limit):
+        return make_rows(), "TEST"
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    response = client.get("/api/entry-monitor/BTCUSDT?category=spot&interval=15m")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["symbol"] == "BTCUSDT"
+    assert payload["state"] in {"WAITING", "APPROACH", "CONFIRMED"}
+    assert 0 <= payload["progress"] <= 100
+    assert payload["live_trading_enabled"] is False
+
+
+def test_command_scanner_and_entry_ticker_are_present_in_dashboard(client):
+    html = client.get("/").text
+    assert "selectedCommandIds" in html
+    assert "command_ids=" in html
+    assert "loadCommandCatalog" in html
+    assert "refreshEntryTicker" in html
+    assert "entryTicker" in html
+    assert html.count("<script>") == 1
+    assert html.count("</script>") == 1
