@@ -33,6 +33,7 @@ jobs:
           Path("/tmp/quant-nexus-dashboard.js").write_text(script, encoding="utf-8")
           PY
           node --check /tmp/quant-nexus-dashboard.js
+          node --check app/static/monitoring-room.js
       - name: Run API regression tests
         env:
           PYTHONPATH: .
