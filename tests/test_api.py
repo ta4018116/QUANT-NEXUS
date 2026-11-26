@@ -335,3 +335,25 @@ def test_paper_summary_includes_mark_to_market_and_fee_estimate(client, monkeypa
 def test_scan_rejects_unknown_direction_before_market_request(client):
     response = client.get("/api/scan?direction=sideways")
     assert response.status_code == 400
+
+
+def test_auto_scan_covers_full_eligible_universe_up_to_cap(client, monkeypatch):
+    async def fake_tickers(category):
+        return ([{"symbol": f"COIN{i:03d}USDT", "turnover24h": 1000 + i,
+                  "price24hPcnt": 0.01, "lastPrice": 100}
+                 for i in range(300)], "TEST")
+
+    async def fake_klines(symbol, category, interval, limit):
+        return make_rows(), "TEST"
+
+    monkeypatch.setattr(main, "get_market_tickers", fake_tickers)
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    response = client.get("/api/scan?category=spot&interval=15m&limit=500&depth=AUTO&min_turnover=0")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["universeAvailable"] == 300
+    assert payload["eligibleCount"] == 300
+    assert payload["scanned"] == 300
+    assert payload["returned"] == 300
+    assert payload["truncated"] is False
+    assert payload["live_trading_enabled"] is False
