@@ -421,7 +421,7 @@ def test_engine_registry_reports_all_fifteen_with_truthful_statuses(client):
     ids = {item["id"] for item in payload["engines"]}
     assert {"data", "derivatives", "liquidity", "risk", "paper_execution"} <= ids
     derivatives = next(item for item in payload["engines"] if item["id"] == "derivatives")
-    assert derivatives["status"] == "planned"
+    assert derivatives["status"] == "partial"
     assert "open interest" in derivatives["gaps"]
 
 
