@@ -125,12 +125,12 @@
  host.addEventListener('click',e=>{
   const button=e.target.closest('[data-opp-action]');
   if(!button)return;
-  e.preventDefault();e.stopPropagation();
+  e.preventDefault();e.stopImmediatePropagation();
   const symbol=button.dataset.symbol;
   if(button.dataset.oppAction==='remove'){window.removeMonitoringSymbol?.(symbol);return}
   if(button.dataset.oppAction==='analyze'){window.selectCoin?.(symbol);window.openPage?.('analysis')}
  },true);
  const style=document.createElement('style');
- style.textContent='.qn-opp-details{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:9px}.qn-opp-details>div{min-width:0;padding:8px;background:#061522;border:1px solid #12384a;border-radius:8px;overflow-wrap:anywhere}.qn-opp-details small{display:block;color:var(--muted);font-size:10px;margin-bottom:4px}.qn-opp-details b{font-size:11px}.qn-opp-details .qn-opp-confirm{grid-column:1/-1}.qn-opp-analyze{border-color:#16d9ff;color:#8cecff;padding:8px 12px;font-size:12px}.qn-opp-remove{border-color:#a94c63;color:#ff9aaa;padding:8px 12px;font-size:12px}@media(max-width:600px){.qn-opp-details{grid-template-columns:repeat(2,minmax(0,1fr))}.qn-opp-details .qn-opp-confirm{grid-column:1/-1}}';
+ style.textContent='.qn-opp-details{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:9px}.qn-opp-details>div{min-width:0;padding:8px;background:#061522;border:1px solid #12384a;border-radius:8px;overflow-wrap:anywhere}.qn-opp-details small{display:block;color:var(--muted);font-size:10px;margin-bottom:4px}.qn-opp-details b{font-size:11px}.qn-opp-details .qn-opp-confirm{grid-column:1/-1}.tier-gold{color:#ffc928}.tier-green{color:#20ff83}.tier-silver{color:#c5d0d8}.qn-opp-analyze{border-color:#16d9ff;color:#8cecff;padding:8px 12px;font-size:12px}.qn-opp-remove{border-color:#a94c63;color:#ff9aaa;padding:8px 12px;font-size:12px}@media(max-width:600px){.qn-opp-details{grid-template-columns:repeat(2,minmax(0,1fr))}.qn-opp-details .qn-opp-confirm{grid-column:1/-1}}';
  document.head.append(style);
 })();
