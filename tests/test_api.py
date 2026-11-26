@@ -5,9 +5,9 @@ from app import main
 
 
 @pytest.fixture()
-def client():
-    main.PAPER_TRADES.clear()
-    main.PAPER_BALANCE = 10_000.0
+def client(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "PAPER_STATE_PATH", tmp_path / "paper_state.json")
+    main.reset_paper_state(10_000.0)
     return TestClient(main.app)
 
 
@@ -45,12 +45,14 @@ def test_paper_trade_open_and_close(client):
     trade = opened.json()["trade"]
     assert trade["status"] == "OPEN"
     assert opened.json()["live_trading_enabled"] is False
-    assert opened.json()["balance"] == 9_800
+    assert opened.json()["balance"] == pytest.approx(9_799.88)
 
     closed = client.post(f"/api/paper/{trade['id']}/close?exit_price=110")
     assert closed.status_code == 200
     assert closed.json()["trade"]["status"] == "CLOSED"
-    assert closed.json()["trade"]["pnl"] == 20
+    assert closed.json()["trade"]["grossPnl"] == 20
+    assert closed.json()["trade"]["pnl"] == pytest.approx(19.874)
+    assert closed.json()["balance"] == pytest.approx(10_019.874)
     assert closed.json()["live_trading_enabled"] is False
 
 
@@ -130,3 +132,57 @@ def test_macd_returns_values_when_history_is_sufficient():
     assert line is not None
     assert signal is not None
     assert histogram == pytest.approx(line - signal)
+
+
+def test_paper_ledger_survives_module_reload(tmp_path, monkeypatch):
+    state_path = tmp_path / "durable" / "paper.json"
+    monkeypatch.setattr(main, "PAPER_STATE_PATH", state_path)
+    main.reset_paper_state(5_000.0)
+    response = TestClient(main.app).post("/api/paper", json={
+        "symbol": "ETHUSDT", "side": "LONG", "entry": 100,
+        "quantity": 1, "category": "spot", "leverage": 1
+    })
+    assert response.status_code == 200
+    stored_balance = main.PAPER_BALANCE
+    main.PAPER_TRADES.clear()
+    main.PAPER_BALANCE = 0
+    main.load_paper_state()
+    assert main.PAPER_BALANCE == pytest.approx(stored_balance)
+    assert len(main.PAPER_TRADES) == 1
+    assert main.PAPER_TRADES[0]["symbol"] == "ETHUSDT"
+
+
+def test_spot_short_and_invalid_stop_levels_are_rejected(client):
+    short_spot = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "SHORT", "entry": 100, "quantity": 1,
+        "category": "spot"
+    })
+    assert short_spot.status_code == 400
+    bad_stop = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "LONG", "entry": 100, "quantity": 1,
+        "stop_loss": 105
+    })
+    assert bad_stop.status_code == 400
+
+
+def test_backtest_rejects_unknown_strategy(client):
+    response = client.get("/api/strategy/backtest?strategy=magic")
+    assert response.status_code == 400
+
+
+def test_backtest_uses_historical_candles_and_never_enables_live_trading(client, monkeypatch):
+    async def fake_klines(symbol, category, interval, limit):
+        rows = []
+        for i in range(120):
+            close = 100 + i * 0.5 + (i % 7) * 0.1
+            rows.append([str(1_700_000_000_000 + i * 3_600_000), str(close),
+                         str(close + 1), str(close - 1), str(close), "1000"])
+        return rows, "TEST"
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    response = client.get("/api/strategy/backtest?symbol=BTCUSDT&strategy=ema_cross")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "TEST"
+    assert payload["initialEquity"] == 10_000
+    assert payload["live_trading_enabled"] is False
+    assert "maxDrawdownPct" in payload

@@ -2,6 +2,7 @@ import asyncio
 import math
 import os
 import logging
+import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,6 +48,49 @@ PAPER_TRADES = []
 PAPER_BALANCE = 10000.0
 PAPER_LOCK = asyncio.Lock()
 LIVE_TRADING_ENABLED = False
+PAPER_STATE_PATH = Path(os.getenv("QUANT_NEXUS_STATE_PATH", str(BASE / ".data" / "paper_state.json")))
+PAPER_FEE_RATE = min(0.01, max(0.0, safe_float(os.getenv("PAPER_FEE_RATE"), 0.0006)))
+PAPER_PERSISTENCE_CONFIGURED = os.getenv("QUANT_NEXUS_PERSISTENT_STORAGE", "false").lower() == "true"
+
+def save_paper_state():
+    """Persist the simulated ledger atomically; configure STATE_PATH on durable storage in production."""
+    try:
+        PAPER_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"schema": 1, "balance": PAPER_BALANCE, "trades": PAPER_TRADES}
+        temp_path = PAPER_STATE_PATH.with_name(PAPER_STATE_PATH.name + ".tmp")
+        temp_path.write_text(json.dumps(payload, separators=(",", ":"), allow_nan=False), encoding="utf-8")
+        os.replace(temp_path, PAPER_STATE_PATH)
+        return True
+    except (OSError, TypeError, ValueError):
+        logger.exception("Could not persist paper-trading ledger")
+        return False
+
+def load_paper_state():
+    global PAPER_BALANCE
+    try:
+        if not PAPER_STATE_PATH.exists():
+            return
+        payload = json.loads(PAPER_STATE_PATH.read_text(encoding="utf-8"))
+        if payload.get("schema") != 1 or not isinstance(payload.get("trades"), list):
+            raise ValueError("Unsupported paper ledger schema")
+        balance = safe_float(payload.get("balance"), 10000.0)
+        if balance < 0:
+            raise ValueError("Invalid paper balance")
+        PAPER_BALANCE = balance
+        PAPER_TRADES.clear()
+        PAPER_TRADES.extend(t for t in payload["trades"] if isinstance(t, dict))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        logger.exception("Could not load paper-trading ledger; starting with a clean simulated account")
+        PAPER_TRADES.clear()
+        PAPER_BALANCE = 10000.0
+
+def reset_paper_state(balance=10000.0):
+    global PAPER_BALANCE
+    PAPER_TRADES.clear()
+    PAPER_BALANCE = float(balance)
+    save_paper_state()
+
+load_paper_state()
 INTERVALS = {"1m":"1", "3m":"3", "5m":"5", "15m":"15", "30m":"30",
              "1h":"60", "2h":"120", "4h":"240", "1d":"D", "1w":"W"}
 
@@ -225,6 +269,24 @@ def analyze_klines(rows):
     score = max(0, min(100, score))
     direction = "LONG" if score >= 62 else ("SHORT" if score <= 38 else "NEUTRAL")
     risk = max((recent_high - recent_low) * 0.35, last * 0.006)
+    range_pct = (recent_high - recent_low) / last if last > 0 else 0
+    momentum5 = ((last / closes[-6]) - 1) * 100 if len(closes) >= 6 and closes[-6] else 0
+    pre_move_score = 0
+    pre_move_reasons = []
+    if vol_ratio is not None and vol_ratio >= 1.3:
+        pre_move_score += 30
+        pre_move_reasons.append("ارتفاع الحجم مقارنة بمتوسطه")
+    if range_pct <= 0.025:
+        pre_move_score += 20
+        pre_move_reasons.append("تضيق النطاق السعري")
+    if abs(momentum5) >= 0.2:
+        pre_move_score += 20
+        pre_move_reasons.append("تغير الزخم قصير الأجل")
+    if recent_high > recent_low and min(abs(last / recent_high - 1), abs(last / recent_low - 1)) <= 0.007:
+        pre_move_score += 30
+        pre_move_reasons.append("اقتراب السعر من حافة النطاق")
+    risk_pct = risk / last if last > 0 else 1
+    risk_level = "HIGH" if risk_pct >= 0.03 else ("MEDIUM" if risk_pct >= 0.015 else "LOW")
     if direction == "LONG":
         stop, target1, target2 = last-risk, last+risk*1.5, last+risk*2.5
     elif direction == "SHORT":
@@ -235,12 +297,17 @@ def analyze_klines(rows):
             "ema20":e20,"ema50":e50,"macd":macd_line,"macdSignal":macd_signal,"macdHistogram":macd_hist,"vwap":vwap,"volumeRatio":round(vol_ratio,2) if vol_ratio is not None else None,
             "support":recent_low,"resistance":recent_high,"score":score,"direction":direction,
             "entry":last if direction != "NEUTRAL" else None,"stopLoss":stop,
-            "target1":target1,"target2":target2,"candles":candles[-100:]}
+            "target1":target1,"target2":target2,"candles":candles[-100:],
+            "preMoveScore":pre_move_score,"preMoveLabel":"WATCH" if pre_move_score >= 60 else "LOW",
+            "preMoveReasons":pre_move_reasons,"riskLevel":risk_level,"riskPercent":round(risk_pct*100,3)}
 
 @app.get("/health")
 async def health():
     return {"application":"QUANT NEXUS","status":"ok","version":"1.0.0",
             "trading_mode":"simulation","live_trading_enabled":False,
+            "paper_storage":"json_file",
+            "paper_persistence_configured":PAPER_PERSISTENCE_CONFIGURED,
+            "paper_fee_rate":PAPER_FEE_RATE,
             "utc":datetime.now(timezone.utc).isoformat()}
 
 @app.get("/api/overview")
@@ -276,11 +343,14 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
                min_turnover: float = Query(0, ge=0), direction: str = "all", depth: str = Query("AUTO", pattern="^(AUTO|32|64|128|256)$")):
     if category not in ("spot","linear") or interval not in INTERVALS:
         raise HTTPException(status_code=400, detail="Invalid scan configuration")
+    if direction.lower() not in ("all", "long", "short", "neutral"):
+        raise HTTPException(status_code=400, detail="Invalid scan direction")
     tickers, ticker_provider = await get_market_tickers(category)
     tickers = [t for t in tickers if isinstance(t, dict) and str(t.get("symbol", "")).endswith("USDT")]
     tickers.sort(key=lambda x: safe_float(x.get("turnover24h")), reverse=True)
     eligible = [x for x in tickers if safe_float(x.get("turnover24h")) >= min_turnover]
-    effective_limit = min(len(eligible), {"32":32,"64":64,"128":128,"256":256}.get(depth, min(256,max(64,len(eligible)))))
+    depth_limit = {"32":32,"64":64,"128":128,"256":256}.get(depth, min(256,max(64,len(eligible))))
+    effective_limit = min(len(eligible), limit, depth_limit)
     candidates = eligible[:effective_limit]
     semaphore = asyncio.Semaphore(12)
     async def one(ticker):
@@ -331,7 +401,8 @@ async def multi_timeframe(symbol: str, category: str = "spot"):
     directions = {x["direction"] for x in valid if x["direction"] != "NEUTRAL"}
     average = round(sum(x["score"] for x in valid)/len(valid), 1) if valid else None
     return {"symbol": symbol.upper(), "frames": items, "averageScore": average,
-            "aligned": len(directions) <= 1, "live_trading_enabled": False}
+            "aligned": bool(directions) and len(directions) == 1,
+            "validFrames": len(valid), "live_trading_enabled": False}
 
 @app.get("/api/engine/status")
 async def engine_status():
@@ -340,49 +411,219 @@ async def engine_status():
             "scan_depths": [32, 64, 128, 256, "AUTO"],
             "markets": {"spot": True, "linear_futures": True, "forex": False,
                         "us_stocks": False, "indices": False, "commodities": False},
+            "features": ["multi_timeframe", "pre_move_watchlist", "ema_cross_backtest", "paper_ledger"],
+            "paper_storage": "json_file",
+            "paper_persistence_configured": PAPER_PERSISTENCE_CONFIGURED,
+            "paper_fee_rate": PAPER_FEE_RATE,
             "trading_mode": "simulation", "live_trading_enabled": False}
+
+@app.get("/api/strategy/backtest")
+async def strategy_backtest(symbol: str = "BTCUSDT", category: str = "spot",
+                            interval: str = "1h", strategy: str = "ema_cross",
+                            limit: int = Query(300, ge=80, le=500)):
+    if category not in ("spot", "linear") or interval not in INTERVALS:
+        raise HTTPException(status_code=400, detail="Invalid backtest market configuration")
+    if strategy not in ("ema_cross", "breakout_20"):
+        raise HTTPException(status_code=400, detail="Unsupported strategy")
+    rows, provider = await get_market_klines(symbol, category, interval, limit)
+    analysis = analyze_klines(rows)
+    candles = analysis["candles"]
+    closes = [c["close"] for c in candles]
+    trades = []
+    position = None
+    equity = 10000.0
+    peak = equity
+    max_drawdown = 0.0
+    slippage = 0.0005
+    fee_rate = PAPER_FEE_RATE
+
+    for i in range(50, len(candles)):
+        price = closes[i]
+        should_enter = False
+        should_exit = False
+        if strategy == "ema_cross":
+            fast_now, slow_now = ema(closes[:i+1], 20), ema(closes[:i+1], 50)
+            fast_prev, slow_prev = ema(closes[:i], 20), ema(closes[:i], 50)
+            should_enter = position is None and fast_now is not None and slow_now is not None and fast_prev is not None and slow_prev is not None and fast_now > slow_now and fast_prev <= slow_prev
+            should_exit = position is not None and fast_now is not None and slow_now is not None and fast_now < slow_now
+        else:
+            prior_high = max(c["high"] for c in candles[max(0, i-20):i])
+            fast_now = ema(closes[:i+1], 20)
+            should_enter = position is None and price > prior_high
+            should_exit = position is not None and fast_now is not None and price < fast_now
+
+        if should_enter:
+            entry_price = price * (1 + slippage)
+            position = {"entry": entry_price, "time": candles[i]["time"]}
+        elif should_exit and position is not None:
+            exit_price = price * (1 - slippage)
+            gross = exit_price - position["entry"]
+            fees = (position["entry"] + exit_price) * fee_rate
+            net = gross - fees
+            equity += net
+            trades.append({"entryTime": position["time"], "exitTime": candles[i]["time"],
+                           "entry": round(position["entry"], 8), "exit": round(exit_price, 8),
+                           "pnl": round(net, 8), "result": "WIN" if net > 0 else "LOSS"})
+            position = None
+            peak = max(peak, equity)
+            max_drawdown = max(max_drawdown, (peak - equity) / peak if peak else 0)
+
+    if position is not None:
+        exit_price = closes[-1] * (1 - slippage)
+        net = (exit_price - position["entry"]) - (position["entry"] + exit_price) * fee_rate
+        equity += net
+        trades.append({"entryTime": position["time"], "exitTime": candles[-1]["time"],
+                       "entry": round(position["entry"], 8), "exit": round(exit_price, 8),
+                       "pnl": round(net, 8), "result": "WIN" if net > 0 else "LOSS",
+                       "closedAtEnd": True})
+        peak = max(peak, equity)
+        max_drawdown = max(max_drawdown, (peak - equity) / peak if peak else 0)
+
+    wins = [t["pnl"] for t in trades if t["pnl"] > 0]
+    losses = [-t["pnl"] for t in trades if t["pnl"] < 0]
+    gross_profit, gross_loss = sum(wins), sum(losses)
+    return {"symbol": symbol.upper(), "category": category, "interval": interval,
+            "strategy": strategy, "provider": provider, "initialEquity": 10000.0,
+            "finalEquity": round(equity, 4), "netPnl": round(equity - 10000.0, 4),
+            "trades": len(trades), "winRate": round(len(wins) / len(trades) * 100, 2) if trades else 0,
+            "profitFactor": round(gross_profit / gross_loss, 3) if gross_loss else (None if not gross_profit else "infinity"),
+            "maxDrawdownPct": round(max_drawdown * 100, 3),
+            "feeRatePerSide": fee_rate, "slippagePerSide": slippage,
+            "tradeLog": trades[-50:], "live_trading_enabled": False}
 
 class PaperTrade(BaseModel):
     symbol: str = Field(min_length=2, max_length=30)
     side: str
     entry: float = Field(gt=0)
     quantity: float = Field(gt=0)
+    category: str = "spot"
+    leverage: int = Field(default=1, ge=1, le=10)
     stop_loss: Optional[float] = Field(default=None, gt=0)
     take_profit: Optional[float] = Field(default=None, gt=0)
 
 @app.get("/api/paper")
 async def paper_account():
     async with PAPER_LOCK:
-        return {"balance":PAPER_BALANCE,"trades":PAPER_TRADES,
-                "openCount":sum(1 for t in PAPER_TRADES if t["status"]=="OPEN"),
-                "live_trading_enabled":False}
+        open_trades = [t for t in PAPER_TRADES if t["status"] == "OPEN"]
+        return {"balance": round(PAPER_BALANCE, 8), "trades": PAPER_TRADES,
+                "openCount": len(open_trades), "feeRate": PAPER_FEE_RATE,
+                "live_trading_enabled": False}
+
+@app.get("/api/paper/summary")
+async def paper_summary():
+    async with PAPER_LOCK:
+        open_trades = [dict(t) for t in PAPER_TRADES if t["status"] == "OPEN"]
+        all_trades = [dict(t) for t in PAPER_TRADES]
+        cash = PAPER_BALANCE
+    current_prices = {}
+    providers = set()
+    for category in ("spot", "linear"):
+        symbols = {t["symbol"] for t in open_trades if t.get("category", "spot") == category}
+        if not symbols:
+            continue
+        try:
+            tickers, provider = await get_market_tickers(category)
+            providers.add(provider)
+            for item in tickers:
+                symbol = str(item.get("symbol", "")).upper()
+                if symbol in symbols:
+                    current_prices[symbol] = safe_float(item.get("lastPrice"))
+        except Exception as exc:
+            logger.warning("Paper summary price refresh failed for %s: %s", category, exc)
+    unrealized = 0.0
+    reserved = 0.0
+    positions = []
+    for trade in open_trades:
+        current = current_prices.get(trade["symbol"]) or trade["entry"]
+        quantity = trade["quantity"]
+        side_factor = 1 if trade["side"] == "LONG" else -1
+        gross = (current - trade["entry"]) * quantity * side_factor
+        estimated_exit_fee = current * quantity * PAPER_FEE_RATE
+        net = gross - safe_float(trade.get("entryFee")) - estimated_exit_fee
+        margin = safe_float(trade.get("margin"), trade["entry"] * quantity)
+        reserved += margin
+        unrealized += net
+        positions.append({"id": trade["id"], "symbol": trade["symbol"], "side": trade["side"],
+                          "entry": trade["entry"], "currentPrice": current,
+                          "quantity": quantity, "unrealizedPnl": round(net, 8),
+                          "leverage": trade.get("leverage", 1)})
+    realized = sum(safe_float(t.get("pnl")) for t in all_trades if t["status"] == "CLOSED")
+    return {"balance": round(cash, 8), "reservedMargin": round(reserved, 8),
+            "equity": round(cash + reserved + unrealized, 8),
+            "realizedPnl": round(realized, 8), "unrealizedPnl": round(unrealized, 8),
+            "openCount": len(open_trades), "positions": positions,
+            "providers": sorted(providers), "feeRate": PAPER_FEE_RATE,
+            "live_trading_enabled": False}
 
 @app.post("/api/paper")
 async def open_paper_trade(trade: PaperTrade):
     global PAPER_BALANCE
-    if trade.side.upper() not in ("LONG","SHORT"):
+    side = trade.side.upper()
+    category = trade.category.lower()
+    if side not in ("LONG", "SHORT"):
         raise HTTPException(status_code=400, detail="side must be LONG or SHORT")
+    if category not in ("spot", "linear"):
+        raise HTTPException(status_code=400, detail="category must be spot or linear")
+    if not 1 <= trade.leverage <= 10:
+        raise HTTPException(status_code=400, detail="leverage must be between 1x and 10x")
+    if category == "spot" and (side == "SHORT" or trade.leverage != 1):
+        raise HTTPException(status_code=400, detail="Spot simulation supports LONG only at 1x")
+    if trade.stop_loss is not None:
+        if (side == "LONG" and trade.stop_loss >= trade.entry) or (side == "SHORT" and trade.stop_loss <= trade.entry):
+            raise HTTPException(status_code=400, detail="Stop loss is on the wrong side of entry")
+    if trade.take_profit is not None:
+        if (side == "LONG" and trade.take_profit <= trade.entry) or (side == "SHORT" and trade.take_profit >= trade.entry):
+            raise HTTPException(status_code=400, detail="Take profit is on the wrong side of entry")
+    notional = trade.quantity * trade.entry
+    margin = notional / trade.leverage
+    entry_fee = notional * PAPER_FEE_RATE
+    required = margin + entry_fee
     async with PAPER_LOCK:
-        if trade.quantity * trade.entry > PAPER_BALANCE:
-            raise HTTPException(status_code=400, detail="Insufficient simulated balance")
-        item = {"id":(max((t["id"] for t in PAPER_TRADES), default=0)+1),"symbol":trade.symbol.upper(),"side":trade.side.upper(),
-                "entry":trade.entry,"quantity":trade.quantity,"stopLoss":trade.stop_loss,
-                "takeProfit":trade.take_profit,"status":"OPEN","openedAt":datetime.now(timezone.utc).isoformat()}
+        if required > PAPER_BALANCE:
+            raise HTTPException(status_code=400, detail="Insufficient simulated balance for margin and fees")
+        item = {"id": max((t["id"] for t in PAPER_TRADES), default=0) + 1,
+                "symbol": trade.symbol.upper(), "category": category, "side": side,
+                "entry": trade.entry, "quantity": trade.quantity,
+                "leverage": trade.leverage, "margin": round(margin, 8),
+                "entryFee": round(entry_fee, 8), "stopLoss": trade.stop_loss,
+                "takeProfit": trade.take_profit, "status": "OPEN",
+                "openedAt": datetime.now(timezone.utc).isoformat()}
         PAPER_TRADES.append(item)
-        PAPER_BALANCE -= trade.quantity * trade.entry
-    return {"trade":item,"balance":PAPER_BALANCE,"live_trading_enabled":False}
+        PAPER_BALANCE -= required
+        if not save_paper_state():
+            PAPER_TRADES.pop()
+            PAPER_BALANCE += required
+            raise HTTPException(status_code=500, detail="Could not save simulated trade")
+    return {"trade": item, "balance": round(PAPER_BALANCE, 8),
+            "live_trading_enabled": False}
 
 @app.post("/api/paper/{trade_id}/close")
 async def close_paper_trade(trade_id: int, exit_price: float = Query(gt=0)):
     global PAPER_BALANCE
     async with PAPER_LOCK:
-        item = next((t for t in PAPER_TRADES if t["id"]==trade_id and t["status"]=="OPEN"),None)
-        if not item: raise HTTPException(status_code=404,detail="Open paper trade not found")
-        pnl = (exit_price-item["entry"])*item["quantity"]*(1 if item["side"]=="LONG" else -1)
-        PAPER_BALANCE += item["quantity"]*exit_price
-        item.update({"status":"CLOSED","exitPrice":exit_price,"pnl":round(pnl,8),
-                     "closedAt":datetime.now(timezone.utc).isoformat()})
-        return {"trade":item,"balance":PAPER_BALANCE,"live_trading_enabled":False}
+        item = next((t for t in PAPER_TRADES if t["id"] == trade_id and t["status"] == "OPEN"), None)
+        if not item:
+            raise HTTPException(status_code=404, detail="Open paper trade not found")
+        side_factor = 1 if item["side"] == "LONG" else -1
+        notional_exit = item["quantity"] * exit_price
+        gross_pnl = (exit_price - item["entry"]) * item["quantity"] * side_factor
+        exit_fee = notional_exit * PAPER_FEE_RATE
+        net_pnl = gross_pnl - safe_float(item.get("entryFee")) - exit_fee
+        margin = safe_float(item.get("margin"), item["entry"] * item["quantity"])
+        previous_balance = PAPER_BALANCE
+        previous_item = dict(item)
+        PAPER_BALANCE += margin + gross_pnl - exit_fee
+        item.update({"status": "CLOSED", "exitPrice": exit_price,
+                     "grossPnl": round(gross_pnl, 8), "exitFee": round(exit_fee, 8),
+                     "pnl": round(net_pnl, 8),
+                     "closedAt": datetime.now(timezone.utc).isoformat()})
+        if not save_paper_state():
+            PAPER_BALANCE = previous_balance
+            item.clear()
+            item.update(previous_item)
+            raise HTTPException(status_code=500, detail="Could not save simulated trade close")
+        return {"trade": item, "balance": round(PAPER_BALANCE, 8),
+                "live_trading_enabled": False}
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
