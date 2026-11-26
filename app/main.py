@@ -1,13 +1,15 @@
 import asyncio
 import math
 import os
+import logging
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -15,6 +17,29 @@ BASE = Path(__file__).resolve().parent
 app = FastAPI(title="QUANT NEXUS", version="1.0.0",
               description="Multi-market intelligence and paper trading only")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
+
+logger = logging.getLogger("quant_nexus")
+
+@app.middleware("http")
+async def safe_error_middleware(request, call_next):
+    request_id = uuid.uuid4().hex[:12]
+    try:
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+    except Exception:
+        logger.exception("Unhandled request error request_id=%s path=%s", request_id, request.url.path)
+        return JSONResponse(status_code=500, content={
+            "detail": "Internal server error. Check service logs with the request id.",
+            "request_id": request_id
+        }, headers={"X-Request-ID": request_id})
+
+def safe_float(value, default=0.0):
+    try:
+        number = float(value)
+        return number if math.isfinite(number) else default
+    except (TypeError, ValueError, OverflowError):
+        return default
 
 BYBIT = "https://api.bybit.com"
 TIMEOUT = httpx.Timeout(12.0, connect=5.0)
@@ -41,7 +66,10 @@ async def bybit_get(path: str, params: dict):
         raise HTTPException(status_code=502, detail="Market provider returned an invalid response")
     if payload.get("retCode") != 0:
         raise HTTPException(status_code=502, detail=f"Market provider: {payload.get('retMsg','unknown error')}")
-    return payload.get("result", {})
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=502, detail="Market provider returned an invalid result payload")
+    return result
 
 def ema(values, period):
     if len(values) < period:
@@ -119,12 +147,15 @@ async def overview():
 async def markets(category: str = Query("spot", pattern="^(spot|linear)$"), limit: int = Query(100, ge=1, le=500)):
     data = await bybit_get("/v5/market/tickers", {"category":category})
     items = data.get("list", [])
-    items.sort(key=lambda x: float(x.get("turnover24h") or 0), reverse=True)
+    if not isinstance(items, list):
+        raise HTTPException(status_code=502, detail="Market provider returned an invalid ticker list")
+    items = [x for x in items if isinstance(x, dict)]
+    items.sort(key=lambda x: safe_float(x.get("turnover24h")), reverse=True)
     return {"provider":"Bybit public market data","category":category,"count":len(items),
-            "items":[{"symbol":x.get("symbol"),"lastPrice":float(x.get("lastPrice") or 0),
-            "change24h":float(x.get("price24hPcnt") or 0)*100,
-            "high24h":float(x.get("highPrice24h") or 0),"low24h":float(x.get("lowPrice24h") or 0),
-            "turnover24h":float(x.get("turnover24h") or 0),"volume24h":float(x.get("volume24h") or 0)}
+            "items":[{"symbol":x.get("symbol"),"lastPrice":safe_float(x.get("lastPrice")),
+            "change24h":safe_float(x.get("price24hPcnt"))*100,
+            "high24h":safe_float(x.get("highPrice24h")),"low24h":safe_float(x.get("lowPrice24h")),
+            "turnover24h":safe_float(x.get("turnover24h")),"volume24h":safe_float(x.get("volume24h"))}
             for x in items[:limit]]}
 
 @app.get("/api/klines/{symbol}")
@@ -145,35 +176,43 @@ async def klines(symbol: str, category: str = "spot", interval: str = "15m", lim
 
 @app.get("/api/scan")
 async def scan(category: str = "spot", interval: str = "15m", limit: int = Query(30, ge=1, le=256),
-               min_turnover: float = 0, direction: str = "all"):
+               min_turnover: float = Query(0, ge=0), direction: str = "all"):
     if category not in ("spot","linear") or interval not in INTERVALS:
         raise HTTPException(status_code=400, detail="Invalid scan configuration")
-    try:
-        tickers = (await bybit_get("/v5/market/tickers", {"category":category})).get("list", [])
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="Unable to retrieve market tickers") from exc
-    tickers.sort(key=lambda x: float(x.get("turnover24h") or 0), reverse=True)
-    candidates = [x for x in tickers if x.get("symbol","").endswith("USDT")
-                  and float(x.get("turnover24h") or 0) >= min_turnover][:min(max(limit,1),256)]
-    semaphore = asyncio.Semaphore(10)
+    tickers = (await bybit_get("/v5/market/tickers", {"category":category})).get("list", [])
+    if not isinstance(tickers, list):
+        raise HTTPException(status_code=502, detail="Market provider returned an invalid ticker list")
+    tickers = [t for t in tickers if isinstance(t, dict) and str(t.get("symbol", "")).endswith("USDT")]
+    tickers.sort(key=lambda x: safe_float(x.get("turnover24h")), reverse=True)
+    candidates = [x for x in tickers if safe_float(x.get("turnover24h")) >= min_turnover][:limit]
+    semaphore = asyncio.Semaphore(8)
     async def one(ticker):
         async with semaphore:
             try:
+                symbol = str(ticker.get("symbol", "")).upper()
                 result = await bybit_get("/v5/market/kline", {"category":category,
-                    "symbol":ticker["symbol"],"interval":INTERVALS[interval],"limit":100})
+                    "symbol":symbol,"interval":INTERVALS[interval],"limit":100})
                 rows = result.get("list", [])
-                if len(rows) < 60: return None
+                if not isinstance(rows, list) or len(rows) < 60:
+                    return None
                 a = analyze_klines(rows)
-                a.update({"symbol":ticker["symbol"],"change24h":float(ticker.get("price24hPcnt") or 0)*100,
-                          "turnover24h":float(ticker.get("turnover24h") or 0)})
+                a.update({"symbol":symbol,"change24h":safe_float(ticker.get("price24hPcnt"))*100,
+                          "turnover24h":safe_float(ticker.get("turnover24h")),
+                          "volume24h":safe_float(ticker.get("volume24h")),
+                          "high24h":safe_float(ticker.get("highPrice24h")),
+                          "low24h":safe_float(ticker.get("lowPrice24h"))})
                 return a
+            except HTTPException:
+                return None
+            except (TypeError, ValueError, KeyError, IndexError, OverflowError):
+                logger.exception("Skipping malformed ticker %s", ticker.get("symbol"))
+                return None
             except Exception:
+                logger.exception("Skipping failed market analysis for %s", ticker.get("symbol"))
                 return None
     results = await asyncio.gather(*(one(t) for t in candidates))
     results = [x for x in results if x and (direction == "all" or x["direction"].lower() == direction.lower())]
-    results.sort(key=lambda x:x["score"], reverse=True)
+    results.sort(key=lambda x:safe_float(x.get("score")), reverse=True)
     return {"provider":"Bybit","category":category,"interval":interval,"scanned":len(candidates),
             "returned":len(results),"generatedAt":datetime.now(timezone.utc).isoformat(),"items":results}
 
@@ -197,12 +236,12 @@ async def open_paper_trade(trade: PaperTrade):
     global PAPER_BALANCE
     if trade.side.upper() not in ("LONG","SHORT"):
         raise HTTPException(status_code=400, detail="side must be LONG or SHORT")
-    if trade.quantity * trade.entry > PAPER_BALANCE:
-        raise HTTPException(status_code=400, detail="Insufficient simulated balance")
-    item = {"id":len(PAPER_TRADES)+1,"symbol":trade.symbol.upper(),"side":trade.side.upper(),
-            "entry":trade.entry,"quantity":trade.quantity,"stopLoss":trade.stop_loss,
-            "takeProfit":trade.take_profit,"status":"OPEN","openedAt":datetime.now(timezone.utc).isoformat()}
     async with PAPER_LOCK:
+        if trade.quantity * trade.entry > PAPER_BALANCE:
+            raise HTTPException(status_code=400, detail="Insufficient simulated balance")
+        item = {"id":(max((t["id"] for t in PAPER_TRADES), default=0)+1),"symbol":trade.symbol.upper(),"side":trade.side.upper(),
+                "entry":trade.entry,"quantity":trade.quantity,"stopLoss":trade.stop_loss,
+                "takeProfit":trade.take_profit,"status":"OPEN","openedAt":datetime.now(timezone.utc).isoformat()}
         PAPER_TRADES.append(item)
         PAPER_BALANCE -= trade.quantity * trade.entry
     return {"trade":item,"balance":PAPER_BALANCE,"live_trading_enabled":False}
