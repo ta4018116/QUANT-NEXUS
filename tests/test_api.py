@@ -196,7 +196,7 @@ def test_strategy_list_and_backtest_endpoint(client, monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["symbol"] == "BTCUSDT"
-    assert payload["sampleBars"] >= 60
+    assert payload["sampleBars"] == 120
     assert "maxDrawdownPct" in payload
     assert payload["live_trading_enabled"] is False
 
