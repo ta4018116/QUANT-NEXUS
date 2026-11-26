@@ -27,3 +27,34 @@ def test_opportunity_room_keeps_existing_watchlist_and_paper_only_guard():
     assert "addMonitoringSymbol" in room.text
     assert health["trading_mode"] == "simulation"
     assert health["live_trading_enabled"] is False
+
+
+
+def test_monitoring_watchlist_renders_entry_plan_and_animated_progress_cards():
+    client = TestClient(app)
+    response = client.get("/static/monitoring-room.js")
+    assert response.status_code == 200
+    script = response.text
+    assert "room-watch-card" in script
+    assert "دخول مرجعي" in script
+    assert "وقف الخسارة" in script
+    assert "الهدف الأول" in script
+    assert "الهدف الثاني" in script
+    assert "room-progress-track" in script
+    assert "roomProgressShimmer" in script
+    assert "prefers-reduced-motion" in script
+
+
+def test_monitoring_room_watchlist_renders_entry_details_and_animated_progress_cards():
+    client = TestClient(app)
+    response = client.get("/static/monitoring-room.js")
+    assert response.status_code == 200
+    script = response.text
+    assert "room-watch-card" in script
+    assert "دخول مرجعي" in script
+    assert "وقف الخسارة" in script
+    assert "الهدف الأول" in script
+    assert "الهدف الثاني" in script
+    assert "room-progress-track" in script
+    assert "roomProgressShimmer" in script
+    assert "prefers-reduced-motion" in script
