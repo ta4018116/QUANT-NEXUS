@@ -141,9 +141,14 @@ def ema_crossover_backtest(
             equity += gross - exit_fee
             trades.append({"entry": position["entry"], "exit": fill, "net_pnl": net, "return_pct": net / (position["entry"] * position["units"]) * 100.0})
             position = None
-        peak = max(peak, equity)
+        mark_equity = equity
+        if position is not None:
+            unrealized = (closes[index] - position["entry"]) * position["units"]
+            estimated_exit_fee = closes[index] * position["units"] * fee_rate
+            mark_equity += unrealized - estimated_exit_fee
+        peak = max(peak, mark_equity)
         if peak > 0:
-            max_drawdown = max(max_drawdown, (peak - equity) / peak * 100.0)
+            max_drawdown = max(max_drawdown, (peak - mark_equity) / peak * 100.0)
 
     if position is not None and candles:
         fill = closes[-1] * (1.0 - slip_rate)
