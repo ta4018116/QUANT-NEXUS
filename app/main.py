@@ -295,7 +295,8 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
     tickers = [t for t in tickers if isinstance(t, dict) and str(t.get("symbol", "")).endswith("USDT")]
     tickers.sort(key=lambda x: safe_float(x.get("turnover24h")), reverse=True)
     eligible = [x for x in tickers if safe_float(x.get("turnover24h")) >= min_turnover]
-    depth_limit = {"32":32,"64":64,"128":128,"256":256}.get(depth, min(256,max(64,len(eligible))))
+    # AUTO reviews the entire eligible USDT universe up to the bounded provider cap.
+    depth_limit = {"32":32,"64":64,"128":128,"256":256}.get(depth, 500)
     effective_limit = min(len(eligible), limit, depth_limit)
     candidates = eligible[:effective_limit]
     semaphore = asyncio.Semaphore(12)
@@ -324,7 +325,10 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
     results.sort(key=lambda x:safe_float(x.get("score")), reverse=True)
     providers = sorted(set(x["provider"] for x in results))
     return {"provider":ticker_provider if len(providers)<=1 and not providers else (providers[0] if len(providers)==1 else "Mixed"),
-            "providers":providers,"category":category,"interval":interval,"depth":depth,"effectiveDepth":len(candidates),"scanned":len(candidates),
+            "providers":providers,"category":category,"interval":interval,"depth":depth,
+            "universeAvailable":len(tickers),"eligibleCount":len(eligible),
+            "effectiveDepth":len(candidates),"scanned":len(candidates),
+            "truncated":len(eligible)>len(candidates),
             "returned":len(results),"generatedAt":datetime.now(timezone.utc).isoformat(),"items":results}
 
 @app.get("/api/multi-timeframe/{symbol}")
