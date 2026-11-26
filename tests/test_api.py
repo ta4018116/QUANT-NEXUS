@@ -274,3 +274,34 @@ def test_market_flow_liquidity_and_strategy_apis_are_registered(client):
 def test_backtest_rejects_invalid_fast_slow_period_order(client):
     response = client.get("/api/backtest/BTCUSDT?fast_period=30&slow_period=10")
     assert response.status_code == 400
+
+
+def test_futures_paper_position_uses_leverage_margin_and_realized_pnl(client):
+    opened = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "SHORT", "category": "linear",
+        "leverage": 5, "entry": 100, "quantity": 10,
+        "stop_loss": 101, "take_profit": 90
+    })
+    assert opened.status_code == 200
+    payload = opened.json()
+    assert payload["trade"]["leverage"] == 5
+    assert payload["trade"]["margin"] == 200
+    assert payload["balance"] == 9800
+
+    closed = client.post(f"/api/paper/{payload['trade']['id']}/close?exit_price=95")
+    assert closed.status_code == 200
+    assert closed.json()["trade"]["pnl"] == 50
+    assert closed.json()["balance"] == 10050
+
+
+def test_spot_simulation_rejects_short_and_leverage(client):
+    short = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "SHORT", "category": "spot",
+        "entry": 100, "quantity": 1, "stop_loss": 110
+    })
+    assert short.status_code == 400
+    leveraged = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "LONG", "category": "spot",
+        "leverage": 2, "entry": 100, "quantity": 1, "stop_loss": 90
+    })
+    assert leveraged.status_code == 400
