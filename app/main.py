@@ -311,6 +311,37 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
             "providers":providers,"category":category,"interval":interval,"depth":depth,"effectiveDepth":len(candidates),"scanned":len(candidates),
             "returned":len(results),"generatedAt":datetime.now(timezone.utc).isoformat(),"items":results}
 
+@app.get("/api/multi-timeframe/{symbol}")
+async def multi_timeframe(symbol: str, category: str = "spot"):
+    if category not in ("spot", "linear"):
+        raise HTTPException(status_code=400, detail="Invalid category")
+    frames = ("5m", "15m", "1h", "4h")
+    async def analyze_frame(frame):
+        rows, provider = await get_market_klines(symbol, category, frame, 120)
+        result = analyze_klines(rows)
+        return {"interval": frame, "direction": result["direction"],
+                "score": result["score"], "rsi": result["rsi"],
+                "macdHistogram": result.get("macdHistogram"), "provider": provider}
+    results = await asyncio.gather(*(analyze_frame(frame) for frame in frames), return_exceptions=True)
+    items = []
+    for frame, result in zip(frames, results):
+        items.append({"interval": frame, "error": "بيانات هذا الإطار غير متاحة"}
+                     if isinstance(result, Exception) else result)
+    valid = [x for x in items if "score" in x]
+    directions = {x["direction"] for x in valid if x["direction"] != "NEUTRAL"}
+    average = round(sum(x["score"] for x in valid)/len(valid), 1) if valid else None
+    return {"symbol": symbol.upper(), "frames": items, "averageScore": average,
+            "aligned": len(directions) <= 1, "live_trading_enabled": False}
+
+@app.get("/api/engine/status")
+async def engine_status():
+    return {"engine": "QUANT INTELLIGENCE",
+            "indicators": ["EMA20", "EMA50", "RSI14", "MACD12-26-9", "VWAP", "VolumeRatio"],
+            "scan_depths": [32, 64, 128, 256, "AUTO"],
+            "markets": {"spot": True, "linear_futures": True, "forex": False,
+                        "us_stocks": False, "indices": False, "commodities": False},
+            "trading_mode": "simulation", "live_trading_enabled": False}
+
 class PaperTrade(BaseModel):
     symbol: str = Field(min_length=2, max_length=30)
     side: str
