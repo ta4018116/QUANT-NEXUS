@@ -342,8 +342,11 @@ async def multi_timeframe(symbol: str, category: str = "spot"):
     valid = [x for x in items if "score" in x]
     directions = {x["direction"] for x in valid if x["direction"] != "NEUTRAL"}
     average = round(sum(x["score"] for x in valid)/len(valid), 1) if valid else None
+    aligned = len(valid) >= 2 and len(directions) == 1 and all(x["direction"] != "NEUTRAL" for x in valid)
     return {"symbol": symbol.upper(), "frames": items, "averageScore": average,
-            "aligned": len(directions) <= 1, "live_trading_enabled": False}
+            "aligned": aligned, "validFrames": len(valid),
+            "consensus": next(iter(directions)) if aligned else "MIXED_OR_INSUFFICIENT",
+            "live_trading_enabled": False}
 
 @app.get("/api/engine/status")
 async def engine_status():
@@ -492,6 +495,7 @@ async def market_flow(symbol: str, category: str = "spot"):
 class PaperTrade(BaseModel):
     symbol: str = Field(min_length=2, max_length=30)
     side: str
+    category: str = "spot"
     entry: float = Field(gt=0)
     quantity: float = Field(gt=0)
     stop_loss: Optional[float] = Field(default=None, gt=0)
@@ -529,6 +533,10 @@ async def open_paper_trade(trade: PaperTrade):
     global PAPER_BALANCE
     if trade.side.upper() not in ("LONG","SHORT"):
         raise HTTPException(status_code=400, detail="side must be LONG or SHORT")
+    if trade.category not in ("spot", "linear"):
+        raise HTTPException(status_code=400, detail="category must be spot or linear")
+    if trade.stop_loss is None:
+        raise HTTPException(status_code=400, detail="A stop loss is required for every simulated trade")
     async with PAPER_LOCK:
         if trade.quantity * trade.entry > PAPER_BALANCE:
             raise HTTPException(status_code=400, detail="Insufficient simulated balance")
@@ -544,7 +552,7 @@ async def open_paper_trade(trade: PaperTrade):
             if invalid_target:
                 raise HTTPException(status_code=400, detail="Take profit is on the wrong side of the entry")
         item = {"id":(max((t["id"] for t in PAPER_TRADES), default=0)+1),"symbol":trade.symbol.upper(),"side":trade.side.upper(),
-                "entry":trade.entry,"quantity":trade.quantity,"stopLoss":trade.stop_loss,
+                "category":trade.category, "entry":trade.entry,"quantity":trade.quantity,"stopLoss":trade.stop_loss,
                 "takeProfit":trade.take_profit,"status":"OPEN","openedAt":datetime.now(timezone.utc).isoformat()}
         PAPER_TRADES.append(item)
         PAPER_BALANCE -= trade.quantity * trade.entry
@@ -563,6 +571,55 @@ async def close_paper_trade(trade_id: int, exit_price: float = Query(gt=0)):
                      "closedAt":datetime.now(timezone.utc).isoformat()})
         persist_paper_state()
         return {"trade":item,"balance":PAPER_BALANCE,"live_trading_enabled":False}
+
+@app.post("/api/paper/monitor")
+async def monitor_paper_trades():
+    """Mark open simulations against current exchange tickers and close hit SL/TP."""
+    global PAPER_BALANCE
+    async with PAPER_LOCK:
+        open_trades = [t for t in PAPER_TRADES if t["status"] == "OPEN"]
+    if not open_trades:
+        return {"checked": 0, "closed": [], "live_trading_enabled": False}
+    categories = {t.get("category", "spot") for t in open_trades}
+    prices: dict[tuple[str, str], float] = {}
+    for category in categories:
+        try:
+            tickers, _provider = await get_market_tickers(category)
+            for ticker in tickers:
+                symbol = str(ticker.get("symbol", "")).upper()
+                mark = safe_float(ticker.get("lastPrice"))
+                if symbol and mark > 0:
+                    prices[(category, symbol)] = mark
+        except HTTPException as exc:
+            logger.warning("Paper monitor cannot fetch %s marks: %s", category, exc.detail)
+    closed = []
+    async with PAPER_LOCK:
+        for item in PAPER_TRADES:
+            if item["status"] != "OPEN":
+                continue
+            category = item.get("category", "spot")
+            mark = prices.get((category, item["symbol"]))
+            if not mark:
+                continue
+            stop = item.get("stopLoss")
+            target = item.get("takeProfit")
+            side = item["side"]
+            stop_hit = stop is not None and ((side == "LONG" and mark <= stop) or (side == "SHORT" and mark >= stop))
+            target_hit = target is not None and ((side == "LONG" and mark >= target) or (side == "SHORT" and mark <= target))
+            if not (stop_hit or target_hit):
+                continue
+            pnl = (mark - item["entry"]) * item["quantity"] * (1 if side == "LONG" else -1)
+            PAPER_BALANCE += item["quantity"] * mark
+            item.update({"status": "CLOSED", "exitPrice": mark, "pnl": round(pnl, 8),
+                         "closeReason": "STOP_LOSS" if stop_hit else "TAKE_PROFIT",
+                         "closedAt": datetime.now(timezone.utc).isoformat()})
+            closed.append({"id": item["id"], "symbol": item["symbol"],
+                           "reason": item["closeReason"], "exitPrice": mark, "pnl": item["pnl"]})
+        if closed:
+            persist_paper_state()
+    return {"checked": len(open_trades), "closed": closed,
+            "live_trading_enabled": False}
+
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
