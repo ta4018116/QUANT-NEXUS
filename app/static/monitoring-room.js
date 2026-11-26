@@ -69,4 +69,68 @@
   ws.onclose=()=>{if(liquidationSocket===ws){setLiqStatus('انقطع الاتصال · إعادة المحاولة',false);setTimeout(()=>{if($('monitoringRoomPanel')?.classList.contains('page-visible')&&liquidationSymbol===symbol)connectLiquidationStream(symbol)},5000)}};
  }
 
+ window.removeMonitoringSymbol = function(symbol) {
+  symbol=String(symbol||'').toUpperCase();
+  if(!watchSymbols.includes(symbol)) return false;
+  watchSymbols=watchSymbols.filter(x=>x!==symbol);
+  persistWatchlist();lastWatchRender='';
+  window.renderMonitoringRoom(latestItems);
+  window.renderOpportunityCards?.(latestItems);
+  return true;
+ };
+})();
+
+/* Rich opportunity cards for the opportunities room. */
+(() => {
+ const host = document.getElementById('signals');
+ const originalCards = window.renderOpportunityCards;
+ if (!host || typeof originalCards !== 'function' || window.__qnRichOpportunityCards) return;
+ window.__qnRichOpportunityCards = true;
+ const esc = value => String(value ?? '—').replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+ const number = value => value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toLocaleString('en-US',{maximumFractionDigits:6});
+ const stateLabel = state => ({CONFIRMED:'تأكيد مكتمل',APPROACH:'اقتراب من الدخول',WAITING:'قيد المراقبة'})[state] || 'قيد المراقبة';
+ window.renderOpportunityCards = function(items) {
+  originalCards(items);
+  const rows = new Map((Array.isArray(items)?items:[]).map(x=>[String(x.symbol||'').toUpperCase(),x]));
+  host.querySelectorAll('.opportunity-card[data-opp-symbol]').forEach(card=>{
+   const symbol=card.dataset.oppSymbol, x=rows.get(symbol);
+   if(!x || card.dataset.richCard==='1') return;
+   card.dataset.richCard='1';
+   const confirmation=x.entryConfirmation||{};
+   const state=confirmation.state||'WAITING';
+   const score=Number(x.score)||0;
+   const tier=score>=85&&confirmation.confirmed?'gold':score>=70?'green':'silver';
+   const tierText=tier==='gold'?'ذهبي · تأكيد مكتمل':tier==='green'?'أخضر · توافق جيد':'فضي · قيد المراقبة';
+   const detail=document.createElement('div');
+   detail.className='qn-opp-details';
+   detail.innerHTML='<div><small>السعر الحالي</small><b>'+number(x.price)+'</b></div>'+
+    '<div><small>التغير اليومي</small><b class="'+(Number(x.change24h)>=0?'positive':'negative')+'">'+number(x.change24h)+'%</b></div>'+
+    '<div><small>قيمة التداول 24h</small><b>'+number(x.turnover24h)+' USDT</b></div>'+
+    '<div><small>نسبة الحجم</small><b>'+(x.volumeRatio==null?'—':number(x.volumeRatio)+'x')+'</b></div>'+
+    '<div><small>قوة الإشارة</small><b>'+number(x.score)+'/100</b></div>'+
+    '<div><small>التصنيف</small><b class="tier-'+tier+'">'+tierText+'</b></div>'+
+    '<div class="qn-opp-confirm"><small>تأكيد الدخول · '+stateLabel(state)+'</small><b>'+esc(confirmation.reason||'بانتظار تأكيد الشمعة المكتملة')+'</b></div>';
+   const grid=card.querySelector('.opp-grid');
+   if(grid) grid.insertAdjacentElement('afterend',detail); else card.append(detail);
+   const actions=card.querySelector('.opp-card-actions');
+   if(actions){
+    const analyze=document.createElement('button');analyze.type='button';analyze.className='btn qn-opp-analyze';analyze.dataset.oppAction='analyze';analyze.dataset.symbol=symbol;analyze.textContent='تحليل مفصل';
+    actions.append(analyze);
+    if(window.isMonitoringSymbol?.(symbol)){
+     const remove=document.createElement('button');remove.type='button';remove.className='btn qn-opp-remove';remove.dataset.oppAction='remove';remove.dataset.symbol=symbol;remove.textContent='إزالة من المراقبة';actions.append(remove);
+    }
+   }
+  });
+ };
+ host.addEventListener('click',e=>{
+  const button=e.target.closest('[data-opp-action]');
+  if(!button)return;
+  e.preventDefault();e.stopImmediatePropagation();
+  const symbol=button.dataset.symbol;
+  if(button.dataset.oppAction==='remove'){window.removeMonitoringSymbol?.(symbol);return}
+  if(button.dataset.oppAction==='analyze'){window.selectCoin?.(symbol);window.openPage?.('analysis')}
+ },true);
+ const style=document.createElement('style');
+ style.textContent='.qn-opp-details{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:9px}.qn-opp-details>div{min-width:0;padding:8px;background:#061522;border:1px solid #12384a;border-radius:8px;overflow-wrap:anywhere}.qn-opp-details small{display:block;color:var(--muted);font-size:10px;margin-bottom:4px}.qn-opp-details b{font-size:11px}.qn-opp-details .qn-opp-confirm{grid-column:1/-1}.tier-gold{color:#ffc928}.tier-green{color:#20ff83}.tier-silver{color:#c5d0d8}.qn-opp-analyze{border-color:#16d9ff;color:#8cecff;padding:8px 12px;font-size:12px}.qn-opp-remove{border-color:#a94c63;color:#ff9aaa;padding:8px 12px;font-size:12px}@media(max-width:600px){.qn-opp-details{grid-template-columns:repeat(2,minmax(0,1fr))}.qn-opp-details .qn-opp-confirm{grid-column:1/-1}}';
+ document.head.append(style);
 })();
