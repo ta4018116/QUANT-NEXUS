@@ -6,8 +6,7 @@ from app import main
 
 @pytest.fixture()
 def client():
-    main.PAPER_TRADES.clear()
-    main.PAPER_BALANCE = 10_000.0
+    main.reset_paper_state(10_000.0)
     return TestClient(main.app)
 
 
@@ -130,3 +129,106 @@ def test_macd_returns_values_when_history_is_sufficient():
     assert line is not None
     assert signal is not None
     assert histogram == pytest.approx(line - signal)
+
+
+def make_rows(count=120):
+    rows = []
+    for i in range(count):
+        close = 100 + i * 0.15 + (i % 7) * 0.08
+        open_price = close - 0.05
+        high = close + 0.3
+        low = open_price - 0.25
+        rows.append([str(i * 60_000), str(open_price), str(high), str(low),
+                     str(close), str(1000 + i * 2)])
+    return rows
+
+
+def test_analysis_exposes_atr_and_explainable_reasons():
+    result = main.analyze_klines(make_rows())
+    assert result["atr14"] is not None
+    assert result["atrPercent"] > 0
+    assert isinstance(result["reasons"], list)
+    assert result["classification"] in {"STRONG", "NEEDS_CONFIRMATION", "HIGH_RISK", "WAIT"}
+
+
+def test_paper_trade_risk_guard_rejects_wrong_side_stop(client):
+    response = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "LONG", "entry": 100,
+        "quantity": 1, "stop_loss": 101, "take_profit": 110
+    })
+    assert response.status_code == 400
+    assert "Stop loss" in response.json()["detail"]
+
+
+def test_paper_trade_state_is_saved_to_sqlite(client):
+    response = client.post("/api/paper", json={
+        "symbol": "ETHUSDT", "side": "LONG", "entry": 100,
+        "quantity": 1, "stop_loss": 90, "take_profit": 120
+    })
+    assert response.status_code == 200
+    balance, trades = main.PAPER_STORE.load()
+    assert balance == 9900
+    assert len(trades) == 1
+    assert trades[0]["symbol"] == "ETHUSDT"
+
+
+def test_position_size_endpoint_caps_risk_at_two_percent(client):
+    response = client.post("/api/risk/position-size", json={
+        "equity": 10000, "risk_pct": 1, "entry": 100, "stop_loss": 95
+    })
+    assert response.status_code == 200
+    assert response.json()["riskAmount"] == 100
+    assert response.json()["quantity"] == 20
+    assert client.post("/api/risk/position-size", json={
+        "equity": 10000, "risk_pct": 3, "entry": 100, "stop_loss": 95
+    }).status_code == 422
+
+
+def test_strategy_list_and_backtest_endpoint(client, monkeypatch):
+    async def fake_klines(symbol, category, interval, limit):
+        return make_rows(), "Bybit"
+
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    strategies = client.get("/api/strategies")
+    assert strategies.status_code == 200
+    assert strategies.json()["strategies"][0]["id"] == "ema_crossover"
+    response = client.get("/api/backtest/BTCUSDT?fast_period=5&slow_period=15")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["symbol"] == "BTCUSDT"
+    assert payload["sampleBars"] >= 60
+    assert "maxDrawdownPct" in payload
+    assert payload["live_trading_enabled"] is False
+
+
+def test_liquidity_endpoint_reports_depth_imbalance(client, monkeypatch):
+    async def fake_orderbook(symbol, category):
+        return ([["100", "10"], ["99.9", "5"]], [["100.1", "4"], ["100.2", "3"]], "Bybit")
+
+    monkeypatch.setattr(main, "get_orderbook", fake_orderbook)
+    response = client.get("/api/liquidity/BTCUSDT")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["spreadPct"] > 0
+    assert payload["depthImbalance"] > 0
+    assert payload["bias"] == "BUY_SIDE"
+
+
+def test_market_flow_marks_outliers_as_large_trade_prints(client, monkeypatch):
+    async def fake_trades(symbol, category):
+        return ([{"price": 100, "size": 1, "side": "BUY", "time": 1},
+                 {"price": 100, "size": 1, "side": "SELL", "time": 2},
+                 {"price": 100, "size": 500, "side": "BUY", "time": 3}], "Bybit")
+
+    monkeypatch.setattr(main, "get_recent_trades", fake_trades)
+    response = client.get("/api/flow/BTCUSDT")
+    assert response.status_code == 200
+    assert response.json()["largeTradePrints"]
+    assert "not proof" in response.json()["interpretation"]
+
+
+def test_engine_status_discloses_storage_and_market_coverage(client):
+    payload = client.get("/api/engine/status").json()
+    assert payload["paper_storage"] == "sqlite"
+    assert payload["markets"]["forex"] is False
+    assert payload["live_trading_enabled"] is False
