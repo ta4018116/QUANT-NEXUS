@@ -410,6 +410,85 @@ async def position_size(request: PositionSizeRequest):
             "notional": round(quantity * request.entry, 8), "riskPct": request.risk_pct,
             "live_trading_enabled": False}
 
+
+async def get_orderbook(symbol: str, category: str):
+    try:
+        result = await bybit_get("/v5/market/orderbook", {"category": category, "symbol": symbol.upper(), "limit": 50})
+        return result.get("b", []), result.get("a", []), "Bybit"
+    except HTTPException as bybit_error:
+        logger.warning("Bybit orderbook unavailable for %s: %s", symbol, bybit_error.detail)
+        data = await okx_get("/api/v5/market/books", {"instId": okx_instrument(symbol, category), "sz": "50"})
+        if not data:
+            raise HTTPException(status_code=502, detail="No orderbook data from configured providers")
+        return data[0].get("bids", []), data[0].get("asks", []), "OKX"
+
+
+@app.get("/api/liquidity/{symbol}")
+async def liquidity(symbol: str, category: str = "spot"):
+    if category not in ("spot", "linear"):
+        raise HTTPException(status_code=400, detail="Invalid category")
+    bids, asks, provider = await get_orderbook(symbol, category)
+    if not bids or not asks:
+        raise HTTPException(status_code=502, detail="Orderbook is empty")
+    best_bid = safe_float(bids[0][0])
+    best_ask = safe_float(asks[0][0])
+    if best_bid <= 0 or best_ask <= 0 or best_ask < best_bid:
+        raise HTTPException(status_code=502, detail="Orderbook prices are invalid")
+    bid_depth = sum(safe_float(row[0]) * safe_float(row[1]) for row in bids[:20] if len(row) >= 2)
+    ask_depth = sum(safe_float(row[0]) * safe_float(row[1]) for row in asks[:20] if len(row) >= 2)
+    total_depth = bid_depth + ask_depth
+    imbalance = (bid_depth - ask_depth) / total_depth if total_depth > 0 else 0.0
+    return {"symbol": symbol.upper(), "category": category, "provider": provider,
+            "bestBid": best_bid, "bestAsk": best_ask,
+            "spreadPct": round((best_ask - best_bid) / ((best_ask + best_bid) / 2) * 100, 5),
+            "bidDepthNotional20": round(bid_depth, 2), "askDepthNotional20": round(ask_depth, 2),
+            "depthImbalance": round(imbalance, 4),
+            "bias": "BUY_SIDE" if imbalance >= 0.15 else ("SELL_SIDE" if imbalance <= -0.15 else "BALANCED"),
+            "interpretation": "Top-of-book depth snapshot only; it can change or be cancelled.",
+            "live_trading_enabled": False}
+
+
+async def get_recent_trades(symbol: str, category: str):
+    try:
+        result = await bybit_get("/v5/market/recent-trade", {"category": category, "symbol": symbol.upper(), "limit": 100})
+        rows = result.get("list", [])
+        normalized = [{"price": safe_float(x.get("price")), "size": safe_float(x.get("size")),
+                       "side": str(x.get("side", "")).upper(), "time": safe_float(x.get("time"))}
+                      for x in rows if isinstance(x, dict)]
+        return normalized, "Bybit"
+    except HTTPException as bybit_error:
+        logger.warning("Bybit recent trades unavailable for %s: %s", symbol, bybit_error.detail)
+        rows = await okx_get("/api/v5/market/trades", {"instId": okx_instrument(symbol, category), "limit": "100"})
+        normalized = [{"price": safe_float(x.get("px")), "size": safe_float(x.get("sz")),
+                       "side": str(x.get("side", "")).upper(), "time": safe_float(x.get("ts"))}
+                      for x in rows if isinstance(x, dict)]
+        return normalized, "OKX"
+
+
+@app.get("/api/flow/{symbol}")
+async def market_flow(symbol: str, category: str = "spot"):
+    if category not in ("spot", "linear"):
+        raise HTTPException(status_code=400, detail="Invalid category")
+    rows, provider = await get_recent_trades(symbol, category)
+    notionals = [x["price"] * x["size"] for x in rows if x["price"] > 0 and x["size"] > 0]
+    if not notionals:
+        raise HTTPException(status_code=502, detail="No valid recent trade data")
+    ordered = sorted(notionals)
+    median_notional = ordered[len(ordered) // 2]
+    threshold = max(median_notional * 5, 25000.0)
+    buys = sum(x["price"] * x["size"] for x in rows if x["side"] == "BUY")
+    sells = sum(x["price"] * x["size"] for x in rows if x["side"] == "SELL")
+    large = [{"price": x["price"], "size": x["size"], "side": x["side"],
+              "notional": round(x["price"] * x["size"], 2), "time": x["time"]}
+             for x in rows if x["price"] * x["size"] >= threshold]
+    return {"symbol": symbol.upper(), "category": category, "provider": provider,
+            "sampleTrades": len(rows), "buyNotional": round(buys, 2), "sellNotional": round(sells, 2),
+            "buySellRatio": round(buys / sells, 4) if sells > 0 else None,
+            "largeTradeThreshold": round(threshold, 2), "largeTradePrints": large[:20],
+            "interpretation": "Large prints are size outliers in the fetched trade sample, not proof of whale identity or intent.",
+            "live_trading_enabled": False}
+
+
 class PaperTrade(BaseModel):
     symbol: str = Field(min_length=2, max_length=30)
     side: str
