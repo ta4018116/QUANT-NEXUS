@@ -69,6 +69,15 @@
   ws.onclose=()=>{if(liquidationSocket===ws){setLiqStatus('انقطع الاتصال · إعادة المحاولة',false);setTimeout(()=>{if($('monitoringRoomPanel')?.classList.contains('page-visible')&&liquidationSymbol===symbol)connectLiquidationStream(symbol)},5000)}};
  }
 
+ window.removeMonitoringSymbol = function(symbol) {
+  symbol=String(symbol||'').toUpperCase();
+  if(!watchSymbols.includes(symbol)) return false;
+  watchSymbols=watchSymbols.filter(x=>x!==symbol);
+  persistWatchlist();lastWatchRender='';
+  window.renderMonitoringRoom(latestItems);
+  window.renderOpportunityCards?.(latestItems);
+  return true;
+ };
 })();
 
 /* Rich opportunity cards for the opportunities room. */
@@ -80,15 +89,6 @@
  const esc = value => String(value ?? '—').replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
  const number = value => value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toLocaleString('en-US',{maximumFractionDigits:6});
  const stateLabel = state => ({CONFIRMED:'تأكيد مكتمل',APPROACH:'اقتراب من الدخول',WAITING:'قيد المراقبة'})[state] || 'قيد المراقبة';
- window.removeMonitoringSymbol = function(symbol) {
-  symbol=String(symbol||'').toUpperCase();
-  if(!watchSymbols.includes(symbol)) return false;
-  watchSymbols=watchSymbols.filter(x=>x!==symbol);
-  persistWatchlist();lastWatchRender='';
-  window.renderMonitoringRoom(latestItems);
-  window.renderOpportunityCards?.(latestItems);
-  return true;
- };
  window.renderOpportunityCards = function(items) {
   originalCards(items);
   const rows = new Map((Array.isArray(items)?items:[]).map(x=>[String(x.symbol||'').toUpperCase(),x]));
