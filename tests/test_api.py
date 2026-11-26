@@ -415,7 +415,7 @@ def test_engine_registry_reports_all_fifteen_with_truthful_statuses(client):
     payload = response.json()
     assert payload["total"] == 15
     assert len(payload["engines"]) == 15
-    assert payload["counts"] == {"implemented": 9, "partial": 5, "planned": 1}
+    assert payload["counts"] == {"implemented": 10, "partial": 4, "planned": 1}
     assert payload["trading_mode"] == "simulation"
     assert payload["live_trading_enabled"] is False
     ids = {item["id"] for item in payload["engines"]}
