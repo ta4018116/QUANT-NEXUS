@@ -12,7 +12,8 @@ def test_opportunity_room_renders_rich_cards_with_confirmation_and_watch_actions
     assert "turnover24h" in script
     assert "change24h" in script
     assert "entryConfirmation" in script
-    assert "data-opp-action='analyze'" in script or "data-opp-action='remove'" in script
+    assert "button.dataset.oppAction==='analyze'" in script
+    assert "button.dataset.oppAction==='remove'" in script
     assert "removeMonitoringSymbol" in script
     assert "live_trading_enabled" not in script or "paper" in script.lower()
 
