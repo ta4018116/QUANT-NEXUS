@@ -565,7 +565,7 @@ def test_monitoring_room_assets_and_engine_tiers_are_registered(client):
     assert room_css.status_code == 200
     assert "connectLiquidationStream" in room_js.text
     assert "/ws/derivatives/" in room_js.text
-    assert "allLiquidation" in room_js.text
+    assert "payload.type==='liquidations'" in room_js.text
     assert "liquidation-panel" in room_css.text
     engines = client.get("/api/engines").json()
     derivatives = next(x for x in engines["engines"] if x["id"] == "derivatives")
