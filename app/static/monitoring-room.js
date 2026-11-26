@@ -13,7 +13,7 @@
  const cfg=window.PAGE_CONFIG;
  if(cfg)cfg.monitoring={title:'غرفة المراقبة المركزية',panels:['monitoringRoomPanel']};
  const oldOpen=window.openPage;
- if(oldOpen){window.openPage=function(key){oldOpen(key);if(key==='monitoring'){window.refreshEntryTicker?.();window.renderMonitoringRoom?.(window.lastItems||[]);const symbol=$('selectedName')?.textContent?.trim();window.refreshEngineReadouts?.(symbol);connectLiquidationStream(symbol)}}}
+ if(oldOpen){window.openPage=function(key){oldOpen(key);if(key==='monitoring'){window.refreshEntryTicker?.();window.renderMonitoringRoom?.(window.lastItems||[]);const symbol=$('selectedName')?.textContent?.trim();window.refreshEngineReadouts?.(symbol);connectLiquidationStream(symbol)}else if(liquidationSocket){try{liquidationSocket.close(1000,'monitoring room closed')}catch(_){}}}}
  const oldTicker=window.refreshEntryTicker;
  if(oldTicker){window.refreshEntryTicker=async function(){await oldTicker();const state=$('entryTicker')?.innerText||'قيد المراقبة';$('roomEntryTicker').innerHTML=$('entryTicker')?.innerHTML||state;$('roomSymbol').textContent=$('selectedName')?.textContent||'—';$('roomPrice').textContent=$('price')?.textContent||'—';$('roomState').textContent=state.split('\n')[0].slice(0,60)}}
  window.refreshEngineReadouts=async function(symbol){
@@ -60,7 +60,7 @@
    $('liqCount').textContent=liquidationTotals.count+' حدث';$('liqLong').textContent=fmt(liquidationTotals.long)+' USDT';$('liqShort').textContent=fmt(liquidationTotals.short)+' USDT';$('liqTotal').textContent=fmt(liquidationTotals.long+liquidationTotals.short)+' USDT';
   };
   ws.onerror=()=>setLiqStatus('تعذر الاتصال',false);
-  ws.onclose=()=>{if(liquidationSocket===ws)setLiqStatus('غير متصل',false)};
+  ws.onclose=()=>{if(liquidationSocket===ws){setLiqStatus('انقطع الاتصال · إعادة المحاولة',false);setTimeout(()=>{if($('monitoringRoomPanel')?.classList.contains('page-visible')&&liquidationSymbol===symbol)connectLiquidationStream(symbol)},5000)}};
  }
  const signals=$('signals');
  if(signals){const observer=new MutationObserver(()=>{signals.querySelectorAll('.opportunity-card').forEach(card=>{if(card.querySelector('.tier-gold,.tier-green,.tier-silver'))return;const score=Number(card.querySelector('.opp-score')?.textContent)||0;const tier=score>=85?'gold':score>=70?'green':'silver';const badge=document.createElement('span');badge.className='tier-'+tier;badge.textContent=tier==='gold'?'ذهبي':tier==='green'?'أخضر':'فضي';card.querySelector('.opp-top')?.appendChild(badge)})});observer.observe(signals,{childList:true,subtree:true})}
