@@ -114,3 +114,19 @@ def test_neon_dashboard_is_served_and_keeps_paper_only_mode(client):
     assert 'التداول الحقيقي: معطّل' in html
     health = client.get("/health").json()
     assert health["live_trading_enabled"] is False
+
+
+def test_engine_status_exposes_supported_analysis_and_paper_only_mode(client):
+    payload = client.get("/api/engine/status").json()
+    assert payload["scan_depths"] == [32, 64, 128, 256, "AUTO"]
+    assert "MACD12-26-9" in payload["indicators"]
+    assert payload["trading_mode"] == "simulation"
+    assert payload["live_trading_enabled"] is False
+
+
+def test_macd_returns_values_when_history_is_sufficient():
+    values = [100 + i * 0.5 + (i % 4) * 0.1 for i in range(80)]
+    line, signal, histogram = main.macd(values)
+    assert line is not None
+    assert signal is not None
+    assert histogram == pytest.approx(line - signal)

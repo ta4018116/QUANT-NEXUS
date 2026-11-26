@@ -164,6 +164,15 @@ def rsi(values, period=14):
         return 100.0
     return 100 - 100 / (1 + gains / losses)
 
+def macd(values, fast=12, slow=26, signal=9):
+    if len(values) < slow + signal: return None, None, None
+    line=[]
+    for i in range(len(values)):
+        a,b=ema(values[:i+1],fast),ema(values[:i+1],slow)
+        if a is not None and b is not None: line.append(a-b)
+    sig=ema(line,signal) if len(line)>=signal else None
+    return (line[-1],sig,line[-1]-sig) if sig is not None else (None,None,None)
+
 def analyze_klines(rows):
     if not isinstance(rows, list):
         raise HTTPException(status_code=502, detail="Market provider returned invalid candle data")
@@ -199,6 +208,10 @@ def analyze_klines(rows):
     avg_vol = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 0
     vol_ratio = volumes[-1] / avg_vol if avg_vol > 0 else None
     recent_high, recent_low = max(highs[-20:]), min(lows[-20:])
+    macd_line, macd_signal, macd_hist = macd(closes)
+    typical=[(x['high']+x['low']+x['close'])/3 for x in candles]
+    total_volume=sum(volumes)
+    vwap=sum(p*v for p,v in zip(typical,volumes))/total_volume if total_volume>0 else None
     score = 50
     if e20 is not None and last > e20: score += 12
     elif e20 is not None: score -= 12
@@ -207,6 +220,8 @@ def analyze_klines(rows):
     if strength is not None:
         score += 8 if 52 <= strength <= 68 else (-8 if strength < 42 or strength > 75 else 0)
     if vol_ratio is not None and vol_ratio >= 1.5: score += 10
+    if macd_hist is not None: score += 7 if macd_hist > 0 else -7
+    if vwap is not None: score += 5 if last > vwap else -5
     score = max(0, min(100, score))
     direction = "LONG" if score >= 62 else ("SHORT" if score <= 38 else "NEUTRAL")
     risk = max((recent_high - recent_low) * 0.35, last * 0.006)
@@ -217,7 +232,7 @@ def analyze_klines(rows):
     else:
         stop = target1 = target2 = None
     return {"price":last,"change24h":None,"rsi":round(strength,2) if strength is not None else None,
-            "ema20":e20,"ema50":e50,"volumeRatio":round(vol_ratio,2) if vol_ratio is not None else None,
+            "ema20":e20,"ema50":e50,"macd":macd_line,"macdSignal":macd_signal,"macdHistogram":macd_hist,"vwap":vwap,"volumeRatio":round(vol_ratio,2) if vol_ratio is not None else None,
             "support":recent_low,"resistance":recent_high,"score":score,"direction":direction,
             "entry":last if direction != "NEUTRAL" else None,"stopLoss":stop,
             "target1":target1,"target2":target2,"candles":candles[-100:]}
@@ -257,15 +272,17 @@ async def klines(symbol: str, category: str = "spot", interval: str = "15m", lim
     return analysis
 
 @app.get("/api/scan")
-async def scan(category: str = "spot", interval: str = "15m", limit: int = Query(30, ge=1, le=256),
-               min_turnover: float = Query(0, ge=0), direction: str = "all"):
+async def scan(category: str = "spot", interval: str = "15m", limit: int = Query(64, ge=1, le=500),
+               min_turnover: float = Query(0, ge=0), direction: str = "all", depth: str = Query("AUTO", pattern="^(AUTO|32|64|128|256)$")):
     if category not in ("spot","linear") or interval not in INTERVALS:
         raise HTTPException(status_code=400, detail="Invalid scan configuration")
     tickers, ticker_provider = await get_market_tickers(category)
     tickers = [t for t in tickers if isinstance(t, dict) and str(t.get("symbol", "")).endswith("USDT")]
     tickers.sort(key=lambda x: safe_float(x.get("turnover24h")), reverse=True)
-    candidates = [x for x in tickers if safe_float(x.get("turnover24h")) >= min_turnover][:limit]
-    semaphore = asyncio.Semaphore(8)
+    eligible = [x for x in tickers if safe_float(x.get("turnover24h")) >= min_turnover]
+    effective_limit = min(len(eligible), {"32":32,"64":64,"128":128,"256":256}.get(depth, min(256,max(64,len(eligible)))))
+    candidates = eligible[:effective_limit]
+    semaphore = asyncio.Semaphore(12)
     async def one(ticker):
         async with semaphore:
             try:
@@ -291,8 +308,39 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
     results.sort(key=lambda x:safe_float(x.get("score")), reverse=True)
     providers = sorted(set(x["provider"] for x in results))
     return {"provider":ticker_provider if len(providers)<=1 and not providers else (providers[0] if len(providers)==1 else "Mixed"),
-            "providers":providers,"category":category,"interval":interval,"scanned":len(candidates),
+            "providers":providers,"category":category,"interval":interval,"depth":depth,"effectiveDepth":len(candidates),"scanned":len(candidates),
             "returned":len(results),"generatedAt":datetime.now(timezone.utc).isoformat(),"items":results}
+
+@app.get("/api/multi-timeframe/{symbol}")
+async def multi_timeframe(symbol: str, category: str = "spot"):
+    if category not in ("spot", "linear"):
+        raise HTTPException(status_code=400, detail="Invalid category")
+    frames = ("5m", "15m", "1h", "4h")
+    async def analyze_frame(frame):
+        rows, provider = await get_market_klines(symbol, category, frame, 120)
+        result = analyze_klines(rows)
+        return {"interval": frame, "direction": result["direction"],
+                "score": result["score"], "rsi": result["rsi"],
+                "macdHistogram": result.get("macdHistogram"), "provider": provider}
+    results = await asyncio.gather(*(analyze_frame(frame) for frame in frames), return_exceptions=True)
+    items = []
+    for frame, result in zip(frames, results):
+        items.append({"interval": frame, "error": "بيانات هذا الإطار غير متاحة"}
+                     if isinstance(result, Exception) else result)
+    valid = [x for x in items if "score" in x]
+    directions = {x["direction"] for x in valid if x["direction"] != "NEUTRAL"}
+    average = round(sum(x["score"] for x in valid)/len(valid), 1) if valid else None
+    return {"symbol": symbol.upper(), "frames": items, "averageScore": average,
+            "aligned": len(directions) <= 1, "live_trading_enabled": False}
+
+@app.get("/api/engine/status")
+async def engine_status():
+    return {"engine": "QUANT INTELLIGENCE",
+            "indicators": ["EMA20", "EMA50", "RSI14", "MACD12-26-9", "VWAP", "VolumeRatio"],
+            "scan_depths": [32, 64, 128, 256, "AUTO"],
+            "markets": {"spot": True, "linear_futures": True, "forex": False,
+                        "us_stocks": False, "indices": False, "commodities": False},
+            "trading_mode": "simulation", "live_trading_enabled": False}
 
 class PaperTrade(BaseModel):
     symbol: str = Field(min_length=2, max_length=30)
