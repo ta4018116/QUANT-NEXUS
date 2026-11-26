@@ -305,3 +305,80 @@ def test_spot_simulation_rejects_short_and_leverage(client):
         "leverage": 2, "entry": 100, "quantity": 1, "stop_loss": 90
     })
     assert leveraged.status_code == 400
+
+def test_flat_market_rsi_is_neutral():
+    assert main.rsi([100.0] * 40) == 50.0
+
+
+def test_breakout_uses_last_completed_candle_not_forming_candle():
+    rows = []
+    for i in range(28):
+        close = 100 + i * 0.01
+        rows.append([str(i * 60_000), str(close), str(close + 0.1),
+                     str(close - 0.1), str(close), "1000"])
+    rows.append([str(28 * 60_000), "101", "102", "100.8", "101.5", "1500"])
+    # A still-forming candle with a large wick must not invalidate the prior completed breakout.
+    rows.append([str(29 * 60_000), "101.4", "200", "101", "101.6", "2000"])
+    result = main.analyze_klines(rows)
+    assert result["breakout"] == "UP"
+    assert result["breakoutClose"] == pytest.approx(101.5)
+
+
+def test_scanner_respects_requested_limit_even_when_depth_is_larger(client, monkeypatch):
+    tickers = [
+        {"symbol": f"COIN{i}USDT", "turnover24h": 1_000_000,
+         "price24hPcnt": 0.01, "volume24h": 1000}
+        for i in range(3)
+    ]
+    async def fake_tickers(category):
+        return tickers, "TEST"
+    async def fake_klines(symbol, category, interval, limit):
+        return make_rows(), "TEST"
+    monkeypatch.setattr(main, "get_market_tickers", fake_tickers)
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    response = client.get("/api/scan?category=spot&interval=15m&limit=1&depth=256&min_turnover=0")
+    assert response.status_code == 200
+    assert response.json()["scanned"] == 1
+    assert response.json()["effectiveDepth"] == 1
+
+
+def test_paper_open_rolls_back_memory_when_storage_fails(client, monkeypatch):
+    def fail_save():
+        raise OSError("disk unavailable")
+    monkeypatch.setattr(main, "persist_paper_state", fail_save)
+    response = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "LONG", "category": "spot",
+        "entry": 100, "quantity": 1, "stop_loss": 95, "take_profit": 110
+    })
+    assert response.status_code == 503
+    account = client.get("/api/paper").json()
+    assert account["balance"] == 10_000
+    assert account["openCount"] == 0
+    assert account["trades"] == []
+
+
+def test_paper_close_rolls_back_memory_when_storage_fails(client, monkeypatch):
+    opened = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "LONG", "category": "spot",
+        "entry": 100, "quantity": 1, "stop_loss": 95, "take_profit": 110
+    })
+    assert opened.status_code == 200
+    trade_id = opened.json()["trade"]["id"]
+    def fail_save():
+        raise OSError("disk unavailable")
+    monkeypatch.setattr(main, "persist_paper_state", fail_save)
+    response = client.post(f"/api/paper/{trade_id}/close?exit_price=110")
+    assert response.status_code == 503
+    account = client.get("/api/paper").json()
+    assert account["balance"] == 9_900
+    assert account["openCount"] == 1
+    assert account["trades"][0]["status"] == "OPEN"
+
+
+def test_engine_status_lists_actual_intelligence_capabilities(client):
+    payload = client.get("/api/engine/status").json()
+    assert "orderbook_liquidity" in payload["capabilities"]
+    assert "large_trade_flow" in payload["capabilities"]
+    assert "paper_auto_monitor" in payload["capabilities"]
+    assert payload["live_trading_enabled"] is False
+
