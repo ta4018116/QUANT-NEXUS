@@ -75,6 +75,7 @@ async def close_shared_http_client():
 PAPER_STORE = PaperStore()
 PAPER_BALANCE, PAPER_TRADES = PAPER_STORE.load()
 PAPER_LOCK = asyncio.Lock()
+AUTO_ENTRY_LOCK = asyncio.Lock()
 PAPER_FEE_RATE = min(0.01, max(0.0, safe_float(os.getenv("PAPER_FEE_RATE"), 0.0006)))
 
 def persist_paper_state():
@@ -439,8 +440,7 @@ async def entry_monitor(symbol: str, category: str = "spot", interval: str = "15
 
 
 
-@app.post("/api/paper/auto-entry/{symbol}")
-async def auto_paper_entry(symbol: str, category: str = "spot", interval: str = "15m"):
+async def _auto_paper_entry_locked(symbol: str, category: str = "spot", interval: str = "15m"):
     """Open a paper position only for a manually watched symbol with a fresh confirmed setup."""
     global PAPER_BALANCE
     symbol = symbol.upper()
@@ -452,7 +452,7 @@ async def auto_paper_entry(symbol: str, category: str = "spot", interval: str = 
     analysis = analyze_klines(rows)
     confirmation = evaluate_entry(analysis)
     side = str(analysis.get("direction", "NEUTRAL")).upper()
-    entry = safe_float(analysis.get("price"))
+    entry = safe_float(analysis.get("entry"))
     stop = safe_float(analysis.get("stopLoss"))
     target = safe_float(analysis.get("target2"))
     score = safe_float(analysis.get("score"))
@@ -506,6 +506,13 @@ async def auto_paper_entry(symbol: str, category: str = "spot", interval: str = 
             "score": score, "provider": provider, "confirmation": confirmation,
             "riskBudget": round(risk_budget, 8), "trading_mode": "simulation",
             "live_trading_enabled": False}
+
+
+@app.post("/api/paper/auto-entry/{symbol}")
+async def auto_paper_entry(symbol: str, category: str = "spot", interval: str = "15m"):
+    # Serialize automatic entry attempts so simultaneous polling cycles cannot race each other.
+    async with AUTO_ENTRY_LOCK:
+        return await _auto_paper_entry_locked(symbol, category, interval)
 
 
 @app.get("/api/engine/status")
