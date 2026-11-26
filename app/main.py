@@ -220,7 +220,14 @@ def analyze_klines(rows, include_all_candles=False):
     recent_volumes = volumes[-21:-1]
     avg_vol = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 0
     vol_ratio = volumes[-1] / avg_vol if avg_vol > 0 else None
-    recent_high, recent_low = max(highs[-20:]), min(lows[-20:])
+    # Confirm breakouts with the last completed candle, excluding the still-forming candle.
+    signal_candle = candles[-2] if len(candles) >= 2 else candles[-1]
+    reference_candles = candles[-22:-2] if len(candles) >= 22 else candles[:-2]
+    if not reference_candles:
+        reference_candles = candles[:-1] or candles
+    recent_high = max(x["high"] for x in reference_candles)
+    recent_low = min(x["low"] for x in reference_candles)
+    breakout = "UP" if signal_candle["close"] > recent_high else ("DOWN" if signal_candle["close"] < recent_low else "NONE")
     macd_line, macd_signal, macd_hist = macd(closes)
     typical=[(x['high']+x['low']+x['close'])/3 for x in candles]
     total_volume=sum(volumes)
@@ -246,7 +253,8 @@ def analyze_klines(rows, include_all_candles=False):
         stop = target1 = target2 = None
     return enrich_analysis({"price":last,"change24h":None,"rsi":round(strength,2) if strength is not None else None,
             "ema20":e20,"ema50":e50,"macd":macd_line,"macdSignal":macd_signal,"macdHistogram":macd_hist,"vwap":vwap,"volumeRatio":round(vol_ratio,2) if vol_ratio is not None else None,
-            "support":recent_low,"resistance":recent_high,"score":score,"direction":direction,
+            "support":recent_low,"resistance":recent_high,"breakout":breakout,
+            "breakoutClose":signal_candle["close"],"score":score,"direction":direction,
             "entry":last if direction != "NEUTRAL" else None,"stopLoss":stop,
             "target1":target1,"target2":target2,"candles":candles if include_all_candles else candles[-100:]})
 
@@ -361,7 +369,7 @@ async def multi_timeframe(symbol: str, category: str = "spot"):
 async def engine_status():
     return {"engine": "QUANT INTELLIGENCE",
             "engine_version": "2.0",
-            "capabilities": ["technical_analysis", "multi_timeframe", "adaptive_scanner", "signal_explanations", "historical_backtest", "paper_risk_controls"],
+            "capabilities": ["technical_analysis", "multi_timeframe", "adaptive_scanner", "signal_explanations", "historical_backtest", "paper_risk_controls", "orderbook_liquidity", "large_trade_flow", "paper_auto_monitor", "position_sizing"],
             "indicators": ["EMA20", "EMA50", "RSI14", "MACD12-26-9", "VWAP", "VolumeRatio", "ATR14"],
             "scan_depths": [32, 64, 128, 256, "AUTO"],
             "markets": {"spot": True, "linear_futures": True, "forex": False,
