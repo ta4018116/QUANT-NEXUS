@@ -1,11 +1,33 @@
-# QUANT NEXUS
+# QUANT NEXUS X
 
-Standalone multi-market intelligence platform.
+A responsive, Arabic-first quantitative market intelligence and simulation platform.
 
-## Safety
-- Simulation / paper-trading only.
-- Live order execution is disabled by design.
-- No exchange API secrets are required for the initial demo.
+## Live market coverage
+- Crypto Spot and USDT linear Futures data through Bybit, with OKX fallback where supported.
+- Forex, US equities, indices and commodities are shown as not connected until a dedicated provider is configured. The application does not fabricate prices for unavailable markets.
+
+## Analysis and research
+- EMA 20/50, RSI 14, MACD 12/26/9, VWAP, volume ratio and ATR 14.
+- Explainable signal labels and a short list of contributing observations.
+- Multi-timeframe snapshots across 5m, 15m, 1h and 4h.
+- Order-book spread/depth imbalance and recent large-trade outlier summaries.
+- EMA crossover historical simulation with next-bar-open fills, fees and slippage, and mark-to-market drawdown.
+- Position sizing helper with a maximum configured risk input of 2% of the supplied equity.
+
+## Paper trading only
+- Simulated positions require a stop loss.
+- A risk check prevents a single simulated trade from risking more than 2% of the remaining paper balance.
+- Paper positions can be closed manually or monitored against stop/target levels using current ticker marks.
+- SQLite stores the paper account state.
+
+**Live order execution is disabled by design.** There is no live order endpoint and no exchange trading credential is required.
+
+## Persistence on hosting
+SQLite persistence survives process restarts only when the database file is placed on a persistent mounted volume. Configure:
+- `PAPER_DB_PATH=/var/data/paper.sqlite3` (change the directory to the mounted volume path)
+- `PAPER_STORAGE_DURABLE=true` only after the hosting volume is mounted and verified.
+
+The current Render blueprint uses the free web-service plan and does not provision a persistent disk. Therefore paper state on that deployment may be lost when its instance is replaced or filesystem is reset. Do not set `PAPER_STORAGE_DURABLE=true` without a persistent volume.
 
 ## Run locally
 ```bash
@@ -17,9 +39,28 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 Open http://localhost:8000.
 
-## Initial scope
-- Responsive web application foundation.
-- Market overview and watchlist UI.
-- Signal-analysis API with explicit demo status.
-- Paper portfolio foundation; no live execution.
-- Native Android client planned as a separate module.
+## API
+- `GET /health`
+- `GET /api/overview`
+- `GET /api/engine/status`
+- `GET /api/markets?category=spot|linear`
+- `GET /api/scan?category=spot|linear&depth=AUTO|32|64|128|256`
+- `GET /api/klines/{symbol}`
+- `GET /api/multi-timeframe/{symbol}`
+- `GET /api/liquidity/{symbol}`
+- `GET /api/flow/{symbol}`
+- `GET /api/strategies`
+- `GET /api/backtest/{symbol}`
+- `POST /api/risk/position-size`
+- `GET /api/paper`, `POST /api/paper`
+- `POST /api/paper/monitor`
+- `POST /api/paper/{trade_id}/close?exit_price=...`
+
+## Tests
+Install development requirements and run:
+```bash
+pip install -r requirements-dev.txt
+PYTHONPATH=. pytest -q
+```
+
+Historical backtests and signal scores are research tools, not guarantees of future returns or personalized financial advice.
