@@ -94,25 +94,48 @@ def rsi(values, period=14):
     return 100 - 100 / (1 + gains / losses)
 
 def analyze_klines(rows):
-    candles = list(reversed(rows))
-    closes = [float(x[4]) for x in candles]
-    highs = [float(x[2]) for x in candles]
-    lows = [float(x[3]) for x in candles]
-    volumes = [float(x[5]) for x in candles]
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=502, detail="Market provider returned invalid candle data")
+    candles = []
+    for row in rows:
+        if not isinstance(row, (list, tuple)) or len(row) < 6:
+            continue
+        try:
+            timestamp = int(float(row[0]))
+            values = [float(row[i]) for i in range(1, 6)]
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not all(math.isfinite(v) for v in values):
+            continue
+        open_price, high_price, low_price, close_price, volume = values
+        if min(open_price, high_price, low_price, close_price) <= 0 or volume < 0:
+            continue
+        if high_price < max(open_price, close_price, low_price) or low_price > min(open_price, close_price, high_price):
+            continue
+        candles.append({"time":timestamp//1000,"open":open_price,"high":high_price,
+                        "low":low_price,"close":close_price,"volume":volume})
+    candles.sort(key=lambda x:x["time"])
+    if len(candles) < 20:
+        raise HTTPException(status_code=502, detail="Not enough valid candle data from market provider")
+    closes = [x["close"] for x in candles]
+    highs = [x["high"] for x in candles]
+    lows = [x["low"] for x in candles]
+    volumes = [x["volume"] for x in candles]
     last = closes[-1]
     e20, e50 = ema(closes, 20), ema(closes, 50)
     strength = rsi(closes)
-    avg_vol = sum(volumes[-21:-1]) / max(1, len(volumes[-21:-1]))
-    vol_ratio = volumes[-1] / avg_vol if avg_vol else None
+    recent_volumes = volumes[-21:-1]
+    avg_vol = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 0
+    vol_ratio = volumes[-1] / avg_vol if avg_vol > 0 else None
     recent_high, recent_low = max(highs[-20:]), min(lows[-20:])
     score = 50
-    if e20 and last > e20: score += 12
-    elif e20: score -= 12
-    if e50 and e20 and e20 > e50: score += 13
-    elif e50 and e20: score -= 13
+    if e20 is not None and last > e20: score += 12
+    elif e20 is not None: score -= 12
+    if e50 is not None and e20 is not None and e20 > e50: score += 13
+    elif e50 is not None and e20 is not None: score -= 13
     if strength is not None:
         score += 8 if 52 <= strength <= 68 else (-8 if strength < 42 or strength > 75 else 0)
-    if vol_ratio and vol_ratio >= 1.5: score += 10
+    if vol_ratio is not None and vol_ratio >= 1.5: score += 10
     score = max(0, min(100, score))
     direction = "LONG" if score >= 62 else ("SHORT" if score <= 38 else "NEUTRAL")
     risk = max((recent_high - recent_low) * 0.35, last * 0.006)
@@ -123,12 +146,10 @@ def analyze_klines(rows):
     else:
         stop = target1 = target2 = None
     return {"price":last,"change24h":None,"rsi":round(strength,2) if strength is not None else None,
-            "ema20":e20,"ema50":e50,"volumeRatio":round(vol_ratio,2) if vol_ratio else None,
+            "ema20":e20,"ema50":e50,"volumeRatio":round(vol_ratio,2) if vol_ratio is not None else None,
             "support":recent_low,"resistance":recent_high,"score":score,"direction":direction,
             "entry":last if direction != "NEUTRAL" else None,"stopLoss":stop,
-            "target1":target1,"target2":target2,"candles":[
-                {"time":int(x[0])//1000,"open":float(x[1]),"high":float(x[2]),
-                 "low":float(x[3]),"close":float(x[4]),"volume":float(x[5])} for x in candles[-100:]]}
+            "target1":target1,"target2":target2,"candles":candles[-100:]}
 
 @app.get("/health")
 async def health():
