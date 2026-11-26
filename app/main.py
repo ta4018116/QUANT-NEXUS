@@ -552,7 +552,8 @@ def calculate_backtest(candles, fee_bps=10, initial_balance=10000.0):
             "profitFactor": round(gross_win/gross_loss, 3) if gross_loss else (None if not wins else "infinite"),
             "expectancy": round(sum(t["pnl"] for t in trades)/len(trades), 4) if trades else 0,
             "maxDrawdownPct": round(max_drawdown, 3), "tradeCount": len(trades),
-            "trades": trades, "feesBpsPerSide": fee_bps}
+            "trades": trades, "feesBpsPerSide": fee_bps,
+            "live_trading_enabled": False}
 
 @app.get("/api/backtest/{symbol}")
 async def backtest(symbol: str, category: str = "spot", interval: str = "1h",
