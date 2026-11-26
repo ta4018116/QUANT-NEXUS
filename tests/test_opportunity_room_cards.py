@@ -43,3 +43,18 @@ def test_monitoring_watchlist_renders_entry_plan_and_animated_progress_cards():
     assert "room-progress-track" in script
     assert "roomProgressShimmer" in script
     assert "prefers-reduced-motion" in script
+
+
+def test_monitoring_room_watchlist_renders_entry_details_and_animated_progress_cards():
+    client = TestClient(app)
+    response = client.get("/static/monitoring-room.js")
+    assert response.status_code == 200
+    script = response.text
+    assert "room-watch-card" in script
+    assert "دخول مرجعي" in script
+    assert "وقف الخسارة" in script
+    assert "الهدف الأول" in script
+    assert "الهدف الثاني" in script
+    assert "room-progress-track" in script
+    assert "roomProgressShimmer" in script
+    assert "prefers-reduced-motion" in script
