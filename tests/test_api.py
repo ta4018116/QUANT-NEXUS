@@ -589,7 +589,8 @@ def test_dashboard_avoids_duplicate_opportunity_render_and_market_http_reconnect
     html = client.get("/").text
     assert "drawRadar(visible);$('signals').innerHTML=visible.slice(0,8)" not in html
     assert "renderOpportunityCards(items)" in html
-    assert "shared_http_client().get" in main.bybit_get.__code__.co_names or main.HTTP_CLIENT is None
+    assert "shared_http_client().get" in __import__("inspect").getsource(main.bybit_get)
+    assert "shared_http_client().get" in __import__("inspect").getsource(main.okx_get)
     assert "max_keepalive_connections=20" in __import__("inspect").getsource(main.shared_http_client)
     assert main.LIVE_TRADING_ENABLED is False
 
