@@ -159,3 +159,49 @@
  roomStyle.textContent='.room-watch-card{position:relative;margin:10px 0;padding:13px;border:1px solid #17445a;border-radius:13px;background:linear-gradient(145deg,#071b2a,#06111c);overflow:hidden}.room-watch-card:before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:#20d98a}.room-watch-card.tier-border-gold:before{background:#ffc928}.room-watch-card.tier-border-silver:before{background:#b8c5cf}.room-watch-card-head,.room-progress-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.room-watch-card-head>div{display:flex;flex-direction:column;gap:3px}.room-watch-card-head>div>b{font-size:16px}.room-watch-card-head small,.room-watch-reason{color:var(--muted);font-size:11px}.room-watch-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:12px 0}.room-watch-metrics>div{min-width:0;padding:8px;border:1px solid #123447;border-radius:8px;background:#04121e}.room-watch-metrics small{display:block;color:var(--muted);font-size:10px;margin-bottom:4px}.room-watch-metrics b{font-size:12px;overflow-wrap:anywhere}.room-progress-head{font-size:11px;margin:8px 0 6px}.room-progress-track{height:11px;position:relative;overflow:hidden;border-radius:20px;background:#152b3a;border:1px solid #24516a}.room-progress-track i{display:block;height:100%;width:var(--room-progress);max-width:100%;border-radius:20px;background:linear-gradient(90deg,#087b50,#20ff83,#a7ffd1);transition:width .8s ease}.room-progress-track span{position:absolute;inset:0;width:38%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.38),transparent);transform:translateX(-130%);animation:roomProgressShimmer 2.1s linear infinite;pointer-events:none}@keyframes roomProgressShimmer{to{transform:translateX(360%)}}.room-watch-reason{display:block;margin-top:8px;line-height:1.6}.room-watch-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.room-watch-actions .btn{font-size:11px;padding:7px 11px}@media(max-width:600px){.room-watch-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(prefers-reduced-motion:reduce){.room-progress-track span{animation:none}}';
  document.head.append(roomStyle);
 })();
+
+/* Automatic paper-entry bridge for manually watched opportunities. */
+(() => {
+ const key='quantNexusManualWatchlist';
+ let busy=false;
+ const getWatched=()=>{try{const a=JSON.parse(localStorage.getItem(key)||'[]');return Array.isArray(a)?[...new Set(a.map(x=>String(x).toUpperCase()).filter(x=>/^[A-Z0-9]{2,30}USDT$/.test(x)))]:[]}catch(_){return[]}};
+ const request=async(url,options)=>{const r=await fetch(url,options);if(!r.ok)throw new Error('HTTP '+r.status);return r.json()};
+ function ensurePaperPanel(){
+  const host=document.getElementById('roomWatchList');if(!host)return null;
+  let panel=document.getElementById('roomPaperAutoStatus');
+  if(!panel){panel=document.createElement('section');panel.id='roomPaperAutoStatus';panel.className='room-paper-auto-status';panel.innerHTML='<b>محرك الصفقات التجريبية التلقائي</b><div class="room-paper-summary">جارٍ تحميل حالة المحفظة…</div><small>دخول تلقائي بعد تأكيد شمعة مكتملة ودرجة 85/100 على الأقل · مخاطرة قصوى 1% · 5 مراكز كحد أقصى · تداول حقيقي معطل</small>';host.parentNode.insertBefore(panel,host)}
+  return panel;
+ }
+ async function cycle(){
+  const room=document.getElementById('monitoringRoomPanel');
+  if(busy||!room||!room.classList.contains('page-visible'))return;
+  const watched=getWatched();if(!watched.length)return;
+  busy=true;
+  try{
+   const panel=ensurePaperPanel();
+   const outcomes=await Promise.all(watched.slice(0,30).map(async symbol=>{
+    try{return await request('/api/paper/auto-entry/'+encodeURIComponent(symbol)+'?category=spot&interval=15m',{method:'POST'})}
+    catch(error){return {symbol,state:'ERROR',reason:'تعذر تحديث '+symbol}}
+   }));
+   await request('/api/paper/monitor',{method:'POST'});
+   const summary=await request('/api/paper/summary');
+   if(panel){
+    const positions=Array.isArray(summary.positions)?summary.positions:[];
+    const opened=outcomes.filter(x=>x.opened);
+    const blocked=outcomes.filter(x=>x.state==='RISK_REJECTED'||x.state==='INVALID_PLAN'||x.state==='POSITION_LIMIT');
+    panel.querySelector('.room-paper-summary').textContent='مراكز مفتوحة: '+positions.length+' / 5 · ربح/خسارة عائم: '+Number(summary.unrealizedPnlAfterFees||0).toFixed(2)+' USDT · رصيد: '+Number(summary.balance||0).toFixed(2)+' USDT'+(opened.length?' · فُتحت الآن: '+opened.map(x=>x.symbol).join('، '):'')+(blocked.length?' · فرص مرفوضة لأسباب حماية المخاطر: '+blocked.length:'');
+    panel.dataset.updatedAt=new Date().toISOString();
+   }
+   outcomes.filter(x=>x.opened).forEach(x=>window.dispatchEvent(new CustomEvent('qn-paper-entry-opened',{detail:x})));
+   if(typeof window.renderMonitoringRoom==='function')window.renderMonitoringRoom(window.lastItems||[]);
+  }catch(error){const p=ensurePaperPanel();if(p)p.querySelector('.room-paper-summary').textContent='تعذر تحديث محرك الصفقات: '+error.message}
+  finally{busy=false}
+ }
+ window.qnRunPaperAutoMonitor=cycle;
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden)cycle()});
+ setInterval(cycle,20000);
+ setTimeout(cycle,2500);
+ const style=document.createElement('style');
+ style.textContent='.room-paper-auto-status{margin:12px 0;padding:12px;border:1px solid #20c978;border-radius:11px;background:linear-gradient(145deg,#062719,#06131b);display:grid;gap:7px}.room-paper-auto-status>b{color:#79ffb3}.room-paper-auto-status .room-paper-summary{font-size:12px;line-height:1.7}.room-paper-auto-status small{color:var(--muted);font-size:10px;line-height:1.6}';
+ document.head.append(style);
+})();
