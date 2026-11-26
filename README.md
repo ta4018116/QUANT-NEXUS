@@ -85,3 +85,12 @@ The registry is a capability inventory, not a claim that every proposed engine
 is complete. Derivatives analytics (open interest, funding and liquidations),
 full market-structure validation, explicit regime classification and
 statistically calibrated opportunity probabilities remain on the roadmap.
+
+
+## Command-driven scanning and entry monitoring
+- `GET /api/commands` publishes the transparent command-rule catalogue.
+- Select one or more command IDs in the UI; the scanner returns only assets matching at least one selected rule.
+- `GET /api/scan?...&command_ids=trend_up,breakout_up` applies selected rules as an OR filter and includes each asset's matching IDs.
+- `GET /api/entry-monitor/{symbol}` reports WAITING, APPROACH or CONFIRMED using completed-candle indicator alignment. The UI refreshes the entry status and price/target progress every eight seconds while a symbol is selected.
+- Confirmation is informational only. No exchange order is submitted and all trading remains simulation-only.
+- Rules include trend alignment, support/resistance proximity, completed-candle breakouts, retest watch, volatility compression, volume expansion/contraction, momentum, RSI extremes, VWAP, MACD, liquidity, and risk/reward filters.

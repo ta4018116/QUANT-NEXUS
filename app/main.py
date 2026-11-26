@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from .paper_store import PaperStore
 from .quant_engine import ema_crossover_backtest, enrich_analysis
 from .engine_registry import engine_registry
+from .command_engine import COMMANDS, matches_command, evaluate_entry
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="QUANT NEXUS", version="1.0.0",
@@ -295,11 +296,16 @@ async def klines(symbol: str, category: str = "spot", interval: str = "15m", lim
 
 @app.get("/api/scan")
 async def scan(category: str = "spot", interval: str = "15m", limit: int = Query(64, ge=1, le=500),
-               min_turnover: float = Query(0, ge=0), direction: str = "all", depth: str = Query("AUTO", pattern="^(AUTO|32|64|128|256)$")):
+               min_turnover: float = Query(0, ge=0), direction: str = "all", depth: str = Query("AUTO", pattern="^(AUTO|32|64|128|256)$"), command_ids: str = ""):
     if category not in ("spot","linear") or interval not in INTERVALS:
         raise HTTPException(status_code=400, detail="Invalid scan configuration")
     if direction.lower() not in ("all", "long", "short", "neutral"):
         raise HTTPException(status_code=400, detail="Invalid scan direction")
+    selected_commands = [x.strip() for x in command_ids.split(",") if x.strip()]
+    known_commands = {x["id"] for x in COMMANDS}
+    unknown = sorted(set(selected_commands) - known_commands)
+    if unknown:
+        raise HTTPException(status_code=400, detail="Unknown command_ids: " + ", ".join(unknown))
     tickers, ticker_provider = await get_market_tickers(category)
     tickers = [t for t in tickers if isinstance(t, dict) and str(t.get("symbol", "")).endswith("USDT")]
     tickers.sort(key=lambda x: safe_float(x.get("turnover24h")), reverse=True)
@@ -330,7 +336,17 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
                 logger.exception("Skipping failed market analysis for %s", ticker.get("symbol"))
                 return None
     results = await asyncio.gather(*(one(t) for t in candidates))
-    results = [x for x in results if x and (direction == "all" or x["direction"].lower() == direction.lower())]
+    filtered = []
+    for item in results:
+        if not item or (direction != "all" and item["direction"].lower() != direction.lower()):
+            continue
+        entry_state = evaluate_entry(item)
+        item["entryConfirmation"] = entry_state
+        item["matchedCommands"] = [cid for cid in selected_commands if matches_command(item, cid)]
+        if selected_commands and not item["matchedCommands"]:
+            continue
+        filtered.append(item)
+    results = filtered
     results.sort(key=lambda x:safe_float(x.get("score")), reverse=True)
     providers = sorted(set(x["provider"] for x in results))
     return {"provider":ticker_provider if len(providers)<=1 and not providers else (providers[0] if len(providers)==1 else "Mixed"),
@@ -365,6 +381,40 @@ async def multi_timeframe(symbol: str, category: str = "spot"):
             "aligned": aligned, "validFrames": len(valid),
             "consensus": next(iter(directions)) if aligned else "MIXED_OR_INSUFFICIENT",
             "live_trading_enabled": False}
+
+@app.get("/api/commands")
+async def commands():
+    return {"commands": COMMANDS, "count": len(COMMANDS),
+            "scanner_mode": "selected_commands_only",
+            "trading_mode": "simulation", "live_trading_enabled": False}
+
+
+@app.get("/api/entry-monitor/{symbol}")
+async def entry_monitor(symbol: str, category: str = "spot", interval: str = "15m"):
+    if category not in ("spot", "linear") or interval not in INTERVALS:
+        raise HTTPException(status_code=400, detail="Invalid market or interval")
+    rows, provider = await get_market_klines(symbol, category, interval, 120)
+    analysis = analyze_klines(rows)
+    state = evaluate_entry(analysis)
+    price = analysis.get("price")
+    entry = analysis.get("entry")
+    stop = analysis.get("stopLoss")
+    target1, target2 = analysis.get("target1"), analysis.get("target2")
+    progress = state["progress"]
+    if state["confirmed"] and entry and price and target1 and target2:
+        if analysis["direction"] == "LONG":
+            progress = max(0, min(100, round((price-entry)/(target2-entry)*100))) if target2 != entry else 100
+        else:
+            progress = max(0, min(100, round((entry-price)/(entry-target2)*100))) if target2 != entry else 100
+    return {"symbol": symbol.upper(), "category": category, "interval": interval,
+            "provider": provider, "state": state["state"], "confirmed": state["confirmed"],
+            "progress": progress, "reason": state["reason"], "direction": analysis["direction"],
+            "price": price, "entry": entry, "stopLoss": stop, "target1": target1,
+            "target2": target2, "score": analysis["score"], "rsi": analysis["rsi"],
+            "volumeRatio": analysis["volumeRatio"], "breakout": analysis["breakout"],
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+            "trading_mode": "simulation", "live_trading_enabled": False}
+
 
 @app.get("/api/engine/status")
 async def engine_status():
