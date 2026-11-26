@@ -22,6 +22,17 @@ jobs:
           pip install -r requirements-dev.txt
       - name: Compile Python
         run: python -m compileall -q app
+      - name: Validate dashboard JavaScript
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          html = Path("app/static/index.html").read_text(encoding="utf-8")
+          if "<script>" not in html or "</script>" not in html:
+              raise SystemExit("Dashboard script block not found")
+          script = html.split("<script>", 1)[1].split("</script>", 1)[0]
+          Path("/tmp/quant-nexus-dashboard.js").write_text(script, encoding="utf-8")
+          PY
+          node --check /tmp/quant-nexus-dashboard.js
       - name: Run API regression tests
         env:
           PYTHONPATH: .
