@@ -578,6 +578,14 @@ def test_monitoring_room_assets_and_engine_tiers_are_registered(client):
     assert "data-remove-room-symbol" in room_js.text
 
 
+def test_monitoring_room_avoids_mutation_observers_and_repeated_watchlist_dom_writes(client):
+    room_js = client.get("/static/monitoring-room.js").text
+    html = client.get("/").text
+    assert "new MutationObserver" not in room_js
+    assert "lastWatchRender" in room_js
+    assert "window.isMonitoringSymbol?.(x.symbol)" in html
+
+
 
 def test_regime_engine_classifies_trend_and_rejects_short_history():
     from app.advanced_engines import market_regime
