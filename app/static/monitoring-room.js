@@ -8,12 +8,12 @@
  home.appendChild(card);
  const col=document.querySelector('.layout>.col');
  const panel=document.createElement('div');panel.className='panel';panel.id='monitoringRoomPanel';
- panel.innerHTML='<div class="head">◉ غرفة المراقبة المركزية <span class="badge">LIVE · PAPER</span></div><div class="body"><div class="monitor-status-grid"><div><small>العملة</small><b id="roomSymbol">—</b></div><div><small>تأكيد الدخول</small><b id="roomState" class="tier-silver">قيد المراقبة</b></div><div><small>قوة الإشارة</small><b id="roomScore">—</b></div><div><small>السعر</small><b id="roomPrice">—</b></div></div><div class="room-marquee"><div id="roomMarqueeTrack">QUANT NEXUS · بانتظار بيانات المراقبة · التداول التجريبي فقط</div></div><div id="roomEntryTicker" class="entry-ticker"><b>شريط تأكيد الدخول</b><div class="muted">اختر عملة من الفرص أو شغّل الماسح</div></div><h3>حالة المحركات التحليلية</h3><div id="roomEngineReadouts" class="room-engine-readouts">اختر عملة لعرض حالة السوق وبنية السعر وتقييم الفرصة</div><h3>الفرص تحت المراقبة</h3><div id="roomWatchList" class="room-watch-list">لا توجد فرص بعد</div><h3>تصنيف الفرص</h3><div class="room-tier-legend"><span class="tier-gold">ذهبي · تأكيد مكتمل</span><span class="tier-green">أخضر · توافق جيد</span><span class="tier-silver">فضي · قيد المراقبة</span></div><small class="muted">التصنيف توافق فني وليس احتمال ربح مضموناً. الغرفة لا ترسل أوامر حقيقية.</small></div>';
+ panel.innerHTML='<div class="head">◉ غرفة المراقبة المركزية <span class="badge">LIVE · PAPER</span></div><div class="body"><div class="monitor-status-grid"><div><small>العملة</small><b id="roomSymbol">—</b></div><div><small>تأكيد الدخول</small><b id="roomState" class="tier-silver">قيد المراقبة</b></div><div><small>قوة الإشارة</small><b id="roomScore">—</b></div><div><small>السعر</small><b id="roomPrice">—</b></div></div><div class="room-marquee"><div id="roomMarqueeTrack">QUANT NEXUS · بانتظار بيانات المراقبة · التداول التجريبي فقط</div></div><div id="roomEntryTicker" class="entry-ticker"><b>شريط تأكيد الدخول</b><div class="muted">اختر عملة من الفرص أو شغّل الماسح</div></div><section class="liquidation-panel"><h3>محرك المشتقات البنفسجي · تصفيات Bybit المباشرة</h3><div class="liquidation-status"><span id="liqConnection" class="liq-off">غير متصل</span><span id="liqSymbol">BTCUSDT</span><span id="liqCount">0 حدث</span></div><div class="liquidation-totals"><div><small>تصفية مراكز LONG</small><b id="liqLong">0 USDT</b></div><div><small>تصفية مراكز SHORT</small><b id="liqShort">0 USDT</b></div><div><small>الإجمالي</small><b id="liqTotal">0 USDT</b></div></div><div id="liqEvents" class="liquidation-events">بانتظار أحداث التصفية من Bybit</div><small class="muted">بث عام لأحداث التصفية المنفذة على عقد USDT الخطي. لا يمثل جميع المراكز المعرضة للتصفية ولا يرسل أوامر تداول.</small></section><h3>حالة المحركات التحليلية</h3><div id="roomEngineReadouts" class="room-engine-readouts">اختر عملة لعرض حالة السوق وبنية السعر وتقييم الفرصة</div><h3>الفرص تحت المراقبة</h3><div id="roomWatchList" class="room-watch-list">لا توجد فرص بعد</div><h3>تصنيف الفرص</h3><div class="room-tier-legend"><span class="tier-gold">ذهبي · تأكيد مكتمل</span><span class="tier-green">أخضر · توافق جيد</span><span class="tier-silver">فضي · قيد المراقبة</span></div><small class="muted">التصنيف توافق فني وليس احتمال ربح مضموناً. الغرفة لا ترسل أوامر حقيقية.</small></div>';
  col.prepend(panel);
  const cfg=window.PAGE_CONFIG;
  if(cfg)cfg.monitoring={title:'غرفة المراقبة المركزية',panels:['monitoringRoomPanel']};
  const oldOpen=window.openPage;
- if(oldOpen){window.openPage=function(key){oldOpen(key);if(key==='monitoring'){window.refreshEntryTicker?.();window.renderMonitoringRoom?.(window.lastItems||[]);window.refreshEngineReadouts?.($('selectedName')?.textContent?.trim())}}}
+ if(oldOpen){window.openPage=function(key){oldOpen(key);if(key==='monitoring'){window.refreshEntryTicker?.();window.renderMonitoringRoom?.(window.lastItems||[]);const symbol=$('selectedName')?.textContent?.trim();window.refreshEngineReadouts?.(symbol);connectLiquidationStream(symbol)}}}
  const oldTicker=window.refreshEntryTicker;
  if(oldTicker){window.refreshEntryTicker=async function(){await oldTicker();const state=$('entryTicker')?.innerText||'قيد المراقبة';$('roomEntryTicker').innerHTML=$('entryTicker')?.innerHTML||state;$('roomSymbol').textContent=$('selectedName')?.textContent||'—';$('roomPrice').textContent=$('price')?.textContent||'—';$('roomState').textContent=state.split('\n')[0].slice(0,60)}}
  window.refreshEngineReadouts=async function(symbol){
@@ -30,9 +30,38 @@
   }catch(error){box.textContent='تعذر تحميل بيانات المحركات: '+error.message}
  };
  window.renderMonitoringRoom=function(items){const list=(items||[]).slice(0,15);$('roomWatchList').innerHTML=list.map(x=>{const score=Number(x.score||0),tier=score>=85?'gold':score>=70?'green':'silver',label=tier==='gold'?'ذهبي':tier==='green'?'أخضر':'فضي';return '<div class="room-watch-row"><b>'+x.symbol+'</b><span class="tier-'+tier+'">'+label+'</span><b>'+score+'/100</b><button class="btn" data-room-symbol="'+x.symbol+'">مراقبة</button></div>'}).join('')||'لا توجد فرص مطابقة';$('roomMarqueeTrack').textContent=list.map(x=>x.symbol+' · '+(x.direction||'—')+' · '+(x.score||0)+'/100').join(' ◆ ')||'بانتظار فرص مطابقة'};
- $('roomWatchList').addEventListener('click',e=>{const b=e.target.closest('[data-room-symbol]');if(b){window.selectCoin?.(b.dataset.roomSymbol);window.refreshEntryTicker?.();window.refreshEngineReadouts?.(b.dataset.roomSymbol)}});
+ $('roomWatchList').addEventListener('click',e=>{const b=e.target.closest('[data-room-symbol]');if(b){window.selectCoin?.(b.dataset.roomSymbol);window.refreshEntryTicker?.();window.refreshEngineReadouts?.(b.dataset.roomSymbol);connectLiquidationStream(b.dataset.roomSymbol)}});
  const original=window.render;
  if(original)window.render=function(items){original(items);window.renderMonitoringRoom(items)};
+
+ let liquidationSocket=null,liquidationSymbol='';let liquidationTotals={long:0,short:0,count:0};
+ const fmt=n=>Number(n||0).toLocaleString('en-US',{maximumFractionDigits:2});
+ function setLiqStatus(label,online){const el=$('liqConnection');if(el){el.textContent=label;el.className=online?'liq-on':'liq-off'}}
+ function connectLiquidationStream(symbol){
+  symbol=String(symbol||'BTCUSDT').toUpperCase();if(!/^[A-Z0-9]+USDT$/.test(symbol))symbol='BTCUSDT';
+  if(liquidationSocket&&liquidationSymbol===symbol&&[WebSocket.CONNECTING,WebSocket.OPEN].includes(liquidationSocket.readyState))return;
+  if(liquidationSocket){try{liquidationSocket.close()}catch(_){}}
+  liquidationSymbol=symbol;liquidationTotals={long:0,short:0,count:0};
+  $('liqSymbol').textContent=symbol;$('liqCount').textContent='0 حدث';$('liqLong').textContent='0 USDT';$('liqShort').textContent='0 USDT';$('liqTotal').textContent='0 USDT';$('liqEvents').textContent='جارٍ الاتصال ببث Bybit…';setLiqStatus('جارٍ الاتصال',false);
+  const protocol=location.protocol==='https:'?'wss:':'ws:';
+  const ws=new WebSocket(protocol+'//'+location.host+'/ws/derivatives/'+encodeURIComponent(symbol)+'/liquidations');liquidationSocket=ws;
+  ws.onopen=()=>setLiqStatus('متصل · Bybit',true);
+  ws.onmessage=event=>{let payload;try{payload=JSON.parse(event.data)}catch(_){return}
+   if(payload.type==='status'){setLiqStatus(payload.status==='connected'?'متصل · Bybit':'انقطع الاتصال',payload.status==='connected');return}
+   if(payload.type!=='liquidations'||!Array.isArray(payload.events))return;
+   const list=$('liqEvents');if(list.textContent.includes('جارٍ الاتصال')||list.textContent.includes('بانتظار أحداث'))list.textContent='';
+   payload.events.forEach(item=>{const value=Number(item.notional_usdt)||0;const isLong=item.liquidated_position==='LONG';if(isLong)liquidationTotals.long+=value;else liquidationTotals.short+=value;liquidationTotals.count++;
+    const row=document.createElement('div');row.className='liq-event '+(isLong?'liq-long':'liq-short');
+    const side=document.createElement('b');side.textContent=isLong?'تصفية LONG':'تصفية SHORT';
+    const details=document.createElement('span');details.textContent=fmt(value)+' USDT · '+fmt(item.size)+' '+symbol.replace(/USDT$/,'')+' @ '+fmt(item.bankruptcy_price);
+    const time=document.createElement('small');time.textContent=new Date(Number(item.timestamp_ms)||Date.now()).toLocaleTimeString();row.append(side,details,time);list.prepend(row);
+   });
+   while(list.children.length>30)list.lastElementChild.remove();
+   $('liqCount').textContent=liquidationTotals.count+' حدث';$('liqLong').textContent=fmt(liquidationTotals.long)+' USDT';$('liqShort').textContent=fmt(liquidationTotals.short)+' USDT';$('liqTotal').textContent=fmt(liquidationTotals.long+liquidationTotals.short)+' USDT';
+  };
+  ws.onerror=()=>setLiqStatus('تعذر الاتصال',false);
+  ws.onclose=()=>{if(liquidationSocket===ws)setLiqStatus('غير متصل',false)};
+ }
  const signals=$('signals');
  if(signals){const observer=new MutationObserver(()=>{signals.querySelectorAll('.opportunity-card').forEach(card=>{if(card.querySelector('.tier-gold,.tier-green,.tier-silver'))return;const score=Number(card.querySelector('.opp-score')?.textContent)||0;const tier=score>=85?'gold':score>=70?'green':'silver';const badge=document.createElement('span');badge.className='tier-'+tier;badge.textContent=tier==='gold'?'ذهبي':tier==='green'?'أخضر':'فضي';card.querySelector('.opp-top')?.appendChild(badge)})});observer.observe(signals,{childList:true,subtree:true})}
 })();
