@@ -189,7 +189,7 @@
     const positions=Array.isArray(summary.positions)?summary.positions:[];
     const opened=outcomes.filter(x=>x.opened);
     const blocked=outcomes.filter(x=>x.state==='RISK_REJECTED'||x.state==='INVALID_PLAN'||x.state==='POSITION_LIMIT');
-    panel.querySelector('.room-paper-summary').textContent='مراكز مفتوحة: '+positions.length+' / 5 · ربح/خسارة عائم: '+Number(summary.unrealizedPnlAfterFees||0).toFixed(2)+' USDT · رصيد: '+Number(summary.balance||0).toFixed(2)+' USDT'+(opened.length?' · فُتحت الآن: '+opened.map(x=>x.symbol).join('، '):'')+(blocked.length?' · فرص مرفوضة لأسباب حماية المخاطر: '+blocked.length:'');
+    panel.querySelector('.room-paper-summary').textContent='مراكز مفتوحة: '+positions.length+' / 5 · ربح/خسارة عائم: '+Number(summary.unrealizedPnlAfterFees||0).toFixed(2)+' USDT · رصيد: '+Number(summary.balance||0).toFixed(2)+' USDT'+(positions.length?' · '+positions.map(x=>x.symbol+' '+x.side+' · '+Number(x.unrealizedPnlAfterFees||0).toFixed(2)+' USDT').join(' | '):' · لا توجد صفقات مفتوحة')+(opened.length?' · فُتحت الآن: '+opened.map(x=>x.symbol).join('، '):'')+(blocked.length?' · فرص مرفوضة لأسباب حماية المخاطر: '+blocked.length:'');
     panel.dataset.updatedAt=new Date().toISOString();
    }
    outcomes.filter(x=>x.opened).forEach(x=>window.dispatchEvent(new CustomEvent('qn-paper-entry-opened',{detail:x})));
