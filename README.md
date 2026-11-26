@@ -64,3 +64,11 @@ PYTHONPATH=. pytest -q
 ```
 
 Historical backtests and signal scores are research tools, not guarantees of future returns or personalized financial advice.
+
+
+## Simulated trading fees and mark-to-market
+- Paper entries and exits include a configurable fee on each side.
+- Set `PAPER_FEE_RATE` to a decimal per-side rate (default `0.0006`, or 0.06%).
+- The position risk guard includes estimated entry and stop-exit fees within its 2% account risk ceiling.
+- `GET /api/paper/summary` marks open positions using current provider ticker prices and reports estimated PnL after fees. If market marks are unavailable, it clearly falls back to each position's entry price.
+- A pre-move watch score is surfaced as a research flag, not a guaranteed prediction or entry signal.
