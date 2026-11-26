@@ -100,6 +100,11 @@ def _save_paper_state(balance, trades):
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(DB_PATH, timeout=8) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("""CREATE TABLE IF NOT EXISTS quant_paper_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            balance REAL NOT NULL,
+            trades TEXT NOT NULL
+        )""")
         conn.execute("""INSERT INTO quant_paper_state(id,balance,trades) VALUES(1,?,?)
             ON CONFLICT(id) DO UPDATE SET balance=excluded.balance,trades=excluded.trades""",
             (float(balance), json.dumps(trades, ensure_ascii=False)))
