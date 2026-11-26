@@ -78,6 +78,44 @@
   .kv b{font-size:11px}
 }
 
+
+/* Phone layout polish v2 */
+@media screen and (max-width: 600px) {
+  * { min-width: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { padding-bottom: env(safe-area-inset-bottom); }
+  .top { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
+  .top > .brand, .top > .pill { grid-column: 1 / -1; }
+  .top > .pill { white-space: normal; }
+  .top > label { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; }
+  .top select { min-height: 42px; }
+  .stats { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .layout { width: 100%; max-width: 100%; overflow: clip; }
+  .layout > .col { min-width: 0; }
+  .panel, .body, .head { max-width: 100%; }
+  .radarwrap { grid-template-columns: minmax(0,1fr); }
+  .radar { width: min(72vw, 250px); }
+  .radarinfo { width: 100%; }
+  .charthead { flex-wrap: wrap; }
+  canvas.chart { display: block; width: 100%; }
+  .signalrow { grid-template-columns: repeat(2,minmax(0,1fr)); row-gap: 8px; }
+  .actions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .actions button { width: 100%; }
+  .kv { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .nav { max-width: 100%; }
+  .nav button { min-height: 42px; }
+  button, select, input { touch-action: manipulation; }
+}
+@media screen and (max-width: 380px) {
+  .top { grid-template-columns: minmax(0,1fr); }
+  .top > .brand, .top > .pill { grid-column: 1; }
+  .top > label { grid-template-columns: 62px minmax(0,1fr); }
+  .stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .radar { width: min(68vw, 215px); }
+  .kv { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .signalrow { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+
 </style></head><body>
 <header class="top"><div class="brand">◈ QUANT <em>NEXUS</em><small>منصة التحليل الكمي الذكي</small></div><span class="pill mode">● PAPER TRADING (تجريبي)</span><span class="pill disabled-live">⛔ التداول الحقيقي: معطّل</span><button id="stop" class="btn stop" disabled>■ إيقاف</button><button id="run" class="btn run">▶ تشغيل الماسح</button><label>السوق <select id="category"><option value="spot">Spot</option><option value="linear">Futures</option></select></label><label>العمق <select id="depth"><option>50</option><option>32</option><option>64</option><option>128</option><option>256</option><option>AUTO</option></select></label><label>الإطار <select id="tf"><option>5m</option><option>15m</option><option>1h</option><option>4h</option><option>1d</option></select></label></header>
 <section class="stats"><div class="stat"><span>فرص قوية</span><b id="strong">—</b></div><div class="stat"><span>تحتاج تأكيد</span><b class="gold" id="confirm">—</b></div><div class="stat"><span>مخاطر مرتفعة</span><b class="negative" id="risk">—</b></div><div class="stat"><span>العملات المرصودة</span><b id="tracked">—</b></div><div class="stat"><span>حالة الماسح</span><b id="status">متوقف</b></div><div class="stat"><span>مصدر البيانات</span><b id="provider" style="font-size:14px">—</b></div></section>
