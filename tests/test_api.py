@@ -423,7 +423,8 @@ def test_engine_registry_reports_all_fifteen_with_truthful_statuses(client):
     derivatives = next(item for item in payload["engines"] if item["id"] == "derivatives")
     assert derivatives["status"] == "partial"
     assert "Bybit open interest history" in derivatives["capabilities"]
-    assert "verified liquidation event feed" in derivatives["gaps"]
+    assert "Bybit allLiquidation public WebSocket stream" in derivatives["capabilities"]
+    assert "cross-exchange positioning history" in derivatives["gaps"]
 
 
 def test_engine_registry_is_read_only_and_does_not_expose_live_order_routes(client):
