@@ -129,7 +129,7 @@ function topSymbols(title,list,extra){
  const lines=list.slice(0,8).map(x=>x.symbol+' · '+x.direction+' · '+fmt(x.price)+' · تقييم '+x.score+'/100'+(extra?(' · '+extra(x)):''));
  commandHtml(title,list.length?('تم العثور على '+list.length+' عملة مطابقة من نتائج آخر مسح.'):'لا توجد عملات مطابقة في نتائج آخر مسح.',lines,list.length===0);
 }
-function runCommand(id){
+async function runCommand(id){
  const def=COMMANDS.find(c=>c.id===id);if(!def)return;
  document.querySelectorAll('.command-card').forEach(b=>b.classList.toggle('active',b.dataset.command===id));$('runSelectedCommand').dataset.last=id;$('runSelectedCommand').disabled=false;
  const marketIds=new Set(['liquidity_rising','ghost','day_breakout','up_channel','historic_break','support_resistance','pulse','cooling','hot','liquidity_drain','liquidity_bounce','reversal','squeeze','fast_movers']);
@@ -157,7 +157,7 @@ function runCommand(id){
  const bullish=last.close>last.open,ret5=c.length>5?(last.close/c[c.length-6].close-1)*100:0,lines=[];
  let summary='';
  switch(id){
- case 'warning':summary=(body>65&&volRatio>1.6)?'شمعة قوية بجسم كبير وحجم مرتفع؛ تحذير من تمدد الحركة.':(volRatio>1.8?'حجم غير معتاد مع شمعة نشطة؛ راقب إغلاق الساعة/اليوم.':'لا توجد شمعة تحذير قوية في آخر شمعة من الإطار الحالي.');lines.push('جسم الشمعة: '+fmt(body,1)+'% من المدى','الحجم مقابل متوسط آخر 20 شمعة: ×'+fmt(volRatio,2),'الإطار الحالي: '+$('tf').value+'. هذا فحص الإطار الحالي فقط، وليس شمعة يومية/ساعة مستقلة.');break;
+ case 'warning':{const cat=$('market').value,sym=encodeURIComponent(x.symbol),checks=await Promise.allSettled([api('/api/klines/'+sym+'?category='+cat+'&interval=1h&limit=100'),api('/api/klines/'+sym+'?category='+cat+'&interval=1d&limit=100')]);const describe=(res,label)=>{if(res.status!=='fulfilled')return label+': بيانات غير متاحة من المزود.';const bars=res.value.candles||[],bar=bars.at(-1),avg=bars.slice(-21,-1).reduce((s,z)=>s+z.volume,0)/Math.max(1,bars.slice(-21,-1).length),vr=avg?bar.volume/avg:0,br=Math.abs(bar.close-bar.open)/Math.max(bar.high-bar.low,1e-12)*100,flag=br>65&&vr>1.6;return label+': '+(flag?'شمعة تحذير محتملة':'لا توجد شمعة تحذير قوية')+' · جسم '+fmt(br,1)+'% · حجم ×'+fmt(vr,2)};commandHtml(def.name,'فحص مستقل لآخر شمعة ساعة وآخر شمعة يومية للزوج '+x.symbol+'.',[describe(checks[0],'ساعة'),describe(checks[1],'يومي'),'هذا تنبيه فني لا يمثل إشارة دخول مضمونة.'],checks.every(z=>z.status!=='fulfilled'));return}
  case 'dormant':summary=rangePct<.8?'حركة ضيقة؛ العملة هادئة في آخر الشموع.':rangePct<2.5?'حركة متوسطة وليست ساكنة.':'العملة نشطة ومتذبذبة في النطاق الأخير.';lines.push('مدى آخر 20 شمعة: '+fmt(rangePct,2)+'%','تغير آخر 5 شموع: '+pct(ret5));break;
  case 'drop':summary=ret5<0&&volRatio>1.5?'هبوط مع حجم مرتفع؛ احتمال ضغط بيع/تصريف، يحتاج تأكيداً بكسر الدعم.':ret5<0?'التراجع الحالي لا يصاحبه ارتفاع استثنائي في الحجم؛ أقرب لتراجع عادي حتى الآن.':'لا يظهر تراجع واضح في آخر 5 شموع.';lines.push('تغير آخر 5 شموع: '+pct(ret5),'نسبة حجم آخر شمعة: ×'+fmt(volRatio,2),'الدعم: '+fmt(x.support));break;
  case 'flow':{const a=c.slice(-20),buy=a.filter(z=>z.close>z.open).reduce((s,z)=>s+z.volume,0),sell=a.filter(z=>z.close<=z.open).reduce((s,z)=>s+z.volume,0),total=buy+sell;summary=buy>sell?'غلبة حجم الشموع الصاعدة في العينة.':'غلبة حجم الشموع الهابطة أو المتعادلة في العينة.';lines.push('حجم الشموع الصاعدة: '+fmt(buy,2),'حجم الشموع الهابطة/المتعادلة: '+fmt(sell,2),'حصة الحجم الصاعد: '+fmt(total?buy/total*100:0,1)+'%','الحجم لا يكشف تدفق الأوامر الحقيقي وحده.');break}
