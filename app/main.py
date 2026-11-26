@@ -185,7 +185,7 @@ def macd(values, fast=12, slow=26, signal=9):
     sig=ema(line,signal) if len(line)>=signal else None
     return (line[-1],sig,line[-1]-sig) if sig is not None else (None,None,None)
 
-def analyze_klines(rows):
+def analyze_klines(rows, include_all_candles=False):
     if not isinstance(rows, list):
         raise HTTPException(status_code=502, detail="Market provider returned invalid candle data")
     candles = []
@@ -247,7 +247,7 @@ def analyze_klines(rows):
             "ema20":e20,"ema50":e50,"macd":macd_line,"macdSignal":macd_signal,"macdHistogram":macd_hist,"vwap":vwap,"volumeRatio":round(vol_ratio,2) if vol_ratio is not None else None,
             "support":recent_low,"resistance":recent_high,"score":score,"direction":direction,
             "entry":last if direction != "NEUTRAL" else None,"stopLoss":stop,
-            "target1":target1,"target2":target2,"candles":candles[-100:]})
+            "target1":target1,"target2":target2,"candles":candles if include_all_candles else candles[-100:]})
 
 @app.get("/health")
 async def health():
@@ -385,7 +385,7 @@ async def backtest(symbol: str, category: str = "spot", interval: str = "1h",
     if slow_period <= fast_period:
         raise HTTPException(status_code=400, detail="slow_period must be greater than fast_period")
     rows, provider = await get_market_klines(symbol, category, interval, limit)
-    candles = analyze_klines(rows)["candles"]
+    candles = analyze_klines(rows, include_all_candles=True)["candles"]
     try:
         result = ema_crossover_backtest(candles, starting_balance=starting_balance,
             position_fraction=position_fraction, fast_period=fast_period,
