@@ -18,6 +18,7 @@ from .quant_engine import ema_crossover_backtest, enrich_analysis
 from .engine_registry import engine_registry
 from .command_engine import COMMANDS, matches_command, evaluate_entry
 from .derivatives_engine import summarize_derivatives
+from .advanced_engines import market_regime, market_structure, opportunity_assessment, learning_monitoring
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="QUANT NEXUS", version="1.0.0",
@@ -432,6 +433,49 @@ async def engine_status():
             "durable_storage_configured": PAPER_STORE.durable_configured,
             "paper_fee_rate_per_side": PAPER_FEE_RATE,
             "trading_mode": "simulation", "live_trading_enabled": False}
+
+@app.get("/api/regime/{symbol}")
+async def regime_endpoint(symbol: str, category: str = "spot", interval: str = "1h", limit: int = Query(200, ge=60, le=500)):
+    if category not in ("spot", "linear") or interval not in INTERVALS:
+        raise HTTPException(status_code=400, detail="Invalid category or interval")
+    rows, provider = await get_market_klines(symbol.upper(), category, interval, limit)
+    analysis = analyze_klines(rows, include_all_candles=True)
+    result = market_regime(analysis["candles"])
+    return {"symbol":symbol.upper(),"category":category,"interval":interval,"provider":provider,**result,
+            "trading_mode":"simulation","live_trading_enabled":False}
+
+
+@app.get("/api/structure/{symbol}")
+async def structure_endpoint(symbol: str, category: str = "spot", interval: str = "1h", limit: int = Query(200, ge=40, le=500)):
+    if category not in ("spot", "linear") or interval not in INTERVALS:
+        raise HTTPException(status_code=400, detail="Invalid category or interval")
+    rows, provider = await get_market_klines(symbol.upper(), category, interval, limit)
+    analysis = analyze_klines(rows, include_all_candles=True)
+    result = market_structure(analysis["candles"])
+    return {"symbol":symbol.upper(),"category":category,"interval":interval,"provider":provider,**result,
+            "trading_mode":"simulation","live_trading_enabled":False}
+
+
+@app.get("/api/opportunity/{symbol}")
+async def opportunity_endpoint(symbol: str, category: str = "spot", interval: str = "15m", limit: int = Query(200, ge=60, le=500)):
+    if category not in ("spot", "linear") or interval not in INTERVALS:
+        raise HTTPException(status_code=400, detail="Invalid category or interval")
+    rows, provider = await get_market_klines(symbol.upper(), category, interval, limit)
+    analysis = analyze_klines(rows, include_all_candles=True)
+    analysis["symbol"] = symbol.upper()
+    regime = market_regime(analysis["candles"])
+    structure = market_structure(analysis["candles"])
+    result = opportunity_assessment(analysis, regime, structure)
+    return {"provider":provider,"regime":regime,"structure":structure,**result}
+
+
+@app.get("/api/learning/monitoring")
+async def learning_monitoring_endpoint():
+    async with PAPER_LOCK:
+        closed = [dict(t) for t in PAPER_TRADES if t.get("status") == "CLOSED"]
+        opened = [dict(t) for t in PAPER_TRADES if t.get("status") == "OPEN"]
+    return {**learning_monitoring(closed, opened),"trading_mode":"simulation","live_trading_enabled":False}
+
 
 @app.get("/api/engines")
 async def engines():

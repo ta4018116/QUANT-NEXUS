@@ -415,7 +415,7 @@ def test_engine_registry_reports_all_fifteen_with_truthful_statuses(client):
     payload = response.json()
     assert payload["total"] == 15
     assert len(payload["engines"]) == 15
-    assert payload["counts"] == {"implemented": 10, "partial": 5, "planned": 0}
+    assert payload["counts"] == {"implemented": 14, "partial": 1, "planned": 0}
     assert payload["trading_mode"] == "simulation"
     assert payload["live_trading_enabled"] is False
     ids = {item["id"] for item in payload["engines"]}
@@ -563,3 +563,77 @@ def test_monitoring_room_assets_and_engine_tiers_are_registered(client):
     derivatives = next(x for x in engines["engines"] if x["id"] == "derivatives")
     assert derivatives["status"] == "partial"
     assert derivatives["accent"] == "purple"
+
+
+
+def test_regime_engine_classifies_trend_and_rejects_short_history():
+    from app.advanced_engines import market_regime
+    short = market_regime(make_rows(30) and main.analyze_klines(make_rows(30), include_all_candles=True)["candles"])
+    assert short["status"] == "insufficient_data"
+    candles = main.analyze_klines(make_rows(120), include_all_candles=True)["candles"]
+    result = market_regime(candles)
+    assert result["status"] == "ok"
+    assert result["trend"] in {"UPTREND", "DOWNTREND", "RANGE"}
+    assert result["volatility"] in {"LOW", "NORMAL", "HIGH"}
+
+
+def test_market_structure_returns_confirmed_pivots_and_bos_schema():
+    from app.advanced_engines import market_structure
+    candles = main.analyze_klines(make_rows(120), include_all_candles=True)["candles"]
+    result = market_structure(candles)
+    assert result["status"] == "ok"
+    assert result["break_of_structure"] in {"BULLISH", "BEARISH", "NONE"}
+    assert result["change_of_character"] in {"BULLISH", "BEARISH", "NONE"}
+    assert result["pivot_bars"] == 3
+
+
+def test_opportunity_engine_uses_confluence_not_win_probability():
+    from app.advanced_engines import opportunity_assessment
+    analysis = {"symbol":"BTCUSDT","direction":"LONG","score":82,"volumeRatio":2.0,
+                "entry":100,"stopLoss":95,"target1":107.5,"target2":112.5}
+    regime = {"status":"ok","trend":"UPTREND"}
+    structure = {"status":"ok","break_of_structure":"BULLISH"}
+    result = opportunity_assessment(analysis, regime, structure)
+    assert result["tier"] == "GOLD"
+    assert result["score"] == 100
+    assert "regime_alignment" in result["confirmations"]
+    assert result["live_trading_enabled"] is False
+    assert "not a calibrated win probability" in result["classification_note"]
+
+
+def test_learning_monitoring_is_based_only_on_paper_ledger():
+    from app.advanced_engines import learning_monitoring
+    result = learning_monitoring(
+        [{"pnl":10},{"pnl":-5},{"pnl":15}], [{"symbol":"BTCUSDT"}]
+    )
+    assert result["closed_trades"] == 3
+    assert result["open_trades"] == 1
+    assert result["win_rate_pct"] == pytest.approx(66.67)
+    assert result["net_pnl"] == 20
+    assert result["profit_factor"] == 5
+    assert result["automatic_retraining"] is False
+
+
+def test_completed_engine_api_endpoints_are_read_only(client, monkeypatch):
+    async def fake_klines(symbol, category, interval, limit):
+        return make_rows(), "TEST"
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    for path in ("/api/regime/BTCUSDT", "/api/structure/BTCUSDT", "/api/opportunity/BTCUSDT"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.json()["live_trading_enabled"] is False
+    monitoring = client.get("/api/learning/monitoring")
+    assert monitoring.status_code == 200
+    assert monitoring.json()["source"] == "paper_ledger"
+    assert monitoring.json()["live_trading_enabled"] is False
+    assert client.get("/api/regime/BTCUSDT?category=invalid").status_code == 400
+
+
+def test_engine_registry_marks_delivered_engines_and_keeps_derivatives_partial(client):
+    payload = client.get("/api/engines").json()
+    by_id = {item["id"]: item for item in payload["engines"]}
+    for engine_id in ("market_regime", "market_structure", "opportunity", "learning_monitoring"):
+        assert by_id[engine_id]["status"] == "implemented"
+    assert by_id["derivatives"]["status"] == "partial"
+    assert payload["counts"] == {"implemented":14,"partial":1,"planned":0}
+    assert payload["live_trading_enabled"] is False
