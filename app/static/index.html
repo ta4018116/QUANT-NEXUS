@@ -333,4 +333,5 @@ loadCommandCatalog();
 init();
 setInterval(refreshEntryTicker,8000);
 setInterval(async()=>{try{const m=await api('/api/paper/monitor',{method:'POST'});if(m.closed?.length){log('إغلاق تلقائي تجريبي: '+m.closed.map(x=>x.symbol+' '+x.reason).join('، '));await refreshPaper()}}catch(e){log('تعذر مراقبة أهداف الصفقات: '+e.message,false)}},15000);
-</script><script src="/static/monitoring-room.js"></script></body></html>
+const monitoringRoomScript=document.createElement("script");monitoringRoomScript.src="/static/monitoring-room.js";document.body.appendChild(monitoringRoomScript);
+</script></body></html>
