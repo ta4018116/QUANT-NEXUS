@@ -407,3 +407,27 @@ def test_dashboard_script_is_single_and_has_real_command_handlers(client):
     assert "api('/api/flow/'" in html
     assert "حالة الاختراق في آخر شمعة مكتملة" in html
 
+
+
+def test_engine_registry_reports_all_fifteen_with_truthful_statuses(client):
+    response = client.get("/api/engines")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 15
+    assert len(payload["engines"]) == 15
+    assert payload["counts"] == {"implemented": 9, "partial": 5, "planned": 1}
+    assert payload["trading_mode"] == "simulation"
+    assert payload["live_trading_enabled"] is False
+    ids = {item["id"] for item in payload["engines"]}
+    assert {"data", "derivatives", "liquidity", "risk", "paper_execution"} <= ids
+    derivatives = next(item for item in payload["engines"] if item["id"] == "derivatives")
+    assert derivatives["status"] == "planned"
+    assert "open interest" in derivatives["gaps"]
+
+
+def test_engine_registry_is_read_only_and_does_not_expose_live_order_routes(client):
+    payload = client.get("/api/engines").json()
+    assert payload["live_trading_enabled"] is False
+    paths = {route.path for route in main.app.routes}
+    assert "/api/engines" in paths
+    assert not any("live-order" in path for path in paths)

@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from .paper_store import PaperStore
 from .quant_engine import ema_crossover_backtest, enrich_analysis
+from .engine_registry import engine_registry
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="QUANT NEXUS", version="1.0.0",
@@ -380,6 +381,11 @@ async def engine_status():
             "durable_storage_configured": PAPER_STORE.durable_configured,
             "paper_fee_rate_per_side": PAPER_FEE_RATE,
             "trading_mode": "simulation", "live_trading_enabled": False}
+
+@app.get("/api/engines")
+async def engines():
+    """Return implementation status for the 15 logical QUANT NEXUS engines."""
+    return engine_registry()
 
 @app.get("/api/strategies")
 async def strategies():

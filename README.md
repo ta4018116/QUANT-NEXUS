@@ -72,3 +72,16 @@ Historical backtests and signal scores are research tools, not guarantees of fut
 - The position risk guard includes estimated entry and stop-exit fees within its 2% account risk ceiling.
 - `GET /api/paper/summary` marks open positions using current provider ticker prices and reports estimated PnL after fees. If market marks are unavailable, it clearly falls back to each position's entry price.
 - A pre-move watch score is surfaced as a research flag, not a guaranteed prediction or entry signal.
+
+
+## Engine architecture (15 logical modules)
+The `GET /api/engines` endpoint exposes the QUANT BRAIN registry and the
+implementation state of all 15 logical modules. Status values are conservative:
+- `implemented`: a corresponding application capability is wired and testable.
+- `partial`: a useful foundation exists, but the listed gaps remain.
+- `planned`: no verified production data path is wired yet.
+
+The registry is a capability inventory, not a claim that every proposed engine
+is complete. Derivatives analytics (open interest, funding and liquidations),
+full market-structure validation, explicit regime classification and
+statistically calibrated opportunity probabilities remain on the roadmap.
