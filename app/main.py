@@ -300,7 +300,8 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
     tickers = [t for t in tickers if isinstance(t, dict) and str(t.get("symbol", "")).endswith("USDT")]
     tickers.sort(key=lambda x: safe_float(x.get("turnover24h")), reverse=True)
     eligible = [x for x in tickers if safe_float(x.get("turnover24h")) >= min_turnover]
-    effective_limit = min(len(eligible), {"32":32,"64":64,"128":128,"256":256}.get(depth, min(256,max(64,len(eligible)))))
+    depth_limit = {"32":32, "64":64, "128":128, "256":256}.get(depth, min(256, max(64, len(eligible))))
+    effective_limit = min(len(eligible), limit, depth_limit)
     candidates = eligible[:effective_limit]
     semaphore = asyncio.Semaphore(12)
     async def one(ticker):
@@ -360,7 +361,7 @@ async def multi_timeframe(symbol: str, category: str = "spot"):
 async def engine_status():
     return {"engine": "QUANT INTELLIGENCE",
             "engine_version": "2.0",
-            "capabilities": ["technical_analysis", "multi_timeframe", "adaptive_scanner", "signal_explanations", "historical_backtest", "paper_risk_controls"],
+            "capabilities": ["technical_analysis", "multi_timeframe", "adaptive_scanner", "signal_explanations", "historical_backtest", "paper_risk_controls", "orderbook_liquidity", "large_trade_flow", "paper_auto_monitor", "position_sizing"],
             "indicators": ["EMA20", "EMA50", "RSI14", "MACD12-26-9", "VWAP", "VolumeRatio", "ATR14"],
             "scan_depths": [32, 64, 128, 256, "AUTO"],
             "markets": {"spot": True, "linear_futures": True, "forex": False,
