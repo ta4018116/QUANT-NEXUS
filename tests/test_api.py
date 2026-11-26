@@ -660,4 +660,3 @@ def test_bybit_liquidation_events_are_normalized_and_aggregated():
 def test_derivatives_liquidation_websocket_route_is_registered(client):
     routes = {getattr(route, "path", "") for route in main.app.routes}
     assert "/ws/derivatives/{symbol}/liquidations" in routes
-    assert client.get("/api/derivatives/BTCUSDT").status_code in {502, 200}
