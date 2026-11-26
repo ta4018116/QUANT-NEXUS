@@ -321,7 +321,7 @@ async function loadEngines(){
   const d=await api('/api/engines');
   $('engineCounts').textContent=d.total+' محرك';
   $('engineSummary').innerHTML='<div><small>مكتملة</small><b class="positive">'+d.counts.implemented+'</b></div><div><small>جزئية</small><b class="gold">'+d.counts.partial+'</b></div><div><small>مخططة</small><b>'+d.counts.planned+'</b></div><div><small>وضع التشغيل</small><b>Simulation فقط</b></div>';
-  $('engineGrid').innerHTML=d.engines.map(x=>'<article class="engine-card"><span class="engine-status '+x.status+'">'+({implemented:'مكتمل',partial:'جزئي',planned:'مخطط'}[x.status]||x.status)+'</span><b>'+x.name_ar+'</b><small>'+x.name_en+'</small><small style="margin-top:7px">'+(x.capabilities||[]).join(' · ')+'</small>'+(x.gaps?.length?'<small class="gold" style="margin-top:7px">المتبقي: '+x.gaps.join(' · ')+'</small>':'')+'</article>').join('');
+  $('engineGrid').innerHTML=d.engines.map(x=>'<article class="engine-card '+(x.accent==='purple'?'engine-purple':'')+'"><span class="engine-status '+x.status+'">'+({implemented:'مكتمل',partial:'جزئي',planned:'مخطط'}[x.status]||x.status)+'</span><b>'+x.name_ar+'</b><small>'+x.name_en+'</small><small style="margin-top:7px">'+(x.capabilities||[]).join(' · ')+'</small>'+(x.gaps?.length?'<small class="gold" style="margin-top:7px">المتبقي: '+x.gaps.join(' · ')+'</small>':'')+'</article>').join('');
   if(d.live_trading_enabled!==false)throw Error('فشل فحص الأمان: حالة التداول الحقيقي غير معطلة');
  }catch(e){$('engineGrid').innerHTML='<div class="muted">تعذر تحميل المحركات.</div>';$('engineError').textContent=e.message+' · أعد فتح الصفحة للمحاولة.'}
 }
