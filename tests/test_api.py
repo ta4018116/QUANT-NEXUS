@@ -536,7 +536,8 @@ def test_derivatives_summary_uses_open_interest_and_funding_without_claiming_liq
     assert result["open_interest"] == 120
     assert result["open_interest_change_pct"] == 20
     assert result["funding_bias"] == "LONG_CROWDED"
-    assert result["liquidations_feed"] == "not_connected"
+    assert "Bybit allLiquidation" in result["liquidations_feed"]
+    assert result["liquidations"]["events"] == 0
 
 
 def test_derivatives_endpoint_is_read_only_and_validates_symbol(client, monkeypatch):
@@ -637,3 +638,26 @@ def test_engine_registry_marks_delivered_engines_and_keeps_derivatives_partial(c
     assert by_id["derivatives"]["status"] == "partial"
     assert payload["counts"] == {"implemented":14,"partial":1,"planned":0}
     assert payload["live_trading_enabled"] is False
+
+
+def test_bybit_liquidation_events_are_normalized_and_aggregated():
+    from app.derivatives_engine import normalize_liquidations, summarize_liquidations
+    rows = [
+        {"T": 1739502302929, "s": "BTCUSDT", "S": "Sell", "v": "0.02", "p": "50000"},
+        {"T": 1739502303000, "s": "BTCUSDT", "S": "Buy", "v": "0.01", "p": "49000"},
+        {"T": 1739502303001, "s": "BTCUSDT", "S": "Unknown", "v": "1", "p": "50000"},
+    ]
+    events = normalize_liquidations(rows)
+    assert len(events) == 2
+    assert events[0]["liquidated_position"] == "SHORT"
+    assert events[0]["notional_usdt"] == 1000
+    summary = summarize_liquidations(events)
+    assert summary["long_liquidations_usdt"] == 490
+    assert summary["short_liquidations_usdt"] == 1000
+    assert summary["dominant_side"] == "SHORT"
+
+
+def test_derivatives_liquidation_websocket_route_is_registered(client):
+    routes = {getattr(route, "path", "") for route in main.app.routes}
+    assert "/ws/derivatives/{symbol}/liquidations" in routes
+    assert client.get("/api/derivatives/BTCUSDT").status_code in {502, 200}
