@@ -357,3 +357,53 @@ def test_auto_scan_covers_full_eligible_universe_up_to_cap(client, monkeypatch):
     assert payload["returned"] == 300
     assert payload["truncated"] is False
     assert payload["live_trading_enabled"] is False
+
+def test_completed_candle_breakout_ignores_forming_candle_wick():
+    rows = []
+    for i in range(28):
+        close = 100 + i * 0.01
+        rows.append([str(i * 60_000), str(close), str(close + 0.1),
+                     str(close - 0.1), str(close), "1000"])
+    rows.append([str(28 * 60_000), "101", "102", "100.8", "101.5", "1500"])
+    rows.append([str(29 * 60_000), "101.4", "200", "101", "101.6", "2000"])
+    result = main.analyze_klines(rows)
+    assert result["breakout"] == "UP"
+    assert result["breakoutClose"] == pytest.approx(101.5)
+
+
+def test_scan_honors_requested_limit_with_larger_depth(client, monkeypatch):
+    tickers = [
+        {"symbol": f"COIN{i}USDT", "turnover24h": 1_000_000,
+         "price24hPcnt": 0.01, "volume24h": 1000}
+        for i in range(3)
+    ]
+    async def fake_tickers(category):
+        return tickers, "TEST"
+    async def fake_klines(symbol, category, interval, limit):
+        return make_rows(), "TEST"
+    monkeypatch.setattr(main, "get_market_tickers", fake_tickers)
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    response = client.get("/api/scan?category=spot&interval=15m&limit=1&depth=256&min_turnover=0")
+    assert response.status_code == 200
+    assert response.json()["scanned"] == 1
+    assert response.json()["effectiveDepth"] == 1
+
+
+def test_engine_status_exposes_complete_capability_metadata(client):
+    payload = client.get("/api/engine/status").json()
+    assert "orderbook_liquidity" in payload["capabilities"]
+    assert "large_trade_flow" in payload["capabilities"]
+    assert "paper_auto_monitor" in payload["capabilities"]
+    assert "position_sizing" in payload["capabilities"]
+    assert payload["live_trading_enabled"] is False
+
+
+def test_dashboard_script_is_single_and_has_real_command_handlers(client):
+    html = client.get("/").text
+    assert html.count("<script>") == 1
+    assert html.count("</script>") == 1
+    assert "function localRsi(" in html
+    assert "api('/api/liquidity/'" in html
+    assert "api('/api/flow/'" in html
+    assert "حالة الاختراق في آخر شمعة مكتملة" in html
+
