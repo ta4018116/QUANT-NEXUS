@@ -438,6 +438,76 @@ async def entry_monitor(symbol: str, category: str = "spot", interval: str = "15
             "trading_mode": "simulation", "live_trading_enabled": False}
 
 
+
+@app.post("/api/paper/auto-entry/{symbol}")
+async def auto_paper_entry(symbol: str, category: str = "spot", interval: str = "15m"):
+    """Open a paper position only for a manually watched symbol with a fresh confirmed setup."""
+    global PAPER_BALANCE
+    symbol = symbol.upper()
+    if not symbol.endswith("USDT") or not symbol.replace("USDT", "").isalnum():
+        raise HTTPException(status_code=400, detail="Only USDT symbols are supported")
+    if category not in ("spot", "linear") or interval not in INTERVALS:
+        raise HTTPException(status_code=400, detail="Invalid market or interval")
+    rows, provider = await get_market_klines(symbol, category, interval, 120)
+    analysis = analyze_klines(rows)
+    confirmation = evaluate_entry(analysis)
+    side = str(analysis.get("direction", "NEUTRAL")).upper()
+    entry = safe_float(analysis.get("price"))
+    stop = safe_float(analysis.get("stopLoss"))
+    target = safe_float(analysis.get("target2"))
+    score = safe_float(analysis.get("score"))
+    if not confirmation.get("confirmed") or score < 85:
+        return {"opened": False, "state": confirmation.get("state", "WAITING"),
+                "reason": confirmation.get("reason", "شروط الدخول غير مكتملة"),
+                "score": score, "symbol": symbol, "trading_mode": "simulation",
+                "live_trading_enabled": False}
+    if side not in ("LONG", "SHORT") or (category == "spot" and side != "LONG"):
+        return {"opened": False, "state": "CONFIRMED_NOT_ELIGIBLE",
+                "reason": "اتجاه الصفقة غير مدعوم لهذا السوق", "score": score,
+                "symbol": symbol, "trading_mode": "simulation", "live_trading_enabled": False}
+    if not all(math.isfinite(v) and v > 0 for v in (entry, stop, target)):
+        return {"opened": False, "state": "INVALID_PLAN",
+                "reason": "خطة الدخول أو الوقف أو الهدف غير مكتملة", "score": score,
+                "symbol": symbol, "trading_mode": "simulation", "live_trading_enabled": False}
+    if (side == "LONG" and not stop < entry < target) or (side == "SHORT" and not target < entry < stop):
+        return {"opened": False, "state": "INVALID_PLAN",
+                "reason": "ترتيب الدخول والوقف والهدف غير صالح", "score": score,
+                "symbol": symbol, "trading_mode": "simulation", "live_trading_enabled": False}
+    async with PAPER_LOCK:
+        existing = next((t for t in PAPER_TRADES if t["status"] == "OPEN" and
+                         t["symbol"] == symbol and t.get("category", "spot") == category), None)
+        if existing:
+            return {"opened": False, "state": "ALREADY_OPEN", "trade": existing,
+                    "reason": "يوجد مركز تجريبي مفتوح لهذه العملة", "symbol": symbol,
+                    "trading_mode": "simulation", "live_trading_enabled": False}
+        open_count = sum(t["status"] == "OPEN" for t in PAPER_TRADES)
+        if open_count >= 5:
+            return {"opened": False, "state": "POSITION_LIMIT",
+                    "reason": "تم بلوغ الحد الأقصى وهو 5 مراكز تجريبية مفتوحة",
+                    "symbol": symbol, "trading_mode": "simulation", "live_trading_enabled": False}
+        balance = PAPER_BALANCE
+    distance = abs(entry - stop)
+    # Size to a maximum 1% account risk, including estimated entry and stop fees.
+    risk_budget = balance * 0.01
+    risk_per_unit = distance + (entry + stop) * PAPER_FEE_RATE
+    quantity = risk_budget / risk_per_unit if risk_per_unit > 0 else 0
+    if quantity <= 0:
+        return {"opened": False, "state": "INVALID_SIZE", "reason": "تعذر حساب حجم المركز",
+                "symbol": symbol, "trading_mode": "simulation", "live_trading_enabled": False}
+    try:
+        result = await open_paper_trade(PaperTrade(
+            symbol=symbol, side=side, category=category, leverage=1,
+            entry=entry, quantity=quantity, stop_loss=stop, take_profit=target))
+    except HTTPException as exc:
+        return {"opened": False, "state": "RISK_REJECTED", "reason": exc.detail,
+                "symbol": symbol, "score": score, "trading_mode": "simulation",
+                "live_trading_enabled": False}
+    return {"opened": True, "state": "PAPER_OPEN", "trade": result["trade"],
+            "score": score, "provider": provider, "confirmation": confirmation,
+            "riskBudget": round(risk_budget, 8), "trading_mode": "simulation",
+            "live_trading_enabled": False}
+
+
 @app.get("/api/engine/status")
 async def engine_status():
     return {"engine": "QUANT INTELLIGENCE",
