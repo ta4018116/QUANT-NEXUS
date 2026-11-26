@@ -422,7 +422,8 @@ def test_engine_registry_reports_all_fifteen_with_truthful_statuses(client):
     assert {"data", "derivatives", "liquidity", "risk", "paper_execution"} <= ids
     derivatives = next(item for item in payload["engines"] if item["id"] == "derivatives")
     assert derivatives["status"] == "partial"
-    assert "open interest" in derivatives["gaps"]
+    assert "Bybit open interest history" in derivatives["capabilities"]
+    assert "verified liquidation event feed" in derivatives["gaps"]
 
 
 def test_engine_registry_is_read_only_and_does_not_expose_live_order_routes(client):
