@@ -571,6 +571,11 @@ def test_monitoring_room_assets_and_engine_tiers_are_registered(client):
     derivatives = next(x for x in engines["engines"] if x["id"] == "derivatives")
     assert derivatives["status"] == "partial"
     assert derivatives["accent"] == "purple"
+    html = client.get("/").text
+    assert "data-add-monitor" in html
+    assert "＋ إضافة للمراقبة" in html
+    assert "quantNexusManualWatchlist" in room_js.text
+    assert "data-remove-room-symbol" in room_js.text
 
 
 
