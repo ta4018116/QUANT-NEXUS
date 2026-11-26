@@ -329,7 +329,8 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
             "universeAvailable":len(tickers),"eligibleCount":len(eligible),
             "effectiveDepth":len(candidates),"scanned":len(candidates),
             "truncated":len(eligible)>len(candidates),
-            "returned":len(results),"generatedAt":datetime.now(timezone.utc).isoformat(),"items":results}
+            "returned":len(results),"generatedAt":datetime.now(timezone.utc).isoformat(),
+            "trading_mode":"simulation","live_trading_enabled":False,"items":results}
 
 @app.get("/api/multi-timeframe/{symbol}")
 async def multi_timeframe(symbol: str, category: str = "spot"):
