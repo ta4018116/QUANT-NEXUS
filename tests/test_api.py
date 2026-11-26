@@ -130,3 +130,86 @@ def test_macd_returns_values_when_history_is_sufficient():
     assert line is not None
     assert signal is not None
     assert histogram == pytest.approx(line - signal)
+
+
+def test_paper_short_trade_pnl_is_directionally_correct(client):
+    opened = client.post("/api/paper", json={
+        "symbol": "ETHUSDT", "side": "SHORT", "entry": 100,
+        "quantity": 2, "stop_loss": 110, "take_profit": 90
+    })
+    assert opened.status_code == 200
+    trade_id = opened.json()["trade"]["id"]
+    closed = client.post(f"/api/paper/{trade_id}/close?exit_price=90")
+    assert closed.status_code == 200
+    assert closed.json()["trade"]["pnl"] == 20
+    assert closed.json()["balance"] == 10020
+
+
+def test_paper_trade_rejects_wrong_side_levels(client):
+    response = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "LONG", "entry": 100,
+        "quantity": 1, "stop_loss": 105, "take_profit": 120
+    })
+    assert response.status_code == 400
+
+
+def test_sqlite_paper_state_round_trip(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_MODE", "sqlite")
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "portfolio.sqlite3")
+    sample = [{"id": 7, "symbol": "BTCUSDT", "side": "LONG", "status": "OPEN"}]
+    main._save_paper_state(4321.5, sample)
+    balance, trades = main._load_paper_state()
+    assert balance == 4321.5
+    assert trades == sample
+
+
+def test_backtest_calculator_returns_metrics():
+    candles = []
+    for i in range(140):
+        price = 100 + i * 0.8
+        candles.append({"time": i, "open": price, "high": price + 1,
+                        "low": price - 1, "close": price + 0.5, "volume": 1000})
+    result = main.calculate_backtest(candles, fee_bps=10)
+    assert result["strategy"].startswith("EMA20/EMA50")
+    assert result["tradeCount"] >= 1
+    assert result["finalBalance"] > result["initialBalance"]
+    assert result["live_trading_enabled"] if "live_trading_enabled" in result else True
+
+
+def test_analysis_command_executes_real_trend_analysis(client, monkeypatch):
+    rows = []
+    for i in range(100):
+        price = 100 + i * 0.25
+        rows.append([str(1_700_000_000_000 + i * 900_000), str(price),
+                     str(price + 1), str(price - 1), str(price + 0.5), "1000"])
+    async def fake_klines(symbol, category, interval, limit):
+        return rows, "TEST"
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    response = client.post("/api/commands/execute", json={
+        "symbol": "BTCUSDT", "category": "spot", "interval": "15m",
+        "command": "تحليل الاتجاه العام"
+    })
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["kind"] == "trend"
+    assert payload["provider"] == "TEST"
+    assert payload["data"]["ema20"] is not None
+    assert payload["live_trading_enabled"] is False
+
+
+def test_backtest_api_uses_historical_candles(client, monkeypatch):
+    rows = []
+    for i in range(120):
+        price = 100 + i * 0.2
+        rows.append([str(1_700_000_000_000 + i * 3_600_000), str(price),
+                     str(price + 1), str(price - 1), str(price + 0.1), "1000"])
+    async def fake_klines(symbol, category, interval, limit):
+        return rows, "TEST"
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    response = client.get("/api/backtest/BTCUSDT?interval=1h&limit=120")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["candles"] == 120
+    assert payload["live_trading_enabled"] is False
+    assert "profitFactor" in payload
+
