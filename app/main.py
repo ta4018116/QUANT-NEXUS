@@ -393,7 +393,8 @@ async def backtest(symbol: str, category: str = "spot", interval: str = "1h",
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     result.update({"symbol": symbol.upper(), "category": category, "interval": interval,
-                   "provider": provider, "generatedAt": datetime.now(timezone.utc).isoformat()})
+                   "provider": provider, "generatedAt": datetime.now(timezone.utc).isoformat(),
+                   "trading_mode": "simulation", "live_trading_enabled": False})
     return result
 
 class PositionSizeRequest(BaseModel):
