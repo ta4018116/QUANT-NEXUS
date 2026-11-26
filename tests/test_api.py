@@ -585,6 +585,15 @@ def test_monitoring_room_avoids_mutation_observers_and_repeated_watchlist_dom_wr
     assert "lastWatchRender" in room_js
     assert "window.isMonitoringSymbol?.(x.symbol)" in html
 
+def test_dashboard_avoids_duplicate_opportunity_render_and_market_http_reconnects(client):
+    html = client.get("/").text
+    assert "drawRadar(visible);$('signals').innerHTML=visible.slice(0,8)" not in html
+    assert "renderOpportunityCards(items)" in html
+    assert "shared_http_client().get" in main.bybit_get.__code__.co_names or main.HTTP_CLIENT is None
+    assert "max_keepalive_connections=20" in __import__("inspect").getsource(main.shared_http_client)
+    assert main.LIVE_TRADING_ENABLED is False
+
+
 
 
 def test_regime_engine_classifies_trend_and_rejects_short_history():
