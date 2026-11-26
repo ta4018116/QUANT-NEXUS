@@ -23,4 +23,6 @@ jobs:
       - name: Compile Python
         run: python -m compileall -q app
       - name: Run API regression tests
+        env:
+          PYTHONPATH: .
         run: pytest -q
