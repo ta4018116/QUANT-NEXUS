@@ -415,14 +415,15 @@ def test_engine_registry_reports_all_fifteen_with_truthful_statuses(client):
     payload = response.json()
     assert payload["total"] == 15
     assert len(payload["engines"]) == 15
-    assert payload["counts"] == {"implemented": 10, "partial": 4, "planned": 1}
+    assert payload["counts"] == {"implemented": 10, "partial": 5, "planned": 0}
     assert payload["trading_mode"] == "simulation"
     assert payload["live_trading_enabled"] is False
     ids = {item["id"] for item in payload["engines"]}
     assert {"data", "derivatives", "liquidity", "risk", "paper_execution"} <= ids
     derivatives = next(item for item in payload["engines"] if item["id"] == "derivatives")
-    assert derivatives["status"] == "planned"
-    assert "open interest" in derivatives["gaps"]
+    assert derivatives["status"] == "partial"
+    assert "Bybit open interest history" in derivatives["capabilities"]
+    assert "verified liquidation event feed" in derivatives["gaps"]
 
 
 def test_engine_registry_is_read_only_and_does_not_expose_live_order_routes(client):
@@ -524,3 +525,41 @@ def test_command_scanner_and_entry_ticker_are_present_in_dashboard(client):
     assert "entryTicker" in html
     assert html.count("<script>") == 1
     assert html.count("</script>") == 1
+
+
+def test_derivatives_summary_uses_open_interest_and_funding_without_claiming_liquidations():
+    from app.derivatives_engine import summarize_derivatives
+    result = summarize_derivatives(
+        [{"openInterest": "120"}, {"openInterest": "100"}],
+        [{"fundingRate": "0.0012"}, {"fundingRate": "0.0008"}],
+    )
+    assert result["open_interest"] == 120
+    assert result["open_interest_change_pct"] == 20
+    assert result["funding_bias"] == "LONG_CROWDED"
+    assert result["liquidations_feed"] == "not_connected"
+
+
+def test_derivatives_endpoint_is_read_only_and_validates_symbol(client, monkeypatch):
+    async def fake_bybit(path, params):
+        if "open-interest" in path:
+            return {"list": [{"openInterest": "120"}, {"openInterest": "100"}]}
+        return {"list": [{"fundingRate": "0.0012"}]}
+    monkeypatch.setattr(main, "bybit_get", fake_bybit)
+    response = client.get("/api/derivatives/BTCUSDT")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["funding_bias"] == "LONG_CROWDED"
+    assert payload["live_trading_enabled"] is False
+    assert client.get("/api/derivatives/BTCUSD").status_code == 400
+
+
+def test_monitoring_room_assets_and_engine_tiers_are_registered(client):
+    html = client.get("/").text
+    assert "/static/monitoring-room.css" in html
+    assert "/static/monitoring-room.js" in html
+    assert client.get("/static/monitoring-room.js").status_code == 200
+    assert client.get("/static/monitoring-room.css").status_code == 200
+    engines = client.get("/api/engines").json()
+    derivatives = next(x for x in engines["engines"] if x["id"] == "derivatives")
+    assert derivatives["status"] == "partial"
+    assert derivatives["accent"] == "purple"

@@ -17,6 +17,7 @@ from .paper_store import PaperStore
 from .quant_engine import ema_crossover_backtest, enrich_analysis
 from .engine_registry import engine_registry
 from .command_engine import COMMANDS, matches_command, evaluate_entry
+from .derivatives_engine import summarize_derivatives
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="QUANT NEXUS", version="1.0.0",
@@ -436,6 +437,27 @@ async def engine_status():
 async def engines():
     """Return implementation status for the 15 logical QUANT NEXUS engines."""
     return engine_registry()
+
+@app.get("/api/derivatives/{symbol}")
+async def derivatives(symbol: str):
+    """Read-only Bybit linear open-interest and funding context."""
+    symbol = symbol.upper()
+    if not symbol.endswith("USDT") or not symbol.replace("USDT", "").isalnum():
+        raise HTTPException(status_code=400, detail="Only USDT linear symbols are supported")
+    oi_result, funding_result = await asyncio.gather(
+        bybit_get("/v5/market/open-interest", {
+            "category": "linear", "symbol": symbol, "intervalTime": "5min", "limit": 50
+        }),
+        bybit_get("/v5/market/funding/history", {
+            "category": "linear", "symbol": symbol, "limit": 20
+        })
+    )
+    summary = summarize_derivatives(
+        oi_result.get("list", []), funding_result.get("list", [])
+    )
+    return {"symbol": symbol, "provider": "Bybit", **summary,
+            "trading_mode": "simulation", "live_trading_enabled": False}
+
 
 @app.get("/api/strategies")
 async def strategies():

@@ -149,7 +149,7 @@
 @media(max-width:900px){.dashboard-home{grid-template-columns:repeat(3,minmax(0,1fr))}.engine-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px){.dashboard-home{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:7px 5px}.home-card{min-height:105px;padding:11px;border-radius:11px}.home-card b{font-size:13px}.home-card small{font-size:10px}.home-card .card-icon{font-size:22px}.page-toolbar{margin:6px;padding:8px}.page-mode .layout{padding:0 6px}.opp-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.opp-score{font-size:18px}.engine-grid{grid-template-columns:1fr}.opportunity-card{padding:10px}.home-title{font-size:15px}}
 @media(max-width:360px){.dashboard-home{grid-template-columns:repeat(2,minmax(0,1fr))}.home-card{min-height:96px;padding:9px}}
-.command.selected{border-color:var(--green);background:#06251a}.command small{display:block;color:var(--muted);font-size:10px;margin-top:5px}.command b{display:block;color:var(--green);font-size:10px;margin-top:5px}</style></head><body>
+.command.selected{border-color:var(--green);background:#06251a}.command small{display:block;color:var(--muted);font-size:10px;margin-top:5px}.command b{display:block;color:var(--green);font-size:10px;margin-top:5px}</style><link rel="stylesheet" href="/static/monitoring-room.css"></head><body>
 <header class="top"><div class="brand">◈ QUANT <em>NEXUS</em><small>منصة التحليل الكمي الذكي</small></div><span class="pill mode">● PAPER TRADING (تجريبي)</span><span class="pill disabled-live">⛔ التداول الحقيقي: معطّل</span><button id="stop" class="btn stop" disabled>■ إيقاف</button><button id="run" class="btn run">▶ تشغيل الماسح</button><label>السوق <select id="category"><option value="spot">Spot</option><option value="linear">Futures</option></select></label><label>العمق <select id="depth"><option>32</option><option>64</option><option>128</option><option>256</option><option>AUTO</option></select></label><label>الإطار <select id="tf"><option>5m</option><option>15m</option><option>1h</option><option>4h</option><option>1d</option></select></label></header>
 <section class="stats"><div class="stat"><span>فرص قوية</span><b id="strong">—</b></div><div class="stat"><span>تحتاج تأكيد</span><b class="gold" id="confirm">—</b></div><div class="stat"><span>مخاطر مرتفعة</span><b class="negative" id="risk">—</b></div><div class="stat"><span>العملات المرصودة</span><b id="tracked">—</b></div><div class="stat"><span>حالة الماسح</span><b id="status">متوقف</b></div><div class="stat"><span>مصدر البيانات</span><b id="provider" style="font-size:14px">—</b></div></section>
 <section id="dashboardHome" class="dashboard-home">
@@ -272,6 +272,7 @@ chart:{title:'الرسم البياني',panels:['chartPanel']},
 coins:{title:'قائمة العملات والبث المباشر',panels:['coinsPanel']},
 commands:{title:'مكتبة الأوامر التحليلية',panels:['commandsPanel']},
 intelligence:{title:'QUANT BRAIN · المحركات',panels:['enginesPanel']},
+monitoring:{title:'غرفة المراقبة المركزية',panels:['monitoringRoomPanel']},
 history:{title:'سجل المسح والصفقات',panels:['historyPanel','ordersPanel']},
 strategy:{title:'Strategy Lab',panels:['strategyLab']},
 risk:{title:'إدارة المخاطر',panels:['riskPanel']},
@@ -320,7 +321,7 @@ async function loadEngines(){
   const d=await api('/api/engines');
   $('engineCounts').textContent=d.total+' محرك';
   $('engineSummary').innerHTML='<div><small>مكتملة</small><b class="positive">'+d.counts.implemented+'</b></div><div><small>جزئية</small><b class="gold">'+d.counts.partial+'</b></div><div><small>مخططة</small><b>'+d.counts.planned+'</b></div><div><small>وضع التشغيل</small><b>Simulation فقط</b></div>';
-  $('engineGrid').innerHTML=d.engines.map(x=>'<article class="engine-card"><span class="engine-status '+x.status+'">'+({implemented:'مكتمل',partial:'جزئي',planned:'مخطط'}[x.status]||x.status)+'</span><b>'+x.name_ar+'</b><small>'+x.name_en+'</small><small style="margin-top:7px">'+(x.capabilities||[]).join(' · ')+'</small>'+(x.gaps?.length?'<small class="gold" style="margin-top:7px">المتبقي: '+x.gaps.join(' · ')+'</small>':'')+'</article>').join('');
+  $('engineGrid').innerHTML=d.engines.map(x=>'<article class="engine-card '+(x.accent==='purple'?'engine-purple':'')+'"><span class="engine-status '+x.status+'">'+({implemented:'مكتمل',partial:'جزئي',planned:'مخطط'}[x.status]||x.status)+'</span><b>'+x.name_ar+'</b><small>'+x.name_en+'</small><small style="margin-top:7px">'+(x.capabilities||[]).join(' · ')+'</small>'+(x.gaps?.length?'<small class="gold" style="margin-top:7px">المتبقي: '+x.gaps.join(' · ')+'</small>':'')+'</article>').join('');
   if(d.live_trading_enabled!==false)throw Error('فشل فحص الأمان: حالة التداول الحقيقي غير معطلة');
  }catch(e){$('engineGrid').innerHTML='<div class="muted">تعذر تحميل المحركات.</div>';$('engineError').textContent=e.message+' · أعد فتح الصفحة للمحاولة.'}
 }
@@ -332,4 +333,5 @@ loadCommandCatalog();
 init();
 setInterval(refreshEntryTicker,8000);
 setInterval(async()=>{try{const m=await api('/api/paper/monitor',{method:'POST'});if(m.closed?.length){log('إغلاق تلقائي تجريبي: '+m.closed.map(x=>x.symbol+' '+x.reason).join('، '));await refreshPaper()}}catch(e){log('تعذر مراقبة أهداف الصفقات: '+e.message,false)}},15000);
+const monitoringRoomScript=document.createElement("script");monitoringRoomScript.src="/static/monitoring-room.js";document.body.appendChild(monitoringRoomScript);
 </script></body></html>

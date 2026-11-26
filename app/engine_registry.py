@@ -8,7 +8,7 @@ ENGINES = [
  {"id":"multi_timeframe","name":"MULTI-TIMEFRAME","name_ar":"محرك الأطر الزمنية","status":"implemented","capabilities":["5m","15m","1h","4h consensus"]},
  {"id":"liquidity","name":"LIQUIDITY ENGINE","name_ar":"محرك السيولة","status":"implemented","capabilities":["order book spread","bid/ask depth","depth imbalance"],"gaps":["historical liquidity persistence","spoofing detection is not claimed"]},
  {"id":"order_flow","name":"ORDER FLOW","name_ar":"محرك تدفق الأوامر","status":"implemented","capabilities":["recent trade buy/sell notional","large-print outliers"],"gaps":["full footprint/delta history"]},
- {"id":"derivatives","name":"DERIVATIVES ENGINE","name_ar":"محرك المشتقات","status":"planned","capabilities":[],"gaps":["open interest","funding rate","liquidation feed"]},
+ {"id":"derivatives","name":"DERIVATIVES ENGINE","name_ar":"محرك المشتقات","status":"partial","accent":"purple","capabilities":["Bybit open interest history","funding rate history","crowding context"],"gaps":["verified liquidation event feed","cross-exchange positioning history"]},
  {"id":"market_structure","name":"MARKET STRUCTURE","name_ar":"محرك بنية السوق","status":"partial","capabilities":["completed-candle breakout","support/resistance"],"gaps":["validated BOS/CHoCH and supply/demand zones"]},
  {"id":"volatility","name":"VOLATILITY ENGINE","name_ar":"محرك التقلبات","status":"implemented","capabilities":["ATR14","ATR percentage"]},
  {"id":"opportunity","name":"OPPORTUNITY ENGINE","name_ar":"محرك اكتشاف الفرص","status":"partial","capabilities":["scanner ranking","explainable score","pre-move watch flag"],"gaps":["calibrated out-of-sample probability and unified multi-engine confirmation"]},
