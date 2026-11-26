@@ -335,3 +335,48 @@ def test_paper_summary_includes_mark_to_market_and_fee_estimate(client, monkeypa
 def test_scan_rejects_unknown_direction_before_market_request(client):
     response = client.get("/api/scan?direction=sideways")
     assert response.status_code == 400
+
+def test_completed_candle_breakout_ignores_forming_candle_wick():
+    rows = []
+    for i in range(28):
+        close = 100 + i * 0.01
+        rows.append([str(i * 60_000), str(close), str(close + 0.1),
+                     str(close - 0.1), str(close), "1000"])
+    rows.append([str(28 * 60_000), "101", "102", "100.8", "101.5", "1500"])
+    # The current, unfinished candle has a high wick; it must not erase the completed breakout.
+    rows.append([str(29 * 60_000), "101.4", "200", "101", "101.6", "2000"])
+    result = main.analyze_klines(rows)
+    assert result["breakout"] == "UP"
+    assert result["breakoutClose"] == pytest.approx(101.5)
+
+
+def test_flat_market_rsi_is_neutral():
+    assert main.rsi([100.0] * 40) == 50.0
+
+
+def test_scan_honors_requested_limit_with_larger_depth(client, monkeypatch):
+    tickers = [
+        {"symbol": f"COIN{i}USDT", "turnover24h": 1_000_000,
+         "price24hPcnt": 0.01, "volume24h": 1000}
+        for i in range(3)
+    ]
+    async def fake_tickers(category):
+        return tickers, "TEST"
+    async def fake_klines(symbol, category, interval, limit):
+        return make_rows(), "TEST"
+    monkeypatch.setattr(main, "get_market_tickers", fake_tickers)
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    response = client.get("/api/scan?category=spot&interval=15m&limit=1&depth=256&min_turnover=0")
+    assert response.status_code == 200
+    assert response.json()["scanned"] == 1
+    assert response.json()["effectiveDepth"] == 1
+
+
+def test_engine_status_advertises_live_intelligence_capabilities(client):
+    payload = client.get("/api/engine/status").json()
+    assert "orderbook_liquidity" in payload["capabilities"]
+    assert "large_trade_flow" in payload["capabilities"]
+    assert "paper_auto_monitor" in payload["capabilities"]
+    assert "position_sizing" in payload["capabilities"]
+    assert payload["live_trading_enabled"] is False
+
