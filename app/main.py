@@ -497,6 +497,7 @@ class PaperTrade(BaseModel):
     symbol: str = Field(min_length=2, max_length=30)
     side: str
     category: str = "spot"
+    leverage: int = Field(default=1, ge=1, le=10)
     entry: float = Field(gt=0)
     quantity: float = Field(gt=0)
     stop_loss: Optional[float] = Field(default=None, gt=0)
@@ -508,8 +509,8 @@ async def paper_account():
         open_trades = [t for t in PAPER_TRADES if t["status"] == "OPEN"]
         closed_trades = [t for t in PAPER_TRADES if t["status"] == "CLOSED"]
         realized = sum(safe_float(t.get("pnl")) for t in closed_trades)
-        reserved = sum(safe_float(t.get("entry")) * safe_float(t.get("quantity")) for t in open_trades)
-        return {"balance": PAPER_BALANCE, "equity": PAPER_BALANCE + reserved,
+        reserved = sum(safe_float(t.get("margin"), safe_float(t.get("entry")) * safe_float(t.get("quantity"))) for t in open_trades)
+        return {"balance": PAPER_BALANCE, "availableBalance": PAPER_BALANCE, "equity": PAPER_BALANCE + reserved,
                 "trades": PAPER_TRADES, "openCount": len(open_trades),
                 "closedCount": len(closed_trades), "realizedPnl": round(realized, 8),
                 "reservedCapital": round(reserved, 8),
@@ -536,11 +537,17 @@ async def open_paper_trade(trade: PaperTrade):
         raise HTTPException(status_code=400, detail="side must be LONG or SHORT")
     if trade.category not in ("spot", "linear"):
         raise HTTPException(status_code=400, detail="category must be spot or linear")
+    if trade.category == "spot" and trade.side.upper() == "SHORT":
+        raise HTTPException(status_code=400, detail="Spot short positions are not supported by this simulator")
+    if trade.category == "spot" and trade.leverage != 1:
+        raise HTTPException(status_code=400, detail="Spot simulation is limited to 1x")
     if trade.stop_loss is None:
         raise HTTPException(status_code=400, detail="A stop loss is required for every simulated trade")
     async with PAPER_LOCK:
-        if trade.quantity * trade.entry > PAPER_BALANCE:
-            raise HTTPException(status_code=400, detail="Insufficient simulated balance")
+        notional = trade.quantity * trade.entry
+        margin = notional / trade.leverage
+        if margin > PAPER_BALANCE:
+            raise HTTPException(status_code=400, detail="Insufficient simulated margin")
         if trade.stop_loss is not None:
             invalid_stop = (trade.side.upper() == "LONG" and trade.stop_loss >= trade.entry) or (trade.side.upper() == "SHORT" and trade.stop_loss <= trade.entry)
             if invalid_stop:
@@ -553,10 +560,11 @@ async def open_paper_trade(trade: PaperTrade):
             if invalid_target:
                 raise HTTPException(status_code=400, detail="Take profit is on the wrong side of the entry")
         item = {"id":(max((t["id"] for t in PAPER_TRADES), default=0)+1),"symbol":trade.symbol.upper(),"side":trade.side.upper(),
-                "category":trade.category, "entry":trade.entry,"quantity":trade.quantity,"stopLoss":trade.stop_loss,
+                "category":trade.category, "leverage": trade.leverage, "notional": notional, "margin": margin,
+                "entry":trade.entry,"quantity":trade.quantity,"stopLoss":trade.stop_loss,
                 "takeProfit":trade.take_profit,"status":"OPEN","openedAt":datetime.now(timezone.utc).isoformat()}
         PAPER_TRADES.append(item)
-        PAPER_BALANCE -= trade.quantity * trade.entry
+        PAPER_BALANCE -= margin
         persist_paper_state()
     return {"trade":item,"balance":PAPER_BALANCE,"live_trading_enabled":False}
 
@@ -567,7 +575,8 @@ async def close_paper_trade(trade_id: int, exit_price: float = Query(gt=0)):
         item = next((t for t in PAPER_TRADES if t["id"]==trade_id and t["status"]=="OPEN"),None)
         if not item: raise HTTPException(status_code=404,detail="Open paper trade not found")
         pnl = (exit_price-item["entry"])*item["quantity"]*(1 if item["side"]=="LONG" else -1)
-        PAPER_BALANCE += item["quantity"]*exit_price
+        margin = safe_float(item.get("margin"), item["quantity"] * item["entry"])
+        PAPER_BALANCE += margin + pnl
         item.update({"status":"CLOSED","exitPrice":exit_price,"pnl":round(pnl,8),
                      "closedAt":datetime.now(timezone.utc).isoformat()})
         persist_paper_state()
@@ -610,7 +619,8 @@ async def monitor_paper_trades():
             if not (stop_hit or target_hit):
                 continue
             pnl = (mark - item["entry"]) * item["quantity"] * (1 if side == "LONG" else -1)
-            PAPER_BALANCE += item["quantity"] * mark
+            margin = safe_float(item.get("margin"), item["quantity"] * item["entry"])
+            PAPER_BALANCE += margin + pnl
             item.update({"status": "CLOSED", "exitPrice": mark, "pnl": round(pnl, 8),
                          "closeReason": "STOP_LOSS" if stop_hit else "TAKE_PROFIT",
                          "closedAt": datetime.now(timezone.utc).isoformat()})
