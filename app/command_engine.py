@@ -78,22 +78,65 @@ def matches_command(item: dict, command_id: str) -> bool:
     if rule == "fast_movers": return change >= 3
     return False
 
+def _ema(values: list[float], period: int) -> float | None:
+    if len(values) < period:
+        return None
+    value = sum(values[:period]) / period
+    alpha = 2.0 / (period + 1)
+    for point in values[period:]:
+        value = point * alpha + value * (1 - alpha)
+    return value
+
+
+def _rsi(values: list[float], period: int = 14) -> float | None:
+    if len(values) <= period:
+        return None
+    changes = [values[i] - values[i-1] for i in range(1, len(values))]
+    gains = sum(max(x, 0) for x in changes[:period]) / period
+    losses = sum(max(-x, 0) for x in changes[:period]) / period
+    for change in changes[period:]:
+        gains = (gains * (period - 1) + max(change, 0)) / period
+        losses = (losses * (period - 1) + max(-change, 0)) / period
+    if losses == 0:
+        return 50.0 if gains == 0 else 100.0
+    return 100 - 100 / (1 + gains / losses)
+
+
 def evaluate_entry(item: dict) -> dict:
-    """Confirm on the last completed candle only; otherwise keep the setup pending."""
-    direction=item.get("direction","NEUTRAL")
-    price=float(item.get("price") or 0)
-    score=float(item.get("score") or 0)
-    rsi=item.get("rsi")
-    ema20,ema50=item.get("ema20"),item.get("ema50")
-    macd=item.get("macdHistogram")
-    volume=item.get("volumeRatio")
-    breakout=item.get("breakout")
-    if direction == "NEUTRAL" or not price:
-        return {"state":"WAITING","confirmed":False,"progress":0,"reason":"الاتجاه غير محسوم؛ ننتظر اكتمال الشروط"}
-    bullish = direction=="LONG" and ema20 and ema50 and price>ema20>ema50 and rsi is not None and 50<=rsi<=70 and macd is not None and macd>0 and (breakout=="UP" or (volume is not None and volume>=1.25))
-    bearish = direction=="SHORT" and ema20 and ema50 and price<ema20<ema50 and rsi is not None and 30<=rsi<=50 and macd is not None and macd<0 and (breakout=="DOWN" or (volume is not None and volume>=1.25))
+    """Confirm using only completed candles; exclude the newest forming candle."""
+    candles = item.get("candles") or []
+    completed = candles[:-1] if len(candles) >= 2 else candles
+    if len(completed) < 55:
+        return {"state":"WAITING","confirmed":False,"progress":0,
+                "reason":"عدد الشموع المكتملة غير كافٍ لتأكيد الدخول"}
+    closes = [float(c["close"]) for c in completed]
+    volumes = [float(c["volume"]) for c in completed]
+    price = closes[-1]
+    ema20, ema50 = _ema(closes, 20), _ema(closes, 50)
+    strength = _rsi(closes)
+    macd_fast, macd_slow = _ema(closes, 12), _ema(closes, 26)
+    previous = closes[-2]
+    previous_fast = _ema(closes[:-1], 12)
+    previous_slow = _ema(closes[:-1], 26)
+    macd_hist = (macd_fast - macd_slow) - (previous_fast - previous_slow) if None not in (macd_fast, macd_slow, previous_fast, previous_slow) else None
+    average_volume = sum(volumes[-21:-1]) / len(volumes[-21:-1]) if len(volumes) > 1 else 0
+    volume_ratio = volumes[-1] / average_volume if average_volume > 0 else None
+    direction = item.get("direction", "NEUTRAL")
+    score = float(item.get("score") or 0)
+    breakout = item.get("breakout")
+    bullish = (direction == "LONG" and ema20 is not None and ema50 is not None
+        and price > ema20 > ema50 and strength is not None and 50 <= strength <= 70
+        and macd_hist is not None and macd_hist > 0
+        and (breakout == "UP" or (volume_ratio is not None and volume_ratio >= 1.25)))
+    bearish = (direction == "SHORT" and ema20 is not None and ema50 is not None
+        and price < ema20 < ema50 and strength is not None and 30 <= strength <= 50
+        and macd_hist is not None and macd_hist < 0
+        and (breakout == "DOWN" or (volume_ratio is not None and volume_ratio >= 1.25)))
     if bullish or bearish:
-        return {"state":"CONFIRMED","confirmed":True,"progress":100,"reason":"اتجاه المتوسطات والزخم وRSI متوافقة مع إغلاق الشمعة المكتملة"}
-    if score>=65 and direction in ("LONG","SHORT"):
-        return {"state":"APPROACH","confirmed":False,"progress":65,"reason":"الدرجة مرتفعة لكن شرط تأكيد واحد أو أكثر غير مكتمل"}
-    return {"state":"WAITING","confirmed":False,"progress":25,"reason":"الإشارة تحت المراقبة؛ لا دخول قبل التأكيد"}
+        return {"state":"CONFIRMED","confirmed":True,"progress":100,
+                "reason":"تأكيد من الشمعة المكتملة: اتجاه المتوسطات والزخم وRSI متوافقة"}
+    if score >= 65 and direction in ("LONG", "SHORT"):
+        return {"state":"APPROACH","confirmed":False,"progress":65,
+                "reason":"الدرجة مرتفعة لكن شروط تأكيد الشمعة المكتملة غير مكتملة"}
+    return {"state":"WAITING","confirmed":False,"progress":25,
+            "reason":"الإشارة تحت المراقبة؛ لا دخول قبل التأكيد"}
