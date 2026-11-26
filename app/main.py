@@ -341,7 +341,7 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
     tickers = [t for t in tickers if isinstance(t, dict) and str(t.get("symbol", "")).endswith("USDT")]
     tickers.sort(key=lambda x: safe_float(x.get("turnover24h")), reverse=True)
     eligible = [x for x in tickers if safe_float(x.get("turnover24h")) >= min_turnover]
-    depth_limit = {"32":32,"64":64,"128":256}.get(depth)
+    depth_limit = {"32":32,"64":64,"128":128,"256":256}.get(depth)
     if depth == "256":
         depth_limit = 256
     elif depth == "AUTO":
