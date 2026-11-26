@@ -173,7 +173,7 @@ def rsi(values, period=14):
         gains = (gains * (period - 1) + max(change, 0)) / period
         losses = (losses * (period - 1) + max(-change, 0)) / period
     if losses == 0:
-        return 100.0
+        return 50.0 if gains == 0 else 100.0
     return 100 - 100 / (1 + gains / losses)
 
 def macd(values, fast=12, slow=26, signal=9):
@@ -219,7 +219,14 @@ def analyze_klines(rows, include_all_candles=False):
     recent_volumes = volumes[-21:-1]
     avg_vol = sum(recent_volumes) / len(recent_volumes) if recent_volumes else 0
     vol_ratio = volumes[-1] / avg_vol if avg_vol > 0 else None
-    recent_high, recent_low = max(highs[-20:]), min(lows[-20:])
+    # Use the last completed candle for breakout confirmation; the newest candle may still be forming.
+    signal_candle = candles[-2] if len(candles) >= 2 else candles[-1]
+    reference_candles = candles[-22:-2] if len(candles) >= 22 else candles[:-2]
+    if not reference_candles:
+        reference_candles = candles[:-1] or candles
+    recent_high = max(x["high"] for x in reference_candles)
+    recent_low = min(x["low"] for x in reference_candles)
+    breakout = "UP" if signal_candle["close"] > recent_high else ("DOWN" if signal_candle["close"] < recent_low else "NONE")
     macd_line, macd_signal, macd_hist = macd(closes)
     typical=[(x['high']+x['low']+x['close'])/3 for x in candles]
     total_volume=sum(volumes)
@@ -245,7 +252,8 @@ def analyze_klines(rows, include_all_candles=False):
         stop = target1 = target2 = None
     return enrich_analysis({"price":last,"change24h":None,"rsi":round(strength,2) if strength is not None else None,
             "ema20":e20,"ema50":e50,"macd":macd_line,"macdSignal":macd_signal,"macdHistogram":macd_hist,"vwap":vwap,"volumeRatio":round(vol_ratio,2) if vol_ratio is not None else None,
-            "support":recent_low,"resistance":recent_high,"score":score,"direction":direction,
+            "support":recent_low,"resistance":recent_high,"breakout":breakout,
+            "breakoutClose":signal_candle["close"],"score":score,"direction":direction,
             "entry":last if direction != "NEUTRAL" else None,"stopLoss":stop,
             "target1":target1,"target2":target2,"candles":candles if include_all_candles else candles[-100:]})
 
@@ -563,9 +571,16 @@ async def open_paper_trade(trade: PaperTrade):
                 "category":trade.category, "leverage": trade.leverage, "notional": notional, "margin": margin,
                 "entry":trade.entry,"quantity":trade.quantity,"stopLoss":trade.stop_loss,
                 "takeProfit":trade.take_profit,"status":"OPEN","openedAt":datetime.now(timezone.utc).isoformat()}
+        old_balance = PAPER_BALANCE
         PAPER_TRADES.append(item)
         PAPER_BALANCE -= margin
-        persist_paper_state()
+        try:
+            persist_paper_state()
+        except Exception as exc:
+            PAPER_TRADES.pop()
+            PAPER_BALANCE = old_balance
+            logger.exception("Paper trade open could not be persisted")
+            raise HTTPException(status_code=503, detail="Paper portfolio storage is unavailable") from exc
     return {"trade":item,"balance":PAPER_BALANCE,"live_trading_enabled":False}
 
 @app.post("/api/paper/{trade_id}/close")
@@ -574,12 +589,21 @@ async def close_paper_trade(trade_id: int, exit_price: float = Query(gt=0)):
     async with PAPER_LOCK:
         item = next((t for t in PAPER_TRADES if t["id"]==trade_id and t["status"]=="OPEN"),None)
         if not item: raise HTTPException(status_code=404,detail="Open paper trade not found")
+        old_balance = PAPER_BALANCE
+        old_item = dict(item)
         pnl = (exit_price-item["entry"])*item["quantity"]*(1 if item["side"]=="LONG" else -1)
         margin = safe_float(item.get("margin"), item["quantity"] * item["entry"])
         PAPER_BALANCE += margin + pnl
         item.update({"status":"CLOSED","exitPrice":exit_price,"pnl":round(pnl,8),
                      "closedAt":datetime.now(timezone.utc).isoformat()})
-        persist_paper_state()
+        try:
+            persist_paper_state()
+        except Exception as exc:
+            PAPER_BALANCE = old_balance
+            item.clear()
+            item.update(old_item)
+            logger.exception("Paper trade close could not be persisted")
+            raise HTTPException(status_code=503, detail="Paper portfolio storage is unavailable") from exc
         return {"trade":item,"balance":PAPER_BALANCE,"live_trading_enabled":False}
 
 @app.post("/api/paper/monitor")
@@ -604,6 +628,8 @@ async def monitor_paper_trades():
             logger.warning("Paper monitor cannot fetch %s marks: %s", category, exc.detail)
     closed = []
     async with PAPER_LOCK:
+        old_balance = PAPER_BALANCE
+        changed = []
         for item in PAPER_TRADES:
             if item["status"] != "OPEN":
                 continue
@@ -618,6 +644,7 @@ async def monitor_paper_trades():
             target_hit = target is not None and ((side == "LONG" and mark >= target) or (side == "SHORT" and mark <= target))
             if not (stop_hit or target_hit):
                 continue
+            changed.append((item, dict(item)))
             pnl = (mark - item["entry"]) * item["quantity"] * (1 if side == "LONG" else -1)
             margin = safe_float(item.get("margin"), item["quantity"] * item["entry"])
             PAPER_BALANCE += margin + pnl
@@ -627,7 +654,15 @@ async def monitor_paper_trades():
             closed.append({"id": item["id"], "symbol": item["symbol"],
                            "reason": item["closeReason"], "exitPrice": mark, "pnl": item["pnl"]})
         if closed:
-            persist_paper_state()
+            try:
+                persist_paper_state()
+            except Exception as exc:
+                PAPER_BALANCE = old_balance
+                for changed_item, previous_state in changed:
+                    changed_item.clear()
+                    changed_item.update(previous_state)
+                logger.exception("Paper monitor state could not be persisted")
+                raise HTTPException(status_code=503, detail="Paper portfolio storage is unavailable") from exc
     return {"checked": len(open_trades), "closed": closed,
             "live_trading_enabled": False}
 
