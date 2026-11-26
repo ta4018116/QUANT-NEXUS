@@ -232,3 +232,45 @@ def test_engine_status_discloses_storage_and_market_coverage(client):
     assert payload["paper_storage"] == "sqlite"
     assert payload["markets"]["forex"] is False
     assert payload["live_trading_enabled"] is False
+
+
+def test_paper_requires_stop_loss_for_every_position(client):
+    response = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "LONG", "entry": 100, "quantity": 1
+    })
+    assert response.status_code == 400
+    assert "stop loss is required" in response.json()["detail"].lower()
+
+
+def test_paper_monitor_closes_when_stop_is_hit(client, monkeypatch):
+    async def fake_tickers(category):
+        return ([{"symbol": "BTCUSDT", "lastPrice": 89}], "Bybit")
+
+    monkeypatch.setattr(main, "get_market_tickers", fake_tickers)
+    opened = client.post("/api/paper", json={
+        "symbol": "BTCUSDT", "side": "LONG", "category": "spot",
+        "entry": 100, "quantity": 1, "stop_loss": 90, "take_profit": 120
+    })
+    assert opened.status_code == 200
+    monitored = client.post("/api/paper/monitor")
+    assert monitored.status_code == 200
+    payload = monitored.json()
+    assert payload["closed"][0]["reason"] == "STOP_LOSS"
+    account = client.get("/api/paper").json()
+    assert account["openCount"] == 0
+    assert account["closedCount"] == 1
+    assert account["trades"][0]["pnl"] == -11
+
+
+def test_market_flow_liquidity_and_strategy_apis_are_registered(client):
+    paths = {route.path for route in main.app.routes}
+    assert "/api/liquidity/{symbol}" in paths
+    assert "/api/flow/{symbol}" in paths
+    assert "/api/backtest/{symbol}" in paths
+    assert "/api/paper/monitor" in paths
+    assert "/api/risk/position-size" in paths
+
+
+def test_backtest_rejects_invalid_fast_slow_period_order(client):
+    response = client.get("/api/backtest/BTCUSDT?fast_period=30&slow_period=10")
+    assert response.status_code == 400
