@@ -99,3 +99,18 @@ def test_candle_analysis_rejects_insufficient_or_malformed_data():
 def test_no_live_order_endpoint_is_exposed():
     paths = {route.path for route in main.app.routes}
     assert not any("/api/live" in path or "/api/order" in path for path in paths)
+
+
+def test_neon_dashboard_is_served_and_keeps_paper_only_mode(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    html = response.text
+    assert 'QUANT NEXUS' in html
+    assert 'رادار السوق الذكي' in html
+    assert 'مكتبة الأوامر التحليلية' in html
+    assert '/api/scan?' in html
+    assert '/api/klines/' in html
+    assert '/api/paper' in html
+    assert 'التداول الحقيقي: معطّل' in html
+    health = client.get("/health").json()
+    assert health["live_trading_enabled"] is False
