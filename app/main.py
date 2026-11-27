@@ -24,6 +24,7 @@ from .quant_engine import ema_crossover_backtest, enrich_analysis
 from .engine_registry import engine_registry
 from .engine_catalog import engine_catalog
 from .engine_suite import run_engine_suite, early_opportunity_assessment, catalogue_runtime_coverage
+from .engine_sources import engine_source_registry
 from .command_engine import COMMANDS, matches_command, evaluate_entry
 from .derivatives_engine import summarize_derivatives, normalize_liquidations
 from .advanced_engines import market_regime, market_structure, opportunity_assessment, learning_monitoring
@@ -991,6 +992,15 @@ async def engines():
 async def engine_catalog_endpoint():
     """Return the auditable 156-engine catalogue and honest implementation states."""
     return engine_catalog()
+
+@app.get("/api/engine-sources")
+async def engine_sources_endpoint():
+    """Return a per-engine evidence source contract and current provider configuration."""
+    return {
+        **engine_source_registry(),
+        "provider_configuration": provider_configuration(),
+    }
+
 
 @app.get("/api/engine-suite/coverage")
 async def engine_suite_coverage():
