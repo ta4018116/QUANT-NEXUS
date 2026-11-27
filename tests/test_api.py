@@ -435,7 +435,7 @@ def test_engine_registry_is_read_only_and_does_not_expose_live_order_routes(clie
     assert not any("live-order" in path for path in paths)
 
 
-def test_responsive_card_dashboard_exposes_real_pages_opportunities_and_engine_registry(client):
+def test_responsive_card_dashboard_exposes_real_pages_opportunities_and_engine_registry(client, monkeypatch):
     html = client.get("/").text
     assert 'id="dashboardHome"' in html
     assert 'data-open-page="opportunities"' in html
@@ -443,7 +443,8 @@ def test_responsive_card_dashboard_exposes_real_pages_opportunities_and_engine_r
     assert 'data-open-page="intelligence"' in html
     assert "function openPage(key)" in html
     assert "function renderOpportunityCards(items)" in html
-    assert "api('/api/engine-suite/'+encodeURIComponent(symbol)" in html
+    assert "api('/api/engine-suite/coverage?symbol='+encodeURIComponent(symbol)" in html
+    assert "counts.ACTIVE" in html and "counts.BLOCKED" in html
     assert "readiness.counts" in html
     assert "سبب الحالة" in html
     assert "أسلوب الدخول" in html
@@ -454,8 +455,17 @@ def test_responsive_card_dashboard_exposes_real_pages_opportunities_and_engine_r
     assert html.count("<script>") == 1
     assert html.count("</script>") == 1
     assert client.get("/api/engines").json()["live_trading_enabled"] is False
+    async def fake_suite(symbol, category, interval, limit):
+        return {"engine_readiness":{"total":156,"counts":{"ACTIVE":1,"PARTIAL":2,"BLOCKED":153,"PLANNED":0},
+                                    "engines":[{"id":item["id"],"status":"ACTIVE" if item["id"] == "E001" else "BLOCKED"}
+                                               for item in main.engine_catalog.__globals__["ENGINE_CATALOG"]],
+                                    "last_checked_at":"2026-11-27T12:00:00+00:00"},
+                "symbol":symbol,"provider":"Bybit"}
+    monkeypatch.setattr(main, "market_engine_suite", fake_suite)
     catalog = client.get("/api/engine-catalog").json()
     assert catalog["total"] == 156
+    assert catalog["counts"]["ACTIVE"] == 1
+    assert catalog["engines"][0]["status"] == "ACTIVE"
     assert catalog["live_trading_enabled"] is False
 
 

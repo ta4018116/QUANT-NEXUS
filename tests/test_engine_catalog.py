@@ -38,11 +38,42 @@ def test_engine_catalog_covers_all_twelve_workstreams():
     assert sum(result["group_counts"].values()) == 156
 
 
-def test_engine_catalog_api_exposes_all_engines_and_paper_only_mode():
+def test_engine_catalog_api_exposes_dynamic_states_and_paper_only_mode(monkeypatch):
+    async def fake_suite(symbol, category, interval, limit):
+        readiness = {
+            "total":156,
+            "counts":{"ACTIVE":1,"PARTIAL":5,"BLOCKED":150,"PLANNED":0,"total":156},
+            "engines":[{"id":item["id"],"status":"ACTIVE" if item["id"] == "E001" else "BLOCKED",
+                        "declared_status":item["status"],"readiness_reasons":[],"last_checked_at":"2026-11-27T12:00:00+00:00"}
+                       for item in ENGINE_CATALOG],
+            "last_checked_at":"2026-11-27T12:00:00+00:00","trading_mode":"simulation",
+            "live_trading_enabled":False,
+        }
+        return {"engine_readiness":readiness,"engine_coverage":{},"symbol":symbol,"provider":"Bybit",
+                "category":category,"interval":interval,"provider_health":{}}
+    monkeypatch.setattr(main, "market_engine_suite", fake_suite)
     response = TestClient(main.app).get("/api/engine-catalog")
     assert response.status_code == 200
     payload = response.json()
     assert payload["total"] == 156
     assert len(payload["engines"]) == 156
+    assert payload["counts"]["ACTIVE"] == 1
+    assert payload["engines"][0]["status"] == "ACTIVE"
+    assert payload["engines"][0]["declared_status"] == "implemented"
     assert payload["live_trading_enabled"] is False
     assert payload["execution_capability"] == "paper_only"
+
+
+def test_engine_suite_coverage_endpoint_returns_dynamic_not_adapter_counts(monkeypatch):
+    async def fake_suite(symbol, category, interval, limit):
+        readiness={"total":156,"counts":{"ACTIVE":2,"PARTIAL":4,"BLOCKED":149,"PLANNED":1,"total":156},
+                   "engines":[],"last_checked_at":"2026-11-27T12:00:00+00:00",
+                   "trading_mode":"simulation","live_trading_enabled":False}
+        return {"engine_readiness":readiness,"engine_coverage":{"callable_adapters":156},
+                "symbol":symbol,"provider":"Bybit","category":category,"interval":interval,
+                "provider_health":{"market_data":{"status":"ok"}}}
+    monkeypatch.setattr(main,"market_engine_suite",fake_suite)
+    payload=TestClient(main.app).get("/api/engine-suite/coverage").json()
+    assert payload["counts"]["ACTIVE"]==2
+    assert payload["adapter_coverage"]["callable_adapters"]==156
+    assert payload["live_trading_enabled"] is False

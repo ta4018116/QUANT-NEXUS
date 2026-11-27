@@ -7,6 +7,7 @@ market data, probabilities, or orders are produced.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from math import exp, isfinite, sqrt
 import random
 from statistics import NormalDist, mean, median, pstdev
@@ -2542,8 +2543,19 @@ def run_engine(engine_id: str, context: dict) -> dict:
             "invalid_numeric_paths": invalid_numeric_paths,
             "sanitized_value": value,
         }
+    adapter_available = handler is not None and handler is not _external
+    runtime_status = value.get("status") if isinstance(value, dict) else "invalid_result"
+    context_keys = sorted(str(key) for key, item_value in context.items() if item_value is not None)
+    market_snapshot_valid = bool(context.get("candles") and context.get("market_snapshot", {}).get("freshness_status") == "fresh")
     return {"engine_id":engine_id,"name":item["name"],"group":item["group"],
             "catalog_status":item["status"],"runtime":value,
+            "checked_at":datetime.now(timezone.utc).isoformat(),
+            "adapter_evidence":{"available":adapter_available,
+                                 "name":getattr(handler,"__name__",None) if handler else None,
+                                 "source":"app.engine_suite" if adapter_available else None},
+            "input_evidence":{"available":bool(runtime_status == "computed" and context_keys),
+                              "context_keys_present":context_keys,
+                              "market_snapshot_valid":market_snapshot_valid},
             "trading_mode":"simulation","live_trading_enabled":False}
 
 
@@ -2633,18 +2645,19 @@ def catalogue_runtime_coverage() -> dict:
     all_ids={x["id"] for x in ENGINE_CATALOG}
     routed=all_ids.intersection(_HANDLER_IDS)
     external_only=sorted(x for x in routed if _HANDLER_IDS.get(x) is _external)
-    active_adapters=sorted(routed-set(external_only))
+    callable_adapters=sorted(routed-set(external_only))
     status_counts={status:sum(1 for x in ENGINE_CATALOG if x["status"]==status)
                    for status in ("implemented","partial","planned")}
     return {
         "catalogue_engines":len(all_ids),
         "routed_adapters":len(routed),
         "callable_adapter_coverage_pct":round(len(routed)/len(all_ids)*100,2) if all_ids else 0,
-        "active_runtime_adapters":len(active_adapters),
+        "callable_adapters":len(callable_adapters),
+        "active_runtime_adapters":0,
         "external_or_model_blocked_adapters":len(external_only),
         "external_or_model_blocked_ids":external_only,
         "unrouted_adapters":sorted(all_ids-routed),
         "catalogue_status_counts":status_counts,
         "trading_mode":"simulation","live_trading_enabled":False,
-        "note":"A callable adapter may still return blocked_missing_input when its market feed, portfolio record or runtime snapshot is absent."
+        "note":"Adapter counts describe callable code only. ACTIVE counts are produced by request-time evidence evaluation, never by adapter presence."
     }

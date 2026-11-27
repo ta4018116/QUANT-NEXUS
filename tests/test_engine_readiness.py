@@ -1,58 +1,96 @@
+from copy import deepcopy
+
+import app.engine_readiness as readiness_module
 from app.engine_catalog import ENGINE_CATALOG
 from app.engine_readiness import build_engine_readiness
-from app.engine_sources import engine_source_registry
 
 
-def test_catalogue_status_requires_runtime_pass_and_source_contract():
-    source_ids = {row["engine_id"] for row in engine_source_registry()["engines"]}
-    assert len(ENGINE_CATALOG) == 156
-    assert source_ids == {row["id"] for row in ENGINE_CATALOG}
+CHECKED_AT = "2026-11-27T12:00:00+00:00"
 
-    suite = {"results": [
-        {"engine_id": item["id"], "runtime": {
-            "status": "computed" if item["id"] == "E001" else "blocked_missing_input",
-            "method": "test fixture",
-            "reason": None if item["id"] == "E001" else "missing_feed",
-            "missing_inputs": [] if item["id"] == "E001" else ["candles"],
-        }}
-        for item in ENGINE_CATALOG
-    ]}
-    readiness = build_engine_readiness(
-        suite, market_provider="TEST", provider_health={"derivatives": {"status": "unavailable"}}
+
+def _evidence(engine_id, runtime_status="computed", *, adapter=True, inputs=True):
+    return {
+        "engine_id": engine_id,
+        "checked_at": CHECKED_AT,
+        "runtime": {"status": runtime_status, "method": "functional fixture",
+                    "reason": None if runtime_status == "computed" else "missing_feed",
+                    "missing_inputs": [] if inputs else ["candles"]},
+        "adapter_evidence": {"available": adapter, "name": "fixture_adapter" if adapter else None},
+        "input_evidence": {"available": inputs, "market_snapshot_valid": inputs,
+                           "context_keys_present": ["candles"] if inputs else []},
+    }
+
+
+def _suite(overrides=None):
+    overrides = overrides or {}
+    return {"results": [overrides.get(item["id"], _evidence(
+        item["id"], "blocked_missing_input", inputs=False)) for item in ENGINE_CATALOG]}
+
+
+def _readiness(suite, *, snapshot=None, health=None):
+    return build_engine_readiness(
+        suite, market_provider="Bybit",
+        provider_health=health or {"market_data": {"status": "ok"}},
+        market_snapshot=snapshot or {
+            "provider": "Bybit", "source_timestamp": CHECKED_AT,
+            "frequency": "intraday", "freshness_status": "fresh", "age_seconds": 30,
+        },
     )
-    by_id = {item["id"]: item for item in readiness["engines"]}
-
-    assert readiness["total"] == 156
-    assert by_id["E001"]["status"] == "implemented"
-    assert by_id["E001"]["test_result"]["status"] == "passed"
-    assert by_id["E001"]["source_evidence"]["mapped"] is True
-    assert by_id["E002"]["status"] == "partial"
-    assert by_id["E002"]["test_result"]["status"] == "blocked_or_failed"
-    assert any("missing_feed" in reason for reason in by_id["E002"]["readiness_reasons"])
-    assert readiness["counts"]["implemented"] == 1
-    assert readiness["counts"]["partial"] + readiness["counts"]["planned"] == 155
-    assert readiness["live_trading_enabled"] is False
 
 
-def test_catalogue_partial_never_promotes_from_one_successful_smoke_test():
-    partial_id = next(item["id"] for item in ENGINE_CATALOG if item["status"] == "partial")
-    planned_id = next((item["id"] for item in ENGINE_CATALOG if item["status"] == "planned"), None)
-    suite = {"results": [
-        {"engine_id": item["id"], "runtime": {"status": "computed", "method": "fixture"}}
-        for item in ENGINE_CATALOG
-    ]}
-    readiness = build_engine_readiness(suite)
-    by_id = {item["id"]: item for item in readiness["engines"]}
-    assert by_id[partial_id]["status"] == "partial"
-    assert by_id[partial_id]["activation_eligible"] is False
-    if planned_id:
-        assert by_id[planned_id]["status"] == "planned"
-        assert by_id[planned_id]["activation_eligible"] is False
+def test_all_four_statuses_require_distinct_evidence():
+    partial = next(item for item in ENGINE_CATALOG if item["status"] == "partial")
+    overrides = {
+        "E001": _evidence("E001"),
+        partial["id"]: _evidence(partial["id"]),
+    }
+    suite = _suite(overrides)
+    result = _readiness(suite)
+    by_id = {item["id"]: item for item in result["engines"]}
+
+    assert by_id["E001"]["status"] == "ACTIVE"
+    assert by_id["E001"]["activation_eligible"] is True
+    assert by_id["E001"]["source_evidence"]["health_ok"] is True
+    assert by_id[partial["id"]]["status"] == "PARTIAL"
+    assert by_id[partial["id"]]["activation_eligible"] is False
+    assert by_id["E002"]["status"] == "BLOCKED"
+    assert by_id["E001"]["last_checked_at"] == CHECKED_AT
+    assert result["counts"]["ACTIVE"] + result["counts"]["PARTIAL"] + result["counts"]["BLOCKED"] + result["counts"]["PLANNED"] == 156
+    assert result["live_trading_enabled"] is False
 
 
-def test_missing_runtime_result_cannot_be_counted_as_implemented():
-    suite = {"results": []}
-    readiness = build_engine_readiness(suite)
-    assert readiness["counts"]["implemented"] == 0
-    assert readiness["counts"]["partial"] > 0
-    assert all(not item["activation_eligible"] for item in readiness["engines"])
+def test_stale_source_missing_adapter_or_missing_inputs_cannot_activate():
+    invalid_cases = [
+        (_evidence("E001"), {"provider": "Bybit", "source_timestamp": CHECKED_AT,
+                             "freshness_status": "stale_or_unknown", "frequency": "intraday"},
+         {"market_data": {"status": "stale"}}),
+        (_evidence("E001", adapter=False), None, None),
+        (_evidence("E001", inputs=False), None, None),
+    ]
+    for evidence, snapshot, health in invalid_cases:
+        readiness = _readiness(_suite({"E001": evidence}), snapshot=snapshot, health=health)
+        item = next(row for row in readiness["engines"] if row["id"] == "E001")
+        assert item["status"] != "ACTIVE"
+        assert item["activation_eligible"] is False
+
+
+def test_declared_planned_engine_stays_planned_after_smoke_test(monkeypatch):
+    catalog = deepcopy(readiness_module.ENGINE_CATALOG)
+    catalog[0]["status"] = "planned"
+    monkeypatch.setattr(readiness_module, "ENGINE_CATALOG", catalog)
+    result = _readiness(_suite({"E001": _evidence("E001")}))
+    item = next(row for row in result["engines"] if row["id"] == "E001")
+    assert item["status"] == "PLANNED"
+    assert item["activation_eligible"] is False
+
+
+def test_every_engine_has_adapter_test_source_and_last_check_evidence():
+    result = _readiness(_suite({"E001": _evidence("E001")}))
+    assert len(result["engines"]) == 156
+    for item in result["engines"]:
+        assert "adapter_evidence" in item
+        assert "input_evidence" in item
+        assert "source_evidence" in item
+        assert "test_result" in item
+        assert "last_checked_at" in item
+        assert item["status"] in {"ACTIVE", "PARTIAL", "BLOCKED", "PLANNED"}

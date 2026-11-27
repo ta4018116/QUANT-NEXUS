@@ -2155,16 +2155,20 @@ ENGINE_CATALOG = [
   }
 ]
 
-def engine_catalog() -> dict:
+def engine_catalog(readiness: dict | None = None) -> dict:
+    """Return declarations, or join them to request-time readiness evidence."""
     engines = [dict(item, capabilities=list(item.get("capabilities", [])),
                     gaps=list(item.get("gaps", []))) for item in ENGINE_CATALOG]
     statuses = ("implemented", "partial", "planned")
-    counts = {status: sum(1 for item in engines if item["status"] == status)
-              for status in statuses}
+    counts = {status: sum(1 for item in engines if item["status"] == status) for status in statuses}
+    if readiness:
+        dynamic = {item["id"]: item for item in readiness.get("engines", [])}
+        engines = [dict(item, **dynamic.get(item["id"], {})) for item in engines]
+        counts = dict(readiness.get("counts", {}))
     groups = sorted({item["group"] for item in engines})
     group_counts = {group: sum(1 for item in engines if item["group"] == group) for group in groups}
     return {"name":"QUANT NEXUS","catalog_version":"1.9.0","total":len(engines),
             "counts":counts,"group_counts":group_counts,"engines":engines,
             "priority":"early_opportunity_detection","trading_mode":"simulation",
             "live_trading_enabled":False,"execution_capability":"paper_only",
-            "disclaimer":"Partial entries use explicit proxies and still have listed gaps. Planned entries cannot generate market signals."}
+            "disclaimer":"Statuses are request-time evidence when readiness is supplied. Catalogue declarations and documented limitations remain visible."}
