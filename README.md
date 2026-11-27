@@ -131,6 +131,7 @@ The engine-suite endpoint now attempts read-only public enrichment on each analy
 - Spot-versus-linear prices are sampled to feed basis analysis.
 - Public Cointelegraph and CoinDesk RSS headlines are passed to a keyword-triage adapter. This is not fact-checking, and feeds can be unavailable.
 - Public Deribit option summaries are used for BTC and ETH only. Greeks/IV are research analytics; dealer-side positioning is not supplied, so net dealer gamma remains unavailable.
+- The Twelve Data bridge is exposed at /api/multi-market-engine-suite?market=forex|stocks|indices|commodities&symbol=... and requires TWELVE_DATA_API_KEY to be set as a Render environment variable (never place it in frontend code or chat). It requests time-series OHLCV and returns explicit HTTP 503 until that key is configured.
 - Liquidation prints are cached in process memory only while a client is connected to the public liquidation stream. This is not a complete historical liquidation feed.
 
 The provider_health field in the engine-suite response reports each integration's availability. A missing or unsupported source remains explicitly blocked. No source credentials are needed for the public feeds above. Forex, equities, indices and commodities still require a configured dedicated provider such as Twelve Data. No API key has been invented or inserted.
