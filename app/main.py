@@ -190,18 +190,20 @@ async def get_derivatives_snapshot(symbol: str) -> dict:
         summary = summarize_derivatives(
             oi_result.get("list", []), funding_result.get("list", [])
         )
-        ratio_rows = ratio_result.get("list", []) if isinstance(ratio_result, dict) else []
-        ratio = None
-        if ratio_rows:
-            buy_ratio = safe_float(ratio_rows[0].get("buyRatio"))
-            sell_ratio = safe_float(ratio_rows[0].get("sellRatio"))
-            ratio = buy_ratio / sell_ratio if sell_ratio > 0 else None
-        return {
-            **summary, "long_short_ratio": ratio, "provider": "Bybit",
-            "data_quality": "provider_snapshot",
-        }
-
-    logger.warning("Bybit derivatives unavailable for %s; falling back to Binance", symbol)
+        if summary.get("open_interest") is not None and summary.get("funding_rate") is not None:
+            ratio_rows = ratio_result.get("list", []) if isinstance(ratio_result, dict) else []
+            ratio = None
+            if ratio_rows:
+                buy_ratio = safe_float(ratio_rows[0].get("buyRatio"))
+                sell_ratio = safe_float(ratio_rows[0].get("sellRatio"))
+                ratio = buy_ratio / sell_ratio if sell_ratio > 0 else None
+            return {
+                **summary, "long_short_ratio": ratio, "provider": "Bybit",
+                "data_quality": "provider_snapshot",
+            }
+        logger.warning("Bybit derivatives returned incomplete data for %s; falling back to Binance", symbol)
+    else:
+        logger.warning("Bybit derivatives unavailable for %s; falling back to Binance", symbol)
     binance_calls = await asyncio.gather(
         _binance_get("linear", "/fapi/v1/openInterest", {"symbol": symbol}),
         _binance_get("linear", "/futures/data/openInterestHist", {
