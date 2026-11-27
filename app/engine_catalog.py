@@ -1032,12 +1032,14 @@ ENGINE_CATALOG = [
     "name": "Take Profit",
     "name_ar": "محرك Take Profit",
     "group": "Opportunity Scoring",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "حساب أهداف مرجعية متعددة من نسبة العائد إلى المخاطرة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "أهداف حسابية لا تمثل أوامر جني أرباح"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E078",
@@ -1114,12 +1116,14 @@ ENGINE_CATALOG = [
     "name": "Signal Expiration",
     "name_ar": "محرك Signal Expiration",
     "group": "Opportunity Scoring",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تحديد انتهاء صلاحية الإشارة من عمرها ووقت UTC"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب وقت إنشاء الإشارة والوقت الحالي من مصدر موثوق"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E084",
@@ -1882,12 +1886,14 @@ ENGINE_CATALOG = [
     "name": "Autonomous Research",
     "name_ar": "محرك Autonomous Research",
     "group": "Multi-Agent Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "فرز مرشحي البحث حسب نتائج التحقق خارج العينة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا ينشر أو يرقّي استراتيجية تلقائياً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E141",
@@ -1906,12 +1912,14 @@ ENGINE_CATALOG = [
     "name": "Event Bus",
     "name_ar": "محرك Event Bus",
     "group": "Infrastructure",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "فحص عدادات نشر واستهلاك الأحداث وتقدير التراكم"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب عدادات Event Bus من الخدمة المشغلة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E143",
@@ -2014,36 +2022,42 @@ ENGINE_CATALOG = [
     "name": "Audit Log",
     "name_ar": "محرك Audit Log",
     "group": "Infrastructure",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "فحص سلامة معرفات سجلات التدقيق وتكرارها"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب سجلات أحداث دائمة ومتكاملة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E152",
     "name": "Model Registry",
     "name_ar": "محرك Model Registry",
     "group": "Infrastructure",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "عرض بيانات إصدارات النماذج المسجلة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يحمل ملفات النماذج أو ينشرها"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E153",
     "name": "Data Replay",
     "name_ar": "محرك Data Replay",
     "group": "Infrastructure",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "ترتيب أحداث إعادة التشغيل التاريخي حسب الطابع الزمني"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب أحداثاً مخزنة مسبقاً ولا يسحب بيانات المنصات"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E154",
@@ -2062,24 +2076,28 @@ ENGINE_CATALOG = [
     "name": "Resource Manager",
     "name_ar": "محرك Resource Manager",
     "group": "Infrastructure",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "فحص ضغط CPU والذاكرة من لقطة موارد التشغيل"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب قياسات من بيئة الاستضافة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E156",
     "name": "Watchdog",
     "name_ar": "محرك Watchdog",
     "group": "Infrastructure",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "كشف الخدمات التي تجاوزت عمر نبضة الحياة المحدد"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "تنبيه مراقبة فقط ولا يعيد تشغيل الخدمة تلقائياً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   }
 ]
 
@@ -2091,7 +2109,7 @@ def engine_catalog() -> dict:
               for status in statuses}
     groups = sorted({item["group"] for item in engines})
     group_counts = {group: sum(1 for item in engines if item["group"] == group) for group in groups}
-    return {"name":"QUANT NEXUS","catalog_version":"1.3.0","total":len(engines),
+    return {"name":"QUANT NEXUS","catalog_version":"1.4.0","total":len(engines),
             "counts":counts,"group_counts":group_counts,"engines":engines,
             "priority":"early_opportunity_detection","trading_mode":"simulation",
             "live_trading_enabled":False,"execution_capability":"paper_only",
