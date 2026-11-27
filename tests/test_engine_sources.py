@@ -29,7 +29,7 @@ def test_sensitive_engines_have_specific_sources_and_limits():
     assert "CoinGlass /api/futures/liquidation/map" in by_id["E063"]["endpoints"]
     assert "CoinGlass /api/futures/liquidation/orders" in by_id["E064"]["endpoints"]
     assert "Deribit public API for BTC and ETH" in by_id["E069"]["providers"]
-    assert "Net dealer gamma must remain unavailable" in by_id["E071"]["limits"]
+    assert "Net dealer gamma must remain unavailable" in by_id["E071"]["limitations"]
     assert by_id["E142"]["source_class"] == "sqlite_local_event_log_bus"
     assert by_id["E145"]["source_class"] == "websocket_stream_runtime"
     assert by_id["E150"]["source_class"] == "notification_delivery_transport"
@@ -49,6 +49,6 @@ def test_knowledge_memory_and_audit_log_are_not_overstated():
     registry = engine_source_registry()
     by_id = {item["engine_id"]: item for item in registry["engines"]}
     assert by_id["E138"]["source_class"] == "sqlite_opportunity_event_history"
-    assert "restart durability depends on a mounted persistent volume" in by_id["E138"]["limits"]
+    assert "restart durability depends on a mounted persistent volume" in by_id["E138"]["limitations"]
     assert by_id["E151"]["source_class"] == "append_only_runtime_audit_events"
-    assert "every paper-trade mutation and security administration action is not yet covered" in by_id["E151"]["limits"]
+    assert "every paper-trade mutation and security administration action is not yet covered" in by_id["E151"]["limitations"]
