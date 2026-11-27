@@ -259,10 +259,13 @@ def provider_configuration() -> dict:
             "okx": {"status": "public_feed_configured", "auth_required": False, "markets": ["crypto spot", "swaps"]},
             "deribit": {"status": "public_feed_configured", "auth_required": False, "markets": ["BTC options", "ETH options"]},
             "gdelt": {"status": "public_feed_configured", "auth_required": False, "rate_limited": True, "cache_seconds": 300},
+            "public_rss": {"status": "public_feed_configured", "auth_required": False, "feeds": ["Cointelegraph", "CoinDesk"]},
+            "stooq": {"status": "public_feed_available", "auth_required": False, "markets": ["stocks", "indices", "commodities"], "frequency": "daily", "symbol_coverage_varies": True},
+            "frankfurter": {"status": "public_feed_available", "auth_required": False, "markets": ["forex"], "frequency": "daily_reference_rates", "not_executable_quotes": True},
             "cryptopanic": {"status": "configured" if cryptopanic else "credential_required", "auth_required": True},
             "coinglass_liquidations": {"status": "configured" if coinglass else "credential_required", "auth_required": True, "minimum_plan": "Hobbyist for aggregate 1h exchange totals"},
             "coinalyze_derivatives": {"status": "configured" if coinalyze else "credential_required", "auth_required": True, "markets": ["USDT perpetual open interest", "funding rates", "historical long/short ratio"], "rate_limit_per_minute": 40},
-            "twelve_data": {"status": "configured" if twelve else "credential_required", "auth_required": True, "markets": ["forex", "stocks", "indices", "commodities"]},
+            "twelve_data": {"status": "configured" if twelve else "optional_not_configured", "auth_required": True, "markets": ["forex", "stocks", "indices", "commodities"], "fallbacks": ["Frankfurter (daily FX reference rates)", "Stooq (daily OHLCV where symbol exists)"]},
         },
         "operations": {
             "telegram_delivery": "configured" if telegram else "credential_required",
@@ -273,7 +276,7 @@ def provider_configuration() -> dict:
         },
         "missing_environment": [
             name for name, enabled in (
-                ("TWELVE_DATA_API_KEY", twelve),
+                ("TWELVE_DATA_API_KEY (optional; Stooq/Frankfurter daily fallback available)", twelve),
                 ("COINGLASS_API_KEY", coinglass),
                 ("COINALYZE_API_KEY", coinalyze),
                 ("CRYPTOPANIC_API_TOKEN", cryptopanic),
