@@ -706,7 +706,7 @@ def _logistic_model(ctx):
     dataset,err=_ml_dataset(ctx)
     if err: return err
     split=max(40,int(len(dataset)*0.8))
-    train_raw,test_raw=dataset[:split],dataset[split:]
+    train_raw,test_raw=dataset[:max(40,split-3)],dataset[split:]
     train,test,means,scales=_standardize(train_raw,test_raw)
     width=len(train[0][0]); weights=[0.0]*width; bias=0.0
     lr=0.04; l2=0.015; epochs=260
@@ -785,7 +785,7 @@ def _random_forest(ctx):
     dataset,err=_ml_dataset(ctx)
     if err: return err
     split=max(40,int(len(dataset)*0.8))
-    train,test,_,_=_standardize(dataset[:split],dataset[split:])
+    train,test,_,_=_standardize(dataset[:max(40,split-3)],dataset[split:])
     rng=random.Random(20261127)
     trees=[]
     for i in range(21):
@@ -1758,7 +1758,7 @@ def _deep_learning_mlp(ctx):
     dataset,err=_ml_dataset(ctx)
     if err:return err
     split=max(40,int(len(dataset)*0.8))
-    train,test,means,scales=_standardize(dataset[:split],dataset[split:])
+    train,test,means,scales=_standardize(dataset[:max(40,split-3)],dataset[split:])
     rng=random.Random(20261127)
     inputs=len(train[0][0]);h1=8;h2=4
     w1=[[rng.gauss(0,0.12) for _ in range(inputs)] for _ in range(h1)]
@@ -1820,7 +1820,7 @@ def _rl_agent(ctx):
         if current<=0:continue
         transitions.append((state_at(i),state_at(i+1),(future/current-1)*100))
     if len(transitions)<40:return _blocked("insufficient chronological reinforcement-learning transitions",["at_least_40_transitions"])
-    split=max(30,int(len(transitions)*0.8));training=transitions[:split];testing=transitions[split:]
+    split=max(30,int(len(transitions)*0.8));training=transitions[:max(30,split-1)];testing=transitions[split:]
     actions=("LONG","SHORT","FLAT")
     q={};rng=random.Random(20261127);alpha=0.08;gamma=0.85
     for episode in range(35):
@@ -1895,7 +1895,7 @@ def _xgboost_classifier(ctx):
     dataset,err=_ml_dataset(ctx)
     if err:return err
     split=max(40,int(len(dataset)*0.8))
-    train_raw,test_raw=dataset[:split],dataset[split:]
+    train_raw,test_raw=dataset[:max(40,split-3)],dataset[split:]
     train,test,means,scales=_standardize(train_raw,test_raw)
     features=[x[0] for x in train];labels=[x[1] for x in train]
     positive=sum(labels)/len(labels)
