@@ -50,7 +50,7 @@ def test_engine_suite_receives_confirmation_risk_and_mark_context(monkeypatch):
     assert captured["symbol"] == "BTCUSDT"
     assert captured["current_prices"]["BTCUSDT"] > 0
     assert captured["entry_confirmation"]["state"] in {
-        "WAITING", "CONFIRMED", "REJECTED"
+        "WAITING", "APPROACH", "CONFIRMED"
     }
     assert captured["risk_checks"]["visible_orderbook_available"] is True
     assert captured["risk_checks"]["recent_trade_flow_available"] is True
