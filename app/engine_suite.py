@@ -1424,6 +1424,215 @@ def _event_bus(ctx):
 
 # Each catalogue engine is routable. Similar engines share audited mathematical primitives,
 # while model- and provider-dependent engines remain explicitly blocked when inputs are absent.
+
+def _liquidation_heatmap(ctx):
+    events=ctx.get("liquidations")
+    if not isinstance(events,list):return _blocked("normalized liquidation trades required",["liquidations"])
+    valid=[x for x in events if isinstance(x,dict) and _num(x.get("price"))>0 and _num(x.get("notional_usdt"))>0]
+    if not valid:return _blocked("no valid liquidation price/notional records",["liquidations[].price","liquidations[].notional_usdt"])
+    bins=max(5,min(40,int(_num(ctx.get("price_bins"),12))))
+    lo=min(_num(x["price"]) for x in valid);hi=max(_num(x["price"]) for x in valid)
+    if hi<=lo:
+        return _ready({"levels":[{"price":lo,"notional_usdt":sum(_num(x["notional_usdt"]) for x in valid),"events":len(valid)}]},
+                      "single-price liquidation aggregation")
+    step=(hi-lo)/bins;levels=[{"notional_usdt":0.0,"events":0} for _ in range(bins)]
+    for event in valid:
+        idx=min(bins-1,max(0,int((_num(event["price"])-lo)/step)))
+        levels[idx]["notional_usdt"]+=_num(event["notional_usdt"]);levels[idx]["events"]+=1
+    for i,item in enumerate(levels):
+        item["price_center"]=lo+(i+0.5)*step
+    return _ready({"levels":[x for x in levels if x["events"]],"event_count":len(valid),
+                   "total_notional_usdt":sum(x["notional_usdt"] for x in valid),
+                   "warning":"Observed liquidation prints only; this is not a prediction of future liquidation levels."},
+                  "price-bucket aggregation of supplied executed liquidation events")
+
+
+def _strategy_optimizer(ctx):
+    candidates=ctx.get("strategy_candidates")
+    if not isinstance(candidates,list) or not candidates:return _blocked("strategy candidates with validation metrics required",["strategy_candidates"])
+    clean=[]
+    for item in candidates:
+        if not isinstance(item,dict):continue
+        trades=int(_num(item.get("validation_trades")))
+        ret=_num(item.get("validation_return"));dd=_num(item.get("validation_drawdown"),100)
+        if trades<30 or dd>=20:continue
+        clean.append({"name":str(item.get("name","unnamed")),"validation_return":ret,
+                      "validation_drawdown":dd,"validation_trades":trades,
+                      "parameters":item.get("parameters",{})})
+    ranked=sorted(clean,key=lambda x:(x["validation_return"],-x["validation_drawdown"]),reverse=True)
+    return _ready({"ranked_candidates":ranked,"selected_for_manual_review":ranked[0] if ranked else None,
+                   "automatic_deployment":False,"minimum_validation_trades":30,"maximum_drawdown_pct":20},
+                  "ranking of externally evaluated validation results; never auto-deploys")
+
+
+def _parameter_optimizer(ctx):
+    grid=ctx.get("parameter_trials")
+    if not isinstance(grid,list) or not grid:return _blocked("parameter trial results required",["parameter_trials"])
+    valid=[]
+    for item in grid:
+        if not isinstance(item,dict):continue
+        trades=int(_num(item.get("validation_trades")))
+        score=_num(item.get("validation_score"),float("-inf"))
+        if trades>=30 and isfinite(score):
+            valid.append({"parameters":item.get("parameters",{}),"validation_score":score,
+                          "validation_trades":trades,"max_drawdown_pct":_num(item.get("max_drawdown_pct"),100)})
+    valid.sort(key=lambda x:x["validation_score"],reverse=True)
+    return _ready({"best_trial":valid[0] if valid else None,"eligible_trials":len(valid),
+                   "trials_received":len(grid),"selection":"validation score with minimum sample guard"},
+                  "chooses among completed external parameter trials; does not search or deploy by itself")
+
+
+def _win_rate(ctx):
+    trades=ctx.get("closed_trades")
+    if not isinstance(trades,list):return _blocked("closed trade history required",["closed_trades"])
+    pnls=[_num(x.get("pnl")) for x in trades if isinstance(x,dict) and x.get("status","CLOSED")=="CLOSED"]
+    return _ready({"trade_count":len(pnls),"wins":sum(x>0 for x in pnls),
+                   "losses":sum(x<0 for x in pnls),"breakeven":sum(x==0 for x in pnls),
+                   "win_rate_pct":sum(x>0 for x in pnls)/len(pnls)*100 if pnls else None},
+                  "realized closed-paper-trade PnL; excludes open positions")
+
+
+def _profit_factor(ctx):
+    trades=ctx.get("closed_trades")
+    if not isinstance(trades,list):return _blocked("closed trade history required",["closed_trades"])
+    pnls=[_num(x.get("pnl")) for x in trades if isinstance(x,dict) and x.get("status","CLOSED")=="CLOSED"]
+    gross_win=sum(x for x in pnls if x>0);gross_loss=abs(sum(x for x in pnls if x<0))
+    return _ready({"gross_profit":gross_win,"gross_loss":gross_loss,
+                   "profit_factor":gross_win/gross_loss if gross_loss else None,
+                   "trade_count":len(pnls)},"realized paper PnL ratio; undefined when no losses")
+
+
+def _expectancy(ctx):
+    trades=ctx.get("closed_trades")
+    if not isinstance(trades,list):return _blocked("closed trade history required",["closed_trades"])
+    pnls=[_num(x.get("pnl")) for x in trades if isinstance(x,dict) and x.get("status","CLOSED")=="CLOSED"]
+    if not pnls:return _blocked("no closed trades available",["at_least_1_closed_trade"])
+    return _ready({"expectancy_per_trade":mean(pnls),"trade_count":len(pnls),
+                   "gross_win_mean":mean([x for x in pnls if x>0]) if any(x>0 for x in pnls) else 0,
+                   "gross_loss_mean":mean([x for x in pnls if x<0]) if any(x<0 for x in pnls) else 0},
+                  "arithmetic average of realized net paper PnL per closed trade")
+
+
+def _continuous_learning(ctx):
+    baseline=ctx.get("baseline_metrics");recent=ctx.get("recent_metrics")
+    labeled=int(_num(ctx.get("new_labeled_samples")))
+    drift=_model_drift(ctx)
+    if drift.get("status")!="computed":return drift
+    threshold=max(30,int(_num(ctx.get("minimum_new_samples"),100)))
+    ready=labeled>=threshold or drift["value"]["drift_detected"]
+    return _ready({"new_labeled_samples":labeled,"minimum_new_samples":threshold,
+                   "drift_detected":drift["value"]["drift_detected"],
+                   "retraining_candidate":ready,"automatic_retraining":False,
+                   "requires_out_of_sample_validation":True},
+                  "retraining readiness gate; no background trainer or autonomous model replacement")
+
+
+def _trade_recovery(ctx):
+    positions=ctx.get("positions")
+    if not isinstance(positions,list):return _blocked("paper position ledger required",["positions"])
+    findings=[]
+    for position in positions:
+        if not isinstance(position,dict) or position.get("status")!="OPEN":continue
+        issues=[]
+        if _num(position.get("entry"))<=0:issues.append("MISSING_OR_INVALID_ENTRY")
+        if _num(position.get("quantity"))<=0:issues.append("MISSING_OR_INVALID_QUANTITY")
+        if _num(position.get("stop_loss",position.get("stopLoss")))<=0:issues.append("MISSING_STOP")
+        if not position.get("id"):issues.append("MISSING_POSITION_ID")
+        if issues:findings.append({"symbol":position.get("symbol"),"position_id":position.get("id"),"issues":issues})
+    return _ready({"positions_checked":sum(1 for x in positions if isinstance(x,dict) and x.get("status")=="OPEN"),
+                   "recovery_findings":findings,"requires_operator_review":bool(findings),
+                   "mutated_ledger":False},
+                  "read-only paper ledger integrity scan; never fabricates fills or silently repairs state")
+
+
+def _ai_prediction(ctx):
+    logistic=_logistic_model(ctx);forest=_random_forest(ctx);forecast=_forecast(ctx)
+    outputs=[]
+    if logistic.get("status")=="computed":
+        outputs.append({"model":"logistic","up_score":logistic["value"]["research_probability_up"]})
+    if forest.get("status")=="computed":
+        outputs.append({"model":"forest","up_score":forest["value"]["research_vote_fraction_up"]})
+    if not outputs:return _blocked("no model produced a research score",["historical_ohlcv"])
+    score=mean(x["up_score"] for x in outputs)
+    direction="UP_BIAS" if score>=0.55 else "DOWN_BIAS" if score<=0.45 else "UNCERTAIN"
+    return _ready({"directional_bias":direction,"research_score_up":round(score,5),
+                   "models":outputs,"naive_forecast":forecast.get("value") if forecast.get("status")=="computed" else None,
+                   "probability_calibrated":False},
+                  "ensemble of current-window research estimators; not a production prediction service")
+
+
+def _scheduler(ctx):
+    jobs=ctx.get("scheduled_jobs")
+    if not isinstance(jobs,list):return _blocked("scheduler job inventory required",["scheduled_jobs"])
+    valid=[]
+    for job in jobs:
+        if not isinstance(job,dict):continue
+        interval=_num(job.get("interval_seconds"))
+        valid.append({"name":str(job.get("name","unnamed")),"enabled":job.get("enabled") is True,
+                      "interval_seconds":interval,"valid_interval":interval>=1})
+    return _ready({"jobs":valid,"enabled_jobs":sum(x["enabled"] and x["valid_interval"] for x in valid),
+                   "scheduler_backend_configured":ctx.get("scheduler_backend_configured") is True},
+                  "read-only scheduler inventory; no background scheduler is started by this adapter")
+
+
+def _component_health(ctx, key):
+    value=ctx.get(key)
+    if not isinstance(value,dict):return _blocked(f"{key} health snapshot required",[key])
+    return _ready({"component":key,"health":value,
+                   "healthy":str(value.get("status","")).lower() in ("ok","healthy","up")},
+                  f"read-only {key} health metadata")
+
+
+def _cache(ctx):return _component_health(ctx,"cache")
+def _database(ctx):return _component_health(ctx,"database")
+def _websocket(ctx):return _component_health(ctx,"websocket")
+
+
+def _error_recovery(ctx):
+    failures=ctx.get("recent_failures")
+    if not isinstance(failures,list):return _blocked("recent service failure records required",["recent_failures"])
+    output=[]
+    for failure in failures:
+        if not isinstance(failure,dict):continue
+        code=str(failure.get("error_code","UNKNOWN"))
+        retryable=code in ("TIMEOUT","RATE_LIMIT","CONNECTION_RESET","HTTP_5XX")
+        output.append({"service":failure.get("service"),"error_code":code,"retryable":retryable,
+                       "recommended_action":"BOUNDED_RETRY_WITH_BACKOFF" if retryable else "MANUAL_REVIEW"})
+    return _ready({"failures":output,"retryable_count":sum(x["retryable"] for x in output)},
+                  "failure classification only; retries are owned by provider client policies")
+
+
+def _notification(ctx):
+    events=ctx.get("notification_events")
+    if not isinstance(events,list):return _blocked("notification event records required",["notification_events"])
+    messages=[]
+    for event in events:
+        if not isinstance(event,dict):continue
+        kind=str(event.get("type","INFO")).upper()
+        if kind not in ("OPPORTUNITY","RISK","TARGET","STOP","SYSTEM"):kind="INFO"
+        messages.append({"type":kind,"title":str(event.get("title","QUANT NEXUS"))[:100],
+                         "message":str(event.get("message",""))[:500],
+                         "dedupe_key":event.get("dedupe_key")})
+    return _ready({"notification_intents":messages,"count":len(messages),
+                   "delivery_performed":False},
+                  "validated notification outbox intents; delivery is handled by configured notification transport")
+
+
+def _security(ctx):
+    policy=ctx.get("security_policy")
+    if not isinstance(policy,dict):return _blocked("runtime security policy snapshot required",["security_policy"])
+    checks={
+      "paper_only":policy.get("live_trading_enabled") is False and policy.get("trading_mode")=="simulation",
+      "no_exchange_trade_credentials":policy.get("exchange_trade_credentials_present") is False,
+      "https_required":policy.get("https_enabled") is True,
+      "secret_redaction":policy.get("secrets_redacted") is True,
+      "admin_auth":policy.get("admin_auth_enabled") is True,
+    }
+    failed=[k for k,v in checks.items() if not v]
+    return _ready({"checks":checks,"failed_checks":failed,"secure":not failed},
+                  "fail-closed inspection of supplied deployment security flags; does not inspect secret values")
+
+
 _HANDLER_IDS = {
     "E005":_base, "E006":_base, "E008":_external,
     "E009":_trend, "E011":_support_resistance, "E012":_accumulation,
