@@ -266,6 +266,8 @@ def provider_configuration() -> dict:
             "telegram_delivery": "configured" if telegram else "credential_required",
             "generic_webhook_delivery": "configured" if webhook else "credential_required",
             "durable_sqlite_volume": "configured" if durable_db else "not_verified",
+            "event_store": "sqlite_append_only_event_log",
+            "event_store_durable": os.getenv("ENGINE_EVENT_STORAGE_DURABLE", os.getenv("PAPER_STORAGE_DURABLE", "false")).lower() == "true",
         },
         "missing_environment": [
             name for name, enabled in (
