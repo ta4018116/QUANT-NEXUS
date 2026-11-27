@@ -443,6 +443,194 @@ _HANDLER_IDS = {
 }
 
 
+
+def _vwap(ctx):
+    rows, err = _base(ctx, 10)
+    if err: return err
+    denom=sum(x["volume"] for x in rows[-50:])
+    if denom<=0: return _blocked("volume unavailable for VWAP",["positive_volume"])
+    value=sum(((x["high"]+x["low"]+x["close"])/3)*x["volume"] for x in rows[-50:])/denom
+    return _ready({"vwap_50":value,"last_close":rows[-1]["close"],"above_vwap":rows[-1]["close"]>value},
+                  "50-bar typical-price volume weighted average")
+
+
+def _market_structure(ctx):
+    rows, err = _base(ctx, 20)
+    if err: return err
+    highs=[x["high"] for x in rows]; lows=[x["low"] for x in rows]
+    swings_h=[]; swings_l=[]; p=3
+    for i in range(p,len(rows)-p):
+        if highs[i]>=max(highs[i-p:i+p+1]) and highs[i]>max(highs[i-p:i]+highs[i+1:i+p+1]): swings_h.append((i,highs[i]))
+        if lows[i]<=min(lows[i-p:i+p+1]) and lows[i]<min(lows[i-p:i]+lows[i+1:i+p+1]): swings_l.append((i,lows[i]))
+    trend="UNKNOWN"
+    if len(swings_h)>=2 and len(swings_l)>=2:
+        up=swings_h[-1][1]>swings_h[-2][1] and swings_l[-1][1]>swings_l[-2][1]
+        down=swings_h[-1][1]<swings_h[-2][1] and swings_l[-1][1]<swings_l[-2][1]
+        trend="UPTREND" if up else "DOWNTREND" if down else "MIXED"
+    last=rows[-1]["close"]
+    bos="BULLISH" if swings_h and last>swings_h[-1][1] else "BEARISH" if swings_l and last<swings_l[-1][1] else "NONE"
+    return _ready({"trend":trend,"break_of_structure":bos,
+                   "last_swing_high":swings_h[-1][1] if swings_h else None,
+                   "last_swing_low":swings_l[-1][1] if swings_l else None},
+                  "confirmed 3-bar fractal pivots on completed candles")
+
+
+def _cross_market_correlation(ctx):
+    related=ctx.get("related_closes")
+    base=[_num(x) for x in ctx.get("closes",[])]
+    if not isinstance(related,dict) or len(base)<3:
+        return _blocked("aligned close series for related markets required",["closes","related_closes"])
+    base_r=[base[i]/base[i-1]-1 for i in range(1,len(base)) if base[i-1]>0]
+    results={}
+    for symbol, values in related.items():
+        v=[_num(x) for x in values]
+        r=[v[i]/v[i-1]-1 for i in range(1,len(v)) if v[i-1]>0]
+        n=min(len(base_r),len(r))
+        if n<3: results[str(symbol)]={"status":"insufficient_samples"}; continue
+        a=base_r[-n:]; b=r[-n:]; ma=mean(a); mb=mean(b)
+        da=[x-ma for x in a]; db=[x-mb for x in b]
+        den=sqrt(sum(x*x for x in da)*sum(x*x for x in db))
+        results[str(symbol)]={"correlation":sum(x*y for x,y in zip(da,db))/den if den else None,"samples":n}
+    return _ready(results,"Pearson correlation of aligned close-to-close returns")
+
+
+def _supply_demand(ctx):
+    result=_support_resistance(ctx)
+    if result.get("status")!="computed": return result
+    rows=_candles(ctx); window=rows[-50:]
+    low_zone=result["value"]["support_zone"]; high_zone=result["value"]["resistance_zone"]
+    last=rows[-1]["close"]
+    return _ready({"demand_zone":low_zone,"supply_zone":high_zone,
+                   "near_demand":low_zone[0]<=last<=low_zone[1],
+                   "near_supply":high_zone[0]<=last<=high_zone[1]},
+                  "rolling support/resistance as demand/supply proxy; no resting-order claim")
+
+
+def _order_block(ctx):
+    rows, err = _base(ctx, 8)
+    if err: return err
+    candidates=[]
+    for i in range(max(1,len(rows)-30),len(rows)-1):
+        prev, nxt=rows[i-1],rows[i]
+        if prev["close"]<prev["open"] and nxt["close"]>prev["high"]:
+            candidates.append({"side":"BULLISH","low":prev["low"],"high":prev["open"],"bar_index":i-1})
+        if prev["close"]>prev["open"] and nxt["close"]<prev["low"]:
+            candidates.append({"side":"BEARISH","low":prev["open"],"high":prev["high"],"bar_index":i-1})
+    return _ready({"candidates":candidates[-5:],"count":len(candidates)},
+                  "last opposite candle before a close beyond its full range; heuristic zone")
+
+
+def _long_short(ctx):
+    data=ctx.get("derivatives") or {}
+    ratio=_num(data.get("long_short_ratio"),-1)
+    if ratio<=0: return _blocked("verified long/short ratio feed required",["derivatives.long_short_ratio"])
+    return _ready({"long_short_ratio":ratio,"crowded":"LONG" if ratio>1.5 else "SHORT" if ratio<0.67 else "BALANCED"},
+                  "provider-reported long/short ratio; population scope must be checked")
+
+
+def _liquidation_tracker(ctx):
+    events=ctx.get("liquidations")
+    if not isinstance(events,list): return _blocked("normalized liquidation events required",["liquidations"])
+    valid=[x for x in events if isinstance(x,dict) and _num(x.get("notional_usdt"))>0]
+    return _ready({"event_count":len(valid),"long_notional":sum(_num(x.get("notional_usdt")) for x in valid if x.get("liquidated_position")=="LONG"),
+                   "short_notional":sum(_num(x.get("notional_usdt")) for x in valid if x.get("liquidated_position")=="SHORT")},
+                  "executed public liquidation prints only; not a liquidation-risk heatmap")
+
+
+def _basis(ctx):
+    spot=_num(ctx.get("spot_price")); future=_num(ctx.get("futures_price"))
+    if spot<=0 or future<=0: return _blocked("synchronized spot and futures marks required",["spot_price","futures_price"])
+    return _ready({"basis":future-spot,"basis_pct":(future/spot-1)*100},
+                  "synchronized spot-versus-futures mark comparison")
+
+
+def _arbitrage(ctx):
+    prices=ctx.get("exchange_prices")
+    if not isinstance(prices,dict) or len(prices)<2: return _blocked("two or more synchronized venue marks required",["exchange_prices"])
+    fee=_num(ctx.get("round_trip_fee_pct")); slip=_num(ctx.get("round_trip_slippage_pct"))
+    clean={str(k):_num(v) for k,v in prices.items() if _num(v)>0}
+    if len(clean)<2: return _blocked("insufficient valid venue marks",["positive_exchange_prices"])
+    buy=min(clean,key=clean.get); sell=max(clean,key=clean.get)
+    gross=(clean[sell]/clean[buy]-1)*100
+    net=gross-fee-slip
+    return _ready({"buy_venue":buy,"sell_venue":sell,"gross_spread_pct":gross,
+                   "estimated_net_spread_pct":net,"positive_after_costs":net>0},
+                  "synchronized supplied marks less supplied fees and slippage; excludes transfer and latency risk")
+
+
+def _opportunity(ctx):
+    result=early_opportunity_assessment(ctx)
+    if result.get("status")!="computed": return result
+    return _ready({k:result.get(k) for k in ("score","tier","reasons","missing_confirmations","breakout_confirmed","watch_entry_zone","invalidation_reference","targets_reference")},
+                  "pre-breakout confluence assessment; watch-only, no trade order")
+
+
+def _generic_score(ctx):
+    evidence=ctx.get("evidence_scores")
+    if not isinstance(evidence,dict) or not evidence: return _blocked("named engine evidence scores required",["evidence_scores"])
+    valid=[_clamp(_num(v)) for v in evidence.values() if v is not None]
+    if not valid: return _blocked("no valid evidence scores",["numeric evidence scores"])
+    return _ready({"confluence_score":round(mean(valid),2),"evidence_count":len(valid),"evidence":evidence},
+                  "unweighted mean of supplied subsystem scores; not win probability")
+
+
+def _timeframes(ctx):
+    frames=ctx.get("timeframes")
+    if not isinstance(frames,dict) or len(frames)<2: return _blocked("at least two timeframe analyses required",["timeframes"])
+    directions=[str(x.get("direction","NEUTRAL")).upper() for x in frames.values() if isinstance(x,dict)]
+    directional=[x for x in directions if x in ("UP","DOWN","LONG","SHORT")]
+    if not directional: return _blocked("timeframe direction values missing",["timeframes.*.direction"])
+    up=sum(x in ("UP","LONG") for x in directional); down=sum(x in ("DOWN","SHORT") for x in directional)
+    return _ready({"up_frames":up,"down_frames":down,"total_directional_frames":len(directional),
+                   "consensus":"UP" if up>down else "DOWN" if down>up else "MIXED",
+                   "agreement_pct":max(up,down)/len(directional)*100},
+                  "directional agreement across provided frame snapshots")
+
+
+def _paper_positions(ctx):
+    positions=ctx.get("positions")
+    if not isinstance(positions,list): return _blocked("paper position ledger required",["positions"])
+    active=[x for x in positions if isinstance(x,dict) and x.get("status")=="OPEN"]
+    return _ready({"active_count":len(active),"symbols":sorted({str(x.get("symbol","")) for x in active}),
+                   "trading_mode":"simulation"},"read-only paper-ledger inspection; no order submission")
+
+
+def _system_health(ctx):
+    health=ctx.get("system_health")
+    if not isinstance(health,dict): return _blocked("runtime health snapshot required",["system_health"])
+    return _ready({"services":health,"degraded":any(str(v).lower() not in ("ok","healthy","up") for v in health.values())},
+                  "read-only infrastructure health snapshot")
+
+
+_HANDLER_IDS.update({
+    "E001":_base,"E002":_orderbook,"E003":_orderbook,"E004":_compression,
+    "E007":_external,"E008":_cross_market_correlation,"E010":_market_structure,
+    "E018":_momentum,"E021":_vwap,"E025":_timeframes,"E033":_opportunity,
+    "E041":_opportunity,"E043":_arbitrage,"E062":_long_short,"E064":_liquidation_tracker,
+    "E065":_basis,"E066":_derivatives,"E072":_generic_score,"E073":_generic_score,
+    "E075":_risk,"E078":_generic_score,"E081":_generic_score,"E082":_generic_score,
+    "E083":_external,"E085":_generic_score,"E089":_portfolio,"E090":_portfolio,
+    "E093":_risk,"E094":_risk,"E097":_risk,"E099":_system_health,
+    "E101":_backtest,"E103":_paper_positions,"E104":_backtest,"E105":_backtest,
+    "E106":_backtest,"E107":_backtest,"E108":_backtest,"E110":_backtest,
+    "E111":_backtest,"E112":_backtest,"E113":_backtest,"E114":_backtest,
+    "E115":_backtest,"E118":_paper_positions,"E121":_paper_positions,
+    "E122":_paper_positions,"E123":_paper_positions,"E126":_agents,
+    "E127":_agents,"E129":_sweep,"E131":_trend,"E132":_external,
+    "E133":_risk,"E134":_agents,"E135":_agents,"E136":_agents,
+    "E137":_agents,"E138":_external,"E139":_agents,"E140":_agents,
+    "E141":_system_health,"E142":_system_health,"E143":_system_health,
+    "E144":_system_health,"E145":_system_health,"E146":_system_health,
+    "E147":_system_health,"E148":_system_health,"E149":_system_health,
+    "E150":_system_health,"E151":_system_health,"E152":_system_health,
+    "E153":_system_health,"E154":_system_health,"E155":_system_health,
+    "E156":_system_health,
+})
+# All remaining catalogue IDs still have a callable, fail-closed adapter.
+for _catalogue_item in ENGINE_CATALOG:
+    _HANDLER_IDS.setdefault(_catalogue_item["id"], _external)
+
+
 def run_engine(engine_id: str, context: dict) -> dict:
     item = next((x for x in ENGINE_CATALOG if x["id"] == engine_id), None)
     if item is None:
