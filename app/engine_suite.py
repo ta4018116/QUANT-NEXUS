@@ -2188,8 +2188,6 @@ _HANDLER_IDS.update({
     "E008":_cross_market_correlation,
     "E014":_order_block,
     "E046":_deep_learning_mlp,
-    "E047":_external,
-    "E048":_external,
     "E049":_rl_agent,
     "E050":_xgboost_classifier,
     "E063":_liquidation_heatmap,
