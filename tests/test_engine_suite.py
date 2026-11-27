@@ -318,3 +318,35 @@ def test_news_and_external_models_are_never_fabricated():
     from app.engine_suite import _news_events
     assert _news_events({})["status"] == "blocked_missing_input"
     assert run_engine("E047", {"candles":make_candles(180)})["runtime"]["status"] == "blocked_missing_input"
+
+
+def test_options_greeks_and_implied_volatility_are_numerically_consistent():
+    from app.engine_suite import _options_analytics, _implied_volatility_engine, _gamma_exposure
+    context = {
+        "underlying_price": 100,
+        "options_chain": [
+            {"symbol":"TEST-C100","type":"CALL","strike":100,"days_to_expiry":30,
+             "implied_volatility":0.25,"open_interest":1000,"contract_multiplier":1,
+             "dealer_position_sign":-1},
+            {"symbol":"TEST-P100","type":"PUT","strike":100,"days_to_expiry":30,
+             "implied_volatility":0.25,"open_interest":500,"contract_multiplier":1,
+             "dealer_position_sign":1},
+        ]
+    }
+    analytics = _options_analytics(context)
+    iv = _implied_volatility_engine(context)
+    gex = _gamma_exposure(context)
+    assert analytics["status"] == iv["status"] == gex["status"] == "computed"
+    assert analytics["value"]["count"] == 2
+    assert analytics["value"]["contracts"][0]["gamma"] > 0
+    assert 0 < iv["value"]["mean_iv"] < 2
+    assert gex["value"]["net_gamma_available"] is True
+    assert gex["value"]["net_gamma_exposure_per_1pct_move"] is not None
+
+
+def test_implied_volatility_can_be_inverted_from_mid_price():
+    from app.engine_suite import _bs_price, _implied_volatility
+    spot, strike, years, rate, volatility = 100, 105, 0.5, 0.03, 0.32
+    market_price = _bs_price(spot, strike, years, rate, volatility, True)
+    recovered = _implied_volatility(market_price, spot, strike, years, rate, True)
+    assert recovered == pytest.approx(volatility, rel=1e-5)
