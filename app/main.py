@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from .paper_store import PaperStore
 from .quant_engine import ema_crossover_backtest, enrich_analysis
 from .engine_registry import engine_registry
+from .engine_catalog import engine_catalog
 from .command_engine import COMMANDS, matches_command, evaluate_entry
 from .derivatives_engine import summarize_derivatives, normalize_liquidations
 from .advanced_engines import market_regime, market_structure, opportunity_assessment, learning_monitoring
@@ -578,6 +579,12 @@ async def learning_monitoring_endpoint():
 async def engines():
     """Return implementation status for the 15 logical QUANT NEXUS engines."""
     return engine_registry()
+
+
+@app.get("/api/engine-catalog")
+async def engine_catalog_endpoint():
+    """Return the auditable 156-engine catalogue and honest implementation states."""
+    return engine_catalog()
 
 @app.get("/api/derivatives/{symbol}")
 async def derivatives(symbol: str):
