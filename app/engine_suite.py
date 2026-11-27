@@ -1698,6 +1698,57 @@ _HANDLER_IDS.update({
     "E153":_system_health,"E154":_system_health,"E155":_system_health,
     "E156":_system_health,
 })
+
+def _news_events(ctx):
+    events=ctx.get("news_events")
+    if not isinstance(events,list):return _blocked("normalized news events from a verified provider required",["news_events"])
+    output=[]
+    positive=("approval","partnership","integration","listing","launch","adoption","upgrade","inflow","زيادة","إدراج","شراكة","اعتماد")
+    negative=("hack","exploit","lawsuit","delist","unlock","outflow","breach","attack","اختراق","دعوى","إلغاء إدراج","فتح قفل")
+    for event in events:
+        if not isinstance(event,dict):continue
+        title=str(event.get("title",""));body=str(event.get("summary",""))
+        text=(title+" "+body).lower()
+        pos=sum(word in text for word in positive);neg=sum(word in text for word in negative)
+        sentiment="POSITIVE" if pos>neg else "NEGATIVE" if neg>pos else "NEUTRAL"
+        output.append({"title":title[:200],"source":event.get("source"),
+                       "published_at":event.get("published_at"),"sentiment":sentiment,
+                       "keyword_evidence":{"positive":pos,"negative":neg}})
+    return _ready({"events":output,"count":len(output),
+                   "warning":"Keyword triage only; provider credibility and factual verification remain external."},
+                  "rule-based event triage over provider-supplied headlines and summaries")
+
+
+_HANDLER_IDS.update({
+    "E007":_news_events,
+    "E008":_cross_market_correlation,
+    "E014":_order_block,
+    "E046":_external,
+    "E047":_external,
+    "E048":_external,
+    "E049":_external,
+    "E050":_external,
+    "E063":_liquidation_heatmap,
+    "E069":_external,
+    "E070":_external,
+    "E071":_external,
+    "E105":_strategy_optimizer,
+    "E106":_parameter_optimizer,
+    "E110":_win_rate,
+    "E111":_profit_factor,
+    "E112":_expectancy,
+    "E115":_continuous_learning,
+    "E123":_trade_recovery,
+    "E132":_ai_prediction,
+    "E141":_scheduler,
+    "E143":_cache,
+    "E144":_database,
+    "E145":_websocket,
+    "E148":_error_recovery,
+    "E149":_duplicate_signal_filter,
+    "E150":_notification,
+    "E154":_security,
+})
 # All remaining catalogue IDs still have a callable, fail-closed adapter.
 for _catalogue_item in ENGINE_CATALOG:
     _HANDLER_IDS.setdefault(_catalogue_item["id"], _external)
