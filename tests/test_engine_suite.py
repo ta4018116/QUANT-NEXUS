@@ -34,6 +34,10 @@ def test_all_156_engine_ids_have_runtime_adapters():
     coverage = catalogue_runtime_coverage()
     assert coverage["catalogue_engines"] == 156
     assert coverage["routed_adapters"] == 156
+    assert coverage["callable_adapter_coverage_pct"] == 100
+    assert coverage["active_runtime_adapters"] == 153
+    assert coverage["external_or_model_blocked_ids"] == ["E047", "E048", "E050"]
+    assert coverage["catalogue_status_counts"]["planned"] == 3
     assert coverage["unrouted_adapters"] == []
     assert coverage["live_trading_enabled"] is False
 
