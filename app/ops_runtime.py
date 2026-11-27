@@ -55,6 +55,7 @@ class BackgroundSupervisor:
         self._state["status"] = "stopped"
 
     async def _run(self) -> None:
+        await asyncio.sleep(self.interval_seconds)
         while not self._stopping:
             self._state["last_started_at"] = _now()
             try:
