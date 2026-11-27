@@ -1463,7 +1463,8 @@ def _watchdog(ctx):
     max_age=max(1,_num(ctx.get("heartbeat_max_age_seconds"),60))
     ages={k:_num(v.get("age_seconds"),float("inf")) if isinstance(v,dict) else float("inf") for k,v in heartbeats.items()}
     stale=[k for k,v in ages.items() if v>max_age]
-    return _ready({"heartbeat_ages_seconds":ages,"stale_services":stale,"watchdog_alert":bool(stale)},
+    return _ready({"heartbeat_ages_seconds":ages,"stale_services":stale,"watchdog_alert":bool(stale),
+                   "scope":ctx.get("heartbeat_scope","provided heartbeat set only")},
                   "read-only heartbeat age check; does not restart external services")
 
 
