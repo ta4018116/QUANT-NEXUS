@@ -1465,11 +1465,28 @@ def _watchdog(ctx):
     heartbeats=ctx.get("heartbeats")
     if not isinstance(heartbeats,dict) or not heartbeats:return _blocked("service heartbeat timestamps required",["heartbeats"])
     max_age=max(1,_num(ctx.get("heartbeat_max_age_seconds"),60))
-    ages={k:_num(v.get("age_seconds"),float("inf")) if isinstance(v,dict) else float("inf") for k,v in heartbeats.items()}
-    stale=[k for k,v in ages.items() if v>max_age]
-    return _ready({"heartbeat_ages_seconds":ages,"stale_services":stale,"watchdog_alert":bool(stale),
+    # Missing heartbeat ages are unknown, never infinity: JSON responses must
+    # remain standards-compliant and must not turn an unreported metric into
+    # a fabricated stale-service duration.
+    ages={}
+    unknown=[]
+    for name, heartbeat in heartbeats.items():
+        raw_age=heartbeat.get("age_seconds") if isinstance(heartbeat,dict) else None
+        if raw_age is None:
+            ages[name]=None
+            unknown.append(name)
+            continue
+        age=_num(raw_age,float("nan"))
+        if not isfinite(age) or age < 0:
+            ages[name]=None
+            unknown.append(name)
+        else:
+            ages[name]=age
+    stale=[name for name,age in ages.items() if age is not None and age>max_age]
+    return _ready({"heartbeat_ages_seconds":ages,"stale_services":stale,
+                   "unknown_services":unknown,"watchdog_alert":bool(stale or unknown),
                    "scope":ctx.get("heartbeat_scope","provided heartbeat set only")},
-                  "read-only heartbeat age check; does not restart external services")
+                  "read-only heartbeat age check; unknown ages are reported separately and no external service is restarted")
 
 
 def _event_bus(ctx):
