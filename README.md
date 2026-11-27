@@ -136,7 +136,7 @@ The engine-suite endpoint now attempts read-only public enrichment on each analy
 
 The provider_health field in the engine-suite response reports each integration's availability. A missing or unsupported source remains explicitly blocked. No source credentials are needed for the public feeds above. Forex, equities, indices and commodities still require a configured dedicated provider such as Twelve Data. No API key has been invented or inserted.
 
-The runtime now supplies paper-ledger, SQLite, process-cache, model-registry, service-health, security-policy and process-memory snapshots where available. The free Render filesystem is not claimed to be durable, no background scheduler/event bus is claimed, and the notification engine creates intents rather than delivering externally. Admin authentication is not enabled and is reported as such by the security engine.
+The runtime supplies paper-ledger, SQLite, process-cache, model-registry, service-health, security-policy and process-memory snapshots where available. The scheduler is process-local, and the SQLite event log stores compact opportunity/audit metadata; neither is a distributed worker or broker. Optional Telegram/webhook delivery is attempted only when its server-side credentials are configured. Persistent durability is not claimed unless the SQLite path is on a mounted persistent volume. Admin authentication is not enabled globally and is reported as such by the security engine.
 
 The catalogue still labels approximations and research-only models as partial; changing labels without end-to-end production capability and evidence would be misleading. LSTM/Transformer projection weights are not fully trained, models are not persisted, and no model is calibrated as a production probability. Real trading remains disabled.
 
@@ -181,7 +181,7 @@ Optional server-side environment variables (never put these in frontend code):
 - `OPS_INTERVAL_SECONDS` (defaults to 300; bounded to 60-3600)
 - `OPS_WATCHLIST` (defaults to `BTCUSDT,ETHUSDT,SOLUSDT`, maximum 10 valid USDT symbols)
 
-The background scheduler and notification deduplication currently operate inside one web process. They are not a durable distributed worker or a persistent message queue. Hosting platforms that sleep free instances, restart containers or run multiple replicas need an independently deployed worker and persistent database/disk for reliable continuous monitoring. This change does not change the Render plan or claim that a persistent volume has been provisioned.
+The background scheduler and notification deduplication currently operate inside one web process. The SQLite event log is append-only metadata storage, not a distributed message queue: no independent consumer, retry/dead-letter worker or cross-replica coordination is configured. Hosting platforms that sleep free instances, restart containers or run multiple replicas need an independently deployed worker and persistent database/disk for reliable continuous monitoring. This change does not change the Render plan or claim that a persistent volume has been provisioned.
 
 ### Model lifecycle and acceptance criteria
 
@@ -200,3 +200,14 @@ All changes preserve `LIVE_TRADING_ENABLED=False`. Public exchange feeds are rea
 - Scheduler heartbeat age is now calculated from the last completed job timestamp. A running asyncio task without a completed heartbeat is reported as unknown, not as a fresh heartbeat.
 - WebSocket health is marked degraded while liquidation capture remains process-local and lacks an independent durable connection monitor.
 - Current CI evidence: the preceding source-registry and 156-engine contract revision passed both repository quality gates and engine-suite validation. The latest heartbeat-truth revision requires its own CI confirmation before merge or deployment.
+
+
+### SQLite event, audit and replay store
+
+- `EngineEventStore` writes compact opportunity and analysis-audit metadata into SQLite, sharing `PAPER_DB_PATH` by default or using `ENGINE_EVENT_DB_PATH` when explicitly configured.
+- `GET /api/events/status` reports published, acknowledged and pending event counts.
+- `GET /api/events/recent?event_type=opportunity&symbol=BTCUSDT` reads recent event records.
+- The opportunity knowledge, event-bus counters, audit-ID integrity and metadata replay adapters now receive actual stored event records during market-suite analysis.
+- A unique dedupe key prevents the same symbol/interval/candle/tier opportunity from being stored twice.
+- `ENGINE_EVENT_STORAGE_DURABLE=true` is an operator declaration that the event database path is on persistent storage; it is not independently verified by the application.
+- The event log is not yet a distributed broker, full tick/order-book archive, tamper-evident audit system or independent worker queue.
