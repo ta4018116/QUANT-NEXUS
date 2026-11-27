@@ -408,10 +408,10 @@ _HANDLER_IDS = {
     "E013":_sweep, "E014":_sweep, "E015":_fvg, "E016":_breakout,
     "E017":_divergence, "E019":_candlestick, "E020":_fibonacci,
     "E022":_volume_profile, "E023":_divergence, "E024":_candlestick,
-    "E026":_trend, "E027":_momentum, "E028":_trend, "E029":_market_phase,
+    "E026":_higher_timeframe, "E027":_lower_timeframe, "E028":_regime_timeframe_sync, "E029":_market_phase,
     "E030":_timing, "E031":_timing, "E032":_momentum,
-    "E034":_breakout, "E035":_accumulation, "E036":_sweep,
-    "E037":_volume, "E038":_trades, "E039":_volume, "E040":_compression,
+    "E034":_early_breakout, "E035":_accumulation, "E036":_sweep,
+    "E037":_momentum_explosion, "E038":_whale_activity, "E039":_volume, "E040":_compression,
     "E042":_breakout, "E043":_external,
     "E044":_external, "E045":_external, "E046":_external, "E047":_external,
     "E048":_external, "E049":_external, "E050":_external, "E051":_external,
@@ -441,6 +441,74 @@ _HANDLER_IDS = {
     "E149":_external, "E150":_external, "E151":_external, "E152":_external,
     "E153":_external, "E154":_external, "E155":_external, "E156":_external,
 }
+
+
+
+
+def _early_breakout(ctx):
+    rows, err = _base(ctx, 50)
+    if err: return err
+    comp=_compression(ctx); vol=_volume(ctx)
+    last=rows[-1]["close"]; high=max(x["high"] for x in rows[-21:-1]); low=min(x["low"] for x in rows[-21:-1])
+    width=(high-low)/last if last else 0
+    proximity=min(abs(high-last),abs(last-low))/last if last else 1
+    compressed=comp.get("status")=="computed" and comp["value"]["compressed"]
+    volume_ratio=vol.get("value",{}).get("volume_ratio") if vol.get("status")=="computed" else None
+    near_edge=proximity<=0.004
+    candidate=bool(compressed and near_edge and (volume_ratio is None or volume_ratio>=1.1))
+    return _ready({"early_breakout_candidate":candidate,"compressed":compressed,
+                   "near_range_edge":near_edge,"distance_to_edge_pct":round(proximity*100,4),
+                   "range_high":high,"range_low":low,"volume_ratio":volume_ratio},
+                  "pre-breakout proximity and compression heuristic; candidate is not a confirmed breakout")
+
+
+def _momentum_explosion(ctx):
+    rows, err = _base(ctx, 25)
+    if err: return err
+    v=_volume(ctx); atr=_atr(rows)
+    last=rows[-1]
+    body=abs(last["close"]-last["open"])
+    body_atr=body/atr if atr else None
+    z=v.get("value",{}).get("volume_zscore") if v.get("status")=="computed" else None
+    return _ready({"volume_zscore":z,"body_atr":round(body_atr,4) if body_atr is not None else None,
+                   "explosion_candidate":bool(z is not None and z>=2.5 and body_atr is not None and body_atr>=0.8)},
+                  "completed-candle volume z-score plus body-to-ATR expansion")
+
+
+def _whale_activity(ctx):
+    trades=ctx.get("trades")
+    if not isinstance(trades,list) or len(trades)<5:
+        return _blocked("recent normalized trade prints required",["at_least_5_trades"])
+    sizes=[_num(x.get("price"))*_num(x.get("size")) for x in trades if isinstance(x,dict) and _num(x.get("price"))>0 and _num(x.get("size"))>0]
+    if len(sizes)<5: return _blocked("not enough valid trade notionals",["valid_trade_prints"])
+    med=median(sizes); threshold=max(med*5, _num(ctx.get("large_trade_min_notional"),0))
+    large=[{"notional":x,"index":i} for i,x in enumerate(sizes) if x>=threshold]
+    return _ready({"median_print_notional":med,"large_print_threshold":threshold,
+                   "large_print_count":len(large),"large_prints":large[-20:]},
+                  "statistical print-size outliers; cannot attribute wallet identity or intent")
+
+
+def _higher_timeframe(ctx):
+    frames=ctx.get("timeframes")
+    item=frames.get("4h") if isinstance(frames,dict) else None
+    if not isinstance(item,dict): return _blocked("4h snapshot required",["timeframes.4h"])
+    return _ready({"timeframe":"4h","direction":item.get("direction"),"score":item.get("score")},
+                  "higher timeframe snapshot supplied by multi-timeframe provider")
+
+
+def _lower_timeframe(ctx):
+    frames=ctx.get("timeframes")
+    item=(frames.get("5m") or frames.get("15m")) if isinstance(frames,dict) else None
+    if not isinstance(item,dict): return _blocked("5m or 15m snapshot required",["timeframes.5m_or_15m"])
+    return _ready({"timeframe":item.get("timeframe","5m_or_15m"),
+                   "direction":item.get("direction"),"score":item.get("score")},
+                  "lower timeframe snapshot supplied by multi-timeframe provider")
+
+
+def _regime_timeframe_sync(ctx):
+    frames=ctx.get("timeframes")
+    if not isinstance(frames,dict) or len(frames)<2: return _blocked("multiple timeframe snapshots required",["timeframes"])
+    return _timeframes(ctx)
 
 
 
