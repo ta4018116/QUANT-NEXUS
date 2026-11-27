@@ -382,6 +382,165 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
             "returned":len(results),"generatedAt":datetime.now(timezone.utc).isoformat(),
             "trading_mode":"simulation","live_trading_enabled":False,"items":results}
 
+@app.get("/api/early-opportunity-scan")
+async def early_opportunity_scan(
+    category: str = "spot",
+    interval: str = "15m",
+    depth: str = Query("AUTO", pattern="^(AUTO|32|64|128|256)$"),
+    max_candidates: int = Query(256, ge=1, le=500),
+    deep_limit: int = Query(24, ge=1, le=64),
+    min_turnover: float = Query(0, ge=0),
+):
+    """Two-stage market-wide early-opportunity scan; deep analysis is bounded."""
+    if category not in ("spot", "linear") or interval not in INTERVALS:
+        raise HTTPException(status_code=400, detail="Invalid scan market or interval")
+    tickers, ticker_provider = await get_market_tickers(category)
+    normalized = []
+    for ticker in tickers:
+        if not isinstance(ticker, dict):
+            continue
+        symbol = str(ticker.get("symbol", "")).upper()
+        if not symbol.endswith("USDT") or not symbol[:-4].isalnum():
+            continue
+        turnover = safe_float(ticker.get("turnover24h"))
+        if turnover < min_turnover:
+            continue
+        normalized.append(ticker)
+    normalized.sort(key=lambda x: safe_float(x.get("turnover24h")), reverse=True)
+    depth_cap = {"32": 32, "64": 64, "128": 128, "256": 256}.get(depth, max_candidates)
+    candidates = normalized[:min(len(normalized), max_candidates, depth_cap)]
+    semaphore = asyncio.Semaphore(12)
+
+    async def light_pass(ticker):
+        symbol = str(ticker.get("symbol", "")).upper()
+        async with semaphore:
+            try:
+                raw, provider = await get_market_klines(symbol, category, interval, 120)
+                analysis = analyze_klines(raw, include_all_candles=True)
+                candles = analysis["candles"][:-1]
+                if len(candles) < 60:
+                    return None
+                regime = market_regime(candles)
+                structure = market_structure(candles)
+                context = {
+                    "symbol": symbol, "category": category, "interval": interval,
+                    "candles": candles, "closes": [x["close"] for x in candles],
+                    "regime": regime, "structure": structure,
+                    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                }
+                result = early_opportunity_assessment(context)
+                if result.get("status") != "computed":
+                    return None
+                result.update({
+                    "provider": provider,
+                    "last_price": candles[-1]["close"],
+                    "turnover24h": safe_float(ticker.get("turnover24h")),
+                    "change24h_pct": safe_float(ticker.get("price24hPcnt")) * 100,
+                    "analysis_stage": "LIGHT",
+                })
+                return result
+            except HTTPException as exc:
+                logger.warning("Early scan skipped %s: %s", symbol, exc.detail)
+                return None
+            except Exception:
+                logger.exception("Early scan failed for %s", symbol)
+                return None
+
+    light_results = await asyncio.gather(*(light_pass(t) for t in candidates))
+    light_results = [x for x in light_results if x]
+    light_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+    deep_symbols = {x["symbol"] for x in light_results[:deep_limit]}
+
+    async def deep_pass(item):
+        if item["symbol"] not in deep_symbols:
+            return item
+        symbol = item["symbol"]
+        async with semaphore:
+            book_result, trades_result = await asyncio.gather(
+                get_orderbook(symbol, category),
+                get_recent_trades(symbol, category),
+                return_exceptions=True,
+            )
+            try:
+                raw, provider = await get_market_klines(symbol, category, interval, 160)
+                analysis = analyze_klines(raw, include_all_candles=True)
+                candles = analysis["candles"][:-1]
+                if len(candles) < 60:
+                    item["deep_analysis_error"] = "insufficient_completed_candles"
+                    return item
+                context = {
+                    "symbol": symbol, "category": category, "interval": interval,
+                    "candles": candles, "closes": [x["close"] for x in candles],
+                    "regime": market_regime(candles),
+                    "structure": market_structure(candles),
+                    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                }
+                if not isinstance(book_result, Exception):
+                    bids, asks, _ = book_result
+                    context["orderbook"] = {"bids": bids, "asks": asks}
+                if not isinstance(trades_result, Exception):
+                    trades, _ = trades_result
+                    context["trades"] = trades
+                if category == "linear":
+                    try:
+                        oi_result, funding_result = await asyncio.gather(
+                            bybit_get("/v5/market/open-interest", {
+                                "category": "linear", "symbol": symbol,
+                                "intervalTime": "5min", "limit": 50
+                            }),
+                            bybit_get("/v5/market/funding/history", {
+                                "category": "linear", "symbol": symbol, "limit": 20
+                            }),
+                        )
+                        summary = summarize_derivatives(
+                            oi_result.get("list", []), funding_result.get("list", [])
+                        )
+                        context["derivatives"] = {
+                            "open_interest": summary.get("open_interest"),
+                            "funding_rate": summary.get("funding_rate"),
+                        }
+                    except Exception as exc:
+                        logger.warning("Deep scan derivatives unavailable for %s: %s", symbol, type(exc).__name__)
+                updated = early_opportunity_assessment(context)
+                if updated.get("status") == "computed":
+                    updated.update({
+                        "provider": provider,
+                        "last_price": candles[-1]["close"],
+                        "turnover24h": item.get("turnover24h"),
+                        "change24h_pct": item.get("change24h_pct"),
+                        "analysis_stage": "DEEP",
+                    })
+                    return updated
+                item["deep_analysis_error"] = updated.get("reason", "deep_analysis_unavailable")
+                return item
+            except Exception as exc:
+                logger.warning("Deep early scan failed for %s: %s", symbol, type(exc).__name__)
+                item["deep_analysis_error"] = type(exc).__name__
+                return item
+
+    deep_results = await asyncio.gather(*(deep_pass(x) for x in light_results))
+    deep_results = [x for x in deep_results if x]
+    deep_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+    return {
+        "provider": ticker_provider,
+        "category": category,
+        "interval": interval,
+        "depth": depth,
+        "universe_available": len(normalized),
+        "eligible_count": len(normalized),
+        "scanned": len(candidates),
+        "light_analyzed": len(light_results),
+        "deep_analyzed": sum(x.get("analysis_stage") == "DEEP" for x in deep_results),
+        "returned": len(deep_results),
+        "truncated": len(normalized) > len(candidates),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "items": deep_results,
+        "trading_mode": "simulation",
+        "live_trading_enabled": False,
+        "note": "Scores are heuristic research ranks, not calibrated win probabilities. Deep analysis is limited to the highest-ranked light-pass candidates.",
+    }
+
+
 @app.get("/api/multi-timeframe/{symbol}")
 async def multi_timeframe(symbol: str, category: str = "spot"):
     if category not in ("spot", "linear"):
