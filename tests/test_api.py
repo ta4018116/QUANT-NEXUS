@@ -443,7 +443,7 @@ def test_responsive_card_dashboard_exposes_real_pages_opportunities_and_engine_r
     assert 'data-open-page="intelligence"' in html
     assert "function openPage(key)" in html
     assert "function renderOpportunityCards(items)" in html
-    assert "api('/api/engines')" in html
+    assert "api('/api/engine-catalog')" in html
     assert "أسلوب الدخول" in html
     assert "وقف الخسارة" in html
     assert "الهدف الأول" in html
@@ -452,6 +452,9 @@ def test_responsive_card_dashboard_exposes_real_pages_opportunities_and_engine_r
     assert html.count("<script>") == 1
     assert html.count("</script>") == 1
     assert client.get("/api/engines").json()["live_trading_enabled"] is False
+    catalog = client.get("/api/engine-catalog").json()
+    assert catalog["total"] == 156
+    assert catalog["live_trading_enabled"] is False
 
 
 
@@ -690,3 +693,46 @@ def test_bybit_liquidation_events_are_normalized_and_aggregated():
 def test_derivatives_liquidation_websocket_route_is_registered(client):
     routes = {getattr(route, "path", "") for route in main.app.routes}
     assert "/ws/derivatives/{symbol}/liquidations" in routes
+
+
+
+def test_early_opportunity_scanner_runs_two_bounded_passes(client, monkeypatch):
+    async def fake_tickers(category):
+        return ([
+            {"symbol":"AAAUSDT","turnover24h":5_000_000,"price24hPcnt":0.03},
+            {"symbol":"BBBUSDT","turnover24h":2_000_000,"price24hPcnt":0.01},
+            {"symbol":"CCCUSDT","turnover24h":100_000,"price24hPcnt":-0.01},
+        ], "TEST")
+
+    async def fake_klines(symbol, category, interval, limit):
+        return make_rows(140), "TEST"
+
+    async def fake_book(symbol, category):
+        return [["100", "100"], ["99.9", "50"]], [["100.1", "10"], ["100.2", "5"]], "TEST"
+
+    async def fake_trades(symbol, category):
+        return ([
+            {"price":100,"size":10,"side":"BUY","time":1},
+            {"price":100,"size":2,"side":"SELL","time":2},
+            {"price":100,"size":8,"side":"BUY","time":3},
+            {"price":100,"size":1,"side":"SELL","time":4},
+            {"price":100,"size":4,"side":"BUY","time":5},
+        ], "TEST")
+
+    monkeypatch.setattr(main, "get_market_tickers", fake_tickers)
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    monkeypatch.setattr(main, "get_orderbook", fake_book)
+    monkeypatch.setattr(main, "get_recent_trades", fake_trades)
+
+    response = client.get(
+        "/api/early-opportunity-scan?category=spot&interval=15m&depth=32&deep_limit=1"
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["scanned"] == 3
+    assert payload["light_analyzed"] == 3
+    assert payload["deep_analyzed"] == 1
+    assert payload["returned"] == 3
+    assert payload["live_trading_enabled"] is False
+    assert all(0 <= item["score"] <= 100 for item in payload["items"])
+    assert sum(item["analysis_stage"] == "DEEP" for item in payload["items"]) == 1
