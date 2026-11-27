@@ -13,6 +13,7 @@ from statistics import NormalDist, mean, median, pstdev
 from typing import Any
 
 from .engine_catalog import ENGINE_CATALOG
+from .model_lifecycle import predict_direction_model
 
 
 def _num(value: Any, default: float = 0.0) -> float:
@@ -730,6 +731,9 @@ def _sigmoid(x):
 
 
 def _logistic_model(ctx):
+    persisted = predict_direction_model(ctx)
+    if persisted is not None:
+        return persisted
     dataset,err=_ml_dataset(ctx)
     if err: return err
     split=max(40,int(len(dataset)*0.8))
