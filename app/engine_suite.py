@@ -386,14 +386,33 @@ def _backtest(ctx):
 
 def _agents(ctx):
     agents=ctx.get("agent_results")
-    if not isinstance(agents,list) or not agents: return _blocked("independent agent assessments required",["agent_results"])
+    if not isinstance(agents,list) or not agents:
+        # Build transparent deterministic sub-agents from one shared market snapshot.
+        agents=[]
+        trend=_trend(ctx)
+        if trend.get("status")=="computed":
+            d=trend["value"]["direction"]
+            agents.append({"name":"technical_trend","direction":"LONG" if d=="UP" else "SHORT" if d=="DOWN" else "NEUTRAL"})
+        momentum=_momentum(ctx)
+        if momentum.get("status")=="computed":
+            d=str(momentum["value"].get("direction","")).upper()
+            agents.append({"name":"momentum","direction":"LONG" if d in ("UP","BULLISH","POSITIVE") else "SHORT" if d in ("DOWN","BEARISH","NEGATIVE") else "NEUTRAL"})
+        book=_orderbook(ctx)
+        if book.get("status")=="computed":
+            d=book["value"].get("bias")
+            agents.append({"name":"orderbook_imbalance","direction":"LONG" if d=="BID" else "SHORT" if d=="ASK" else "NEUTRAL"})
+        ai=_ai_analyst(ctx)
+        if ai.get("status")=="computed":
+            d=ai["value"].get("directional_context")
+            agents.append({"name":"explainable_market_analyst","direction":"LONG" if d=="UP" else "SHORT" if d=="DOWN" else "NEUTRAL"})
     valid=[x for x in agents if isinstance(x,dict) and x.get("direction") in ("LONG","SHORT","NEUTRAL")]
-    if not valid: return _blocked("no valid agent directions",["agent direction assessments"])
+    if not valid: return _blocked("no directional agent could compute from the market snapshot",["completed_candles","orderbook"])
     long=sum(x["direction"]=="LONG" for x in valid); short=sum(x["direction"]=="SHORT" for x in valid)
     direction="LONG" if long>short else "SHORT" if short>long else "NEUTRAL"
-    return _ready({"agents":len(valid),"long_votes":long,"short_votes":short,"consensus":direction,
-                   "agreement_pct":max(long,short)/len(valid)*100},
-                  "unweighted directional vote; not an independent prediction")
+    return _ready({"agents":len(valid),"agent_assessments":valid,"long_votes":long,"short_votes":short,"consensus":direction,
+                   "agreement_pct":max(long,short)/len(valid)*100,
+                   "independence":"shared snapshot; agents are rule-based and not statistically independent"},
+                  "deterministic technical, momentum, order-book and explainable-agent consensus; not an independent prediction")
 
 
 def _external(ctx):
@@ -501,7 +520,7 @@ def _market_structure(ctx):
 
 def _cross_market_correlation(ctx):
     related=ctx.get("related_closes")
-    base=[_num(x) for x in ctx.get("closes",[])]
+    base=[_num(x) for x in (ctx.get("correlation_base_closes") or ctx.get("closes",[]))]
     if not isinstance(related,dict) or len(base)<3:
         return _blocked("aligned close series for related markets required",["closes","related_closes"])
     base_r=[base[i]/base[i-1]-1 for i in range(1,len(base)) if base[i-1]>0]
@@ -571,15 +590,23 @@ def _basis(ctx):
 def _arbitrage(ctx):
     prices=ctx.get("exchange_prices")
     if not isinstance(prices,dict) or len(prices)<2: return _blocked("two or more synchronized venue marks required",["exchange_prices"])
-    fee=_num(ctx.get("round_trip_fee_pct")); slip=_num(ctx.get("round_trip_slippage_pct"))
     clean={str(k):_num(v) for k,v in prices.items() if _num(v)>0}
     if len(clean)<2: return _blocked("insufficient valid venue marks",["positive_exchange_prices"])
     buy=min(clean,key=clean.get); sell=max(clean,key=clean.get)
     gross=(clean[sell]/clean[buy]-1)*100
-    net=gross-fee-slip
+    costs_verified=ctx.get("execution_costs_verified") is True
+    fee=ctx.get("round_trip_fee_pct"); slip=ctx.get("round_trip_slippage_pct")
+    if costs_verified and fee is not None and slip is not None:
+        net=gross-_num(fee)-_num(slip)
+        net_known=True
+    else:
+        net=None
+        net_known=False
     return _ready({"buy_venue":buy,"sell_venue":sell,"gross_spread_pct":gross,
-                   "estimated_net_spread_pct":net,"positive_after_costs":net>0},
-                  "synchronized supplied marks less supplied fees and slippage; excludes transfer and latency risk")
+                   "estimated_net_spread_pct":net,"positive_after_costs":(net>0) if net_known else None,
+                   "execution_costs_verified":net_known,"venue_marks":clean,
+                   "execution_permitted":False},
+                  "read-only simultaneous venue-mark comparison; net spread withheld until verified fees/slippage are supplied; excludes transfer, funding and latency risk")
 
 
 def _opportunity(ctx):
@@ -1436,7 +1463,8 @@ def _watchdog(ctx):
     max_age=max(1,_num(ctx.get("heartbeat_max_age_seconds"),60))
     ages={k:_num(v.get("age_seconds"),float("inf")) if isinstance(v,dict) else float("inf") for k,v in heartbeats.items()}
     stale=[k for k,v in ages.items() if v>max_age]
-    return _ready({"heartbeat_ages_seconds":ages,"stale_services":stale,"watchdog_alert":bool(stale)},
+    return _ready({"heartbeat_ages_seconds":ages,"stale_services":stale,"watchdog_alert":bool(stale),
+                   "scope":ctx.get("heartbeat_scope","provided heartbeat set only")},
                   "read-only heartbeat age check; does not restart external services")
 
 
@@ -1447,6 +1475,79 @@ def _event_bus(ctx):
     return _ready({"published":published,"consumed":consumed,"backlog":max(0,published-consumed)},
                   "read-only event-bus counters supplied by runtime")
 
+
+
+
+def _data_quality(ctx):
+    rows,err=_base(ctx,20)
+    if err:return err
+    times=[int(_num(x.get("time"))) for x in rows if _num(x.get("time"))>0]
+    duplicate_count=len(times)-len(set(times))
+    ordered=all(times[i]>=times[i-1] for i in range(1,len(times)))
+    gaps=sum(1 for i in range(1,len(times)) if times[i]<=times[i-1])
+    invalid_ohlc=sum(
+        1 for x in rows
+        if x["high"]<max(x["open"],x["close"],x["low"])
+        or x["low"]>min(x["open"],x["close"],x["high"])
+    )
+    return _ready({"candles":len(rows),"timestamps_present":len(times),
+                   "duplicate_timestamps":duplicate_count,"timestamps_ordered":ordered,
+                   "non_increasing_timestamp_pairs":gaps,"invalid_ohlc_rows":invalid_ohlc,
+                   "quality_passed":duplicate_count==0 and ordered and invalid_ohlc==0},
+                  "schema, OHLC range and candle timestamp integrity checks")
+
+
+def _funding_rate(ctx):
+    data=ctx.get("derivatives") or {}
+    rate=data.get("funding_rate")
+    if rate is None:return _blocked("verified funding-rate snapshot required",["derivatives.funding_rate"])
+    value=_num(rate,float("nan"))
+    if not isfinite(value):return _blocked("funding rate is not finite",["derivatives.funding_rate"])
+    return _ready({"funding_rate":value,"funding_rate_pct":value*100,
+                   "provider":data.get("provider"),"data_quality":"provider_snapshot"},
+                  "read-only provider funding-rate snapshot; not a predicted next rate")
+
+
+def _open_interest(ctx):
+    data=ctx.get("derivatives") or {}
+    oi=data.get("open_interest")
+    if oi is None:return _blocked("verified open-interest snapshot required",["derivatives.open_interest"])
+    value=_num(oi,-1)
+    if value<0:return _blocked("open interest is invalid",["derivatives.open_interest"])
+    return _ready({"open_interest":value,"change_pct":data.get("open_interest_change_pct"),
+                   "provider":data.get("provider"),"data_quality":"provider_snapshot"},
+                  "read-only provider open-interest snapshot; contract unit follows venue")
+
+
+def _spot_opportunity(ctx):
+    if str(ctx.get("category","spot")).lower()!="spot":
+        return _blocked("spot category required",["category=spot"])
+    return _opportunity(ctx)
+
+
+def _futures_opportunity(ctx):
+    if str(ctx.get("category","")).lower()!="linear":
+        return _blocked("USDT linear futures candles are required",["category=linear"])
+    result=_opportunity(ctx)
+    if result.get("status")!="computed":return result
+    deriv=_derivatives(ctx)
+    return _ready({**result["value"],
+                   "derivatives_context":deriv.get("value") if deriv.get("status")=="computed" else None,
+                   "derivatives_status":deriv.get("status")},
+                  "futures opportunity confluence over completed linear candles plus provider derivatives context")
+
+
+def _trade_journal(ctx):
+    trades=ctx.get("positions")
+    if not isinstance(trades,list):return _blocked("paper trade ledger required",["positions"])
+    closed=[x for x in trades if isinstance(x,dict) and x.get("status")=="CLOSED"]
+    opened=[x for x in trades if isinstance(x,dict) and x.get("status")=="OPEN"]
+    pnls=[_num(x.get("pnl")) for x in closed]
+    return _ready({"total_trades":len(trades),"open_trades":len(opened),"closed_trades":len(closed),
+                   "realized_net_pnl":sum(pnls),
+                   "win_rate_pct":sum(1 for x in pnls if x>0)/len(pnls)*100 if pnls else None,
+                   "journal_source":"paper_ledger"},
+                  "read-only journal aggregation over the persisted paper ledger")
 
 # Each catalogue engine is routable. Similar engines share audited mathematical primitives,
 # while model- and provider-dependent engines remain explicitly blocked when inputs are absent.
@@ -2214,6 +2315,52 @@ _HANDLER_IDS.update({
     "E150":_notification,
     "E154":_security,
 })
+# Final handler map: bind each engine to its most specific available implementation.
+_HANDLER_IDS.update({
+    "E001":_base, "E002":_orderbook, "E003":_orderbook, "E004":_compression,
+    "E005":_base, "E006":_data_quality, "E007":_news_events, "E008":_cross_market_correlation,
+    "E009":_trend, "E010":_market_structure, "E011":_support_resistance, "E012":_supply_demand,
+    "E013":_smc, "E014":_order_block, "E015":_fvg, "E016":_breakout, "E017":_divergence,
+    "E018":_momentum, "E019":_candlestick, "E020":_fibonacci, "E021":_vwap,
+    "E022":_volume_profile, "E023":_divergence, "E024":_candlestick,
+    "E025":_timeframes, "E026":_higher_timeframe, "E027":_lower_timeframe,
+    "E028":_regime_timeframe_sync, "E029":_market_phase, "E030":_timing, "E031":_timing, "E032":_trend_exhaustion,
+    "E033":_opportunity, "E034":_early_breakout, "E035":_accumulation, "E036":_sweep,
+    "E037":_momentum_explosion, "E038":_whale_activity, "E039":_volume, "E040":_compression,
+    "E041":_futures_opportunity, "E042":_spot_opportunity, "E043":_arbitrage,
+    "E044":_ai_analyst, "E045":_logistic_model, "E046":_deep_learning_mlp, "E047":_lstm_forecast,
+    "E048":_transformer_forecast, "E049":_rl_agent, "E050":_xgboost_classifier,
+    "E051":_random_forest, "E052":_anomaly_detection, "E053":_clustering, "E054":_regime_detector,
+    "E055":_forecast, "E056":_empirical_probability, "E057":_ensemble, "E058":_continuous_learning,
+    "E059":_explain_model, "E060":_funding_rate, "E061":_open_interest, "E062":_long_short,
+    "E063":_liquidation_heatmap, "E064":_liquidation_tracker, "E065":_basis, "E066":_derivatives,
+    "E067":_leverage_risk, "E068":_derivative_divergence, "E069":_options_analytics,
+    "E070":_implied_volatility_engine, "E071":_gamma_exposure, "E072":_generic_score,
+    "E073":_confidence, "E074":_risk, "E075":_entry_precision, "E076":_risk,
+    "E077":_take_profit, "E078":_trade_quality, "E079":_entry_readiness, "E080":_false_breakout,
+    "E081":_conflict_resolver, "E082":_rank_opportunities, "E083":_signal_expiration, "E084":_expectancy,
+    "E085":_entry_readiness, "E086":_risk, "E087":_dynamic_risk, "E088":_portfolio_risk,
+    "E089":_max_drawdown, "E090":_correlation_risk, "E091":_portfolio, "E092":_liquidation_protection,
+    "E093":_slippage_estimate, "E094":_fee_calc, "E095":_volatility_stop, "E096":_breakeven,
+    "E097":_trailing_stop, "E098":_daily_limit, "E099":_circuit_breaker, "E100":_risk_approval,
+    "E101":_backtest, "E102":_walk_forward, "E103":_paper_positions, "E104":_monte_carlo,
+    "E105":_strategy_optimizer, "E106":_parameter_optimizer, "E107":_overfit,
+    "E108":_out_of_sample, "E109":_attribution, "E110":_win_rate, "E111":_profit_factor,
+    "E112":_expectancy, "E113":_strategy_compare, "E114":_model_drift, "E115":_continuous_learning,
+    "E116":_position_monitor, "E117":_position_monitor, "E118":_entry_readiness,
+    "E119":_position_monitor, "E120":_position_monitor, "E121":_position_monitor,
+    "E122":_position_monitor, "E123":_trade_recovery, "E124":_trade_journal,
+    "E125":_portfolio, "E126":_agents, "E127":_ai_analyst, "E128":_orderbook,
+    "E129":_smc, "E130":_derivatives, "E131":_trend, "E132":_ai_prediction,
+    "E133":_risk, "E134":_adaptive_router, "E135":_agents, "E136":_conflict_resolver,
+    "E137":_agents, "E138":_knowledge_memory, "E139":_adaptive_router, "E140":_autonomous_research,
+    "E141":_scheduler, "E142":_event_bus, "E143":_cache, "E144":_database,
+    "E145":_websocket, "E146":_system_health, "E147":_system_health, "E148":_error_recovery,
+    "E149":_duplicate_signal_filter, "E150":_notification, "E151":_audit_log,
+    "E152":_model_registry, "E153":_data_replay, "E154":_security,
+    "E155":_resource_monitor, "E156":_watchdog,
+})
+
 # All remaining catalogue IDs still have a callable, fail-closed adapter.
 for _catalogue_item in ENGINE_CATALOG:
     _HANDLER_IDS.setdefault(_catalogue_item["id"], _external)
