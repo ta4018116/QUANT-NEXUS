@@ -190,3 +190,13 @@ The new persisted logistic candidate uses nine documented OHLCV features, a thre
 The random-forest, MLP, LSTM-reservoir, Transformer-reservoir and XGBoost-style adapters remain research implementations; fixed reservoir weights or per-request fitting are not represented as fully trained persisted production models. Model outputs are not investment advice and do not authorize a trade.
 
 All changes preserve `LIVE_TRADING_ENABLED=False`. Public exchange feeds are read-only, no private exchange trade credential is required or added, and all order/position workflows remain simulation-only.
+
+### Per-engine source traceability and honest runtime health
+
+- `GET /api/engine-sources` now returns an explicit source contract for each of the 156 engine IDs: provider families, documented endpoint paths, required evidence, credential model, activation gates and known limitations.
+- The registry distinguishes public market feeds, optional paid feeds, internal paper-ledger records, research-model artifacts and process telemetry. A mapped source is not reported as connected until the provider-health and input checks pass.
+- The engine source matrix uses the official CoinGlass API v4 endpoint families for derivatives and liquidation data. The aggregate exchange-list liquidation endpoint is not described as a price-level liquidation map; individual liquidation orders and heatmaps are plan-gated.
+- Twelve Data remains the configured-provider route for FX, stocks, indices and commodities. Its key must be stored in server environment settings; missing credentials remain a visible blocker.
+- Scheduler heartbeat age is now calculated from the last completed job timestamp. A running asyncio task without a completed heartbeat is reported as unknown, not as a fresh heartbeat.
+- WebSocket health is marked degraded while liquidation capture remains process-local and lacks an independent durable connection monitor.
+- Current CI evidence: the preceding source-registry and 156-engine contract revision passed both repository quality gates and engine-suite validation. The latest heartbeat-truth revision requires its own CI confirmation before merge or deployment.
