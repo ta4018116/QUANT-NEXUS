@@ -35,9 +35,9 @@ def test_all_156_engine_ids_have_runtime_adapters():
     assert coverage["catalogue_engines"] == 156
     assert coverage["routed_adapters"] == 156
     assert coverage["callable_adapter_coverage_pct"] == 100
-    assert coverage["active_runtime_adapters"] == 154
-    assert coverage["external_or_model_blocked_ids"] == ["E047", "E048"]
-    assert coverage["catalogue_status_counts"]["planned"] == 2
+    assert coverage["active_runtime_adapters"] == 156
+    assert coverage["external_or_model_blocked_ids"] == []
+    assert coverage["catalogue_status_counts"]["planned"] == 0
     assert coverage["unrouted_adapters"] == []
     assert coverage["live_trading_enabled"] is False
 
@@ -319,10 +319,12 @@ def test_security_news_liquidation_and_scheduler_adapters_are_fail_closed():
     assert scheduler["value"]["scheduler_backend_configured"] is False
 
 
-def test_news_and_external_models_are_never_fabricated():
+def test_news_feed_stays_blocked_but_sequence_models_run_from_supplied_candles():
     from app.engine_suite import _news_events
+    context = {"candles": make_candles(190)}
     assert _news_events({})["status"] == "blocked_missing_input"
-    assert run_engine("E047", {"candles":make_candles(180)})["runtime"]["status"] == "blocked_missing_input"
+    assert run_engine("E047", context)["runtime"]["status"] == "computed"
+    assert run_engine("E048", context)["runtime"]["status"] == "computed"
 
 
 def test_options_greeks_and_implied_volatility_are_numerically_consistent():
@@ -393,3 +395,18 @@ def test_xgboost_style_classifier_runs_second_order_boosting_on_time_holdout():
     assert value["training_samples"] > value["holdout_samples"] > 0
     assert 0 <= value["research_score_up"] <= 1
     assert "not the upstream XGBoost library" in value["warning"]
+
+
+def test_lstm_and_transformer_sequence_research_adapters_run_chronological_holdouts():
+    from app.engine_suite import _lstm_forecast, _transformer_forecast
+    context = {"candles": make_candles(190)}
+    lstm = _lstm_forecast(context)
+    transformer = _transformer_forecast(context)
+    assert lstm["status"] == transformer["status"] == "computed"
+    for result in (lstm, transformer):
+        value = result["value"]
+        assert value["training_sequences"] > value["holdout_sequences"] > 0
+        assert 0 <= value["research_score_up"] <= 1
+        assert 0 <= value["chronological_holdout_accuracy_pct"] <= 100
+        assert 0 <= value["holdout_brier_score"] <= 1
+        assert "only" in value["warning"]

@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 from .paper_store import PaperStore
 from .quant_engine import ema_crossover_backtest, enrich_analysis
 from .engine_registry import engine_registry
+from .engine_catalog import engine_catalog
+from .engine_suite import run_engine_suite, early_opportunity_assessment, catalogue_runtime_coverage
 from .command_engine import COMMANDS, matches_command, evaluate_entry
 from .derivatives_engine import summarize_derivatives, normalize_liquidations
 from .advanced_engines import market_regime, market_structure, opportunity_assessment, learning_monitoring
@@ -380,6 +382,165 @@ async def scan(category: str = "spot", interval: str = "15m", limit: int = Query
             "returned":len(results),"generatedAt":datetime.now(timezone.utc).isoformat(),
             "trading_mode":"simulation","live_trading_enabled":False,"items":results}
 
+@app.get("/api/early-opportunity-scan")
+async def early_opportunity_scan(
+    category: str = "spot",
+    interval: str = "15m",
+    depth: str = Query("AUTO", pattern="^(AUTO|32|64|128|256)$"),
+    max_candidates: int = Query(256, ge=1, le=500),
+    deep_limit: int = Query(24, ge=1, le=64),
+    min_turnover: float = Query(0, ge=0),
+):
+    """Two-stage market-wide early-opportunity scan; deep analysis is bounded."""
+    if category not in ("spot", "linear") or interval not in INTERVALS:
+        raise HTTPException(status_code=400, detail="Invalid scan market or interval")
+    tickers, ticker_provider = await get_market_tickers(category)
+    normalized = []
+    for ticker in tickers:
+        if not isinstance(ticker, dict):
+            continue
+        symbol = str(ticker.get("symbol", "")).upper()
+        if not symbol.endswith("USDT") or not symbol[:-4].isalnum():
+            continue
+        turnover = safe_float(ticker.get("turnover24h"))
+        if turnover < min_turnover:
+            continue
+        normalized.append(ticker)
+    normalized.sort(key=lambda x: safe_float(x.get("turnover24h")), reverse=True)
+    depth_cap = {"32": 32, "64": 64, "128": 128, "256": 256}.get(depth, max_candidates)
+    candidates = normalized[:min(len(normalized), max_candidates, depth_cap)]
+    semaphore = asyncio.Semaphore(12)
+
+    async def light_pass(ticker):
+        symbol = str(ticker.get("symbol", "")).upper()
+        async with semaphore:
+            try:
+                raw, provider = await get_market_klines(symbol, category, interval, 120)
+                analysis = analyze_klines(raw, include_all_candles=True)
+                candles = analysis["candles"][:-1]
+                if len(candles) < 60:
+                    return None
+                regime = market_regime(candles)
+                structure = market_structure(candles)
+                context = {
+                    "symbol": symbol, "category": category, "interval": interval,
+                    "candles": candles, "closes": [x["close"] for x in candles],
+                    "regime": regime, "structure": structure,
+                    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                }
+                result = early_opportunity_assessment(context)
+                if result.get("status") != "computed":
+                    return None
+                result.update({
+                    "provider": provider,
+                    "last_price": candles[-1]["close"],
+                    "turnover24h": safe_float(ticker.get("turnover24h")),
+                    "change24h_pct": safe_float(ticker.get("price24hPcnt")) * 100,
+                    "analysis_stage": "LIGHT",
+                })
+                return result
+            except HTTPException as exc:
+                logger.warning("Early scan skipped %s: %s", symbol, exc.detail)
+                return None
+            except Exception:
+                logger.exception("Early scan failed for %s", symbol)
+                return None
+
+    light_results = await asyncio.gather(*(light_pass(t) for t in candidates))
+    light_results = [x for x in light_results if x]
+    light_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+    deep_symbols = {x["symbol"] for x in light_results[:deep_limit]}
+
+    async def deep_pass(item):
+        if item["symbol"] not in deep_symbols:
+            return item
+        symbol = item["symbol"]
+        async with semaphore:
+            book_result, trades_result = await asyncio.gather(
+                get_orderbook(symbol, category),
+                get_recent_trades(symbol, category),
+                return_exceptions=True,
+            )
+            try:
+                raw, provider = await get_market_klines(symbol, category, interval, 160)
+                analysis = analyze_klines(raw, include_all_candles=True)
+                candles = analysis["candles"][:-1]
+                if len(candles) < 60:
+                    item["deep_analysis_error"] = "insufficient_completed_candles"
+                    return item
+                context = {
+                    "symbol": symbol, "category": category, "interval": interval,
+                    "candles": candles, "closes": [x["close"] for x in candles],
+                    "regime": market_regime(candles),
+                    "structure": market_structure(candles),
+                    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                }
+                if not isinstance(book_result, Exception):
+                    bids, asks, _ = book_result
+                    context["orderbook"] = {"bids": bids, "asks": asks}
+                if not isinstance(trades_result, Exception):
+                    trades, _ = trades_result
+                    context["trades"] = trades
+                if category == "linear":
+                    try:
+                        oi_result, funding_result = await asyncio.gather(
+                            bybit_get("/v5/market/open-interest", {
+                                "category": "linear", "symbol": symbol,
+                                "intervalTime": "5min", "limit": 50
+                            }),
+                            bybit_get("/v5/market/funding/history", {
+                                "category": "linear", "symbol": symbol, "limit": 20
+                            }),
+                        )
+                        summary = summarize_derivatives(
+                            oi_result.get("list", []), funding_result.get("list", [])
+                        )
+                        context["derivatives"] = {
+                            "open_interest": summary.get("open_interest"),
+                            "funding_rate": summary.get("funding_rate"),
+                        }
+                    except Exception as exc:
+                        logger.warning("Deep scan derivatives unavailable for %s: %s", symbol, type(exc).__name__)
+                updated = early_opportunity_assessment(context)
+                if updated.get("status") == "computed":
+                    updated.update({
+                        "provider": provider,
+                        "last_price": candles[-1]["close"],
+                        "turnover24h": item.get("turnover24h"),
+                        "change24h_pct": item.get("change24h_pct"),
+                        "analysis_stage": "DEEP",
+                    })
+                    return updated
+                item["deep_analysis_error"] = updated.get("reason", "deep_analysis_unavailable")
+                return item
+            except Exception as exc:
+                logger.warning("Deep early scan failed for %s: %s", symbol, type(exc).__name__)
+                item["deep_analysis_error"] = type(exc).__name__
+                return item
+
+    deep_results = await asyncio.gather(*(deep_pass(x) for x in light_results))
+    deep_results = [x for x in deep_results if x]
+    deep_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+    return {
+        "provider": ticker_provider,
+        "category": category,
+        "interval": interval,
+        "depth": depth,
+        "universe_available": len(normalized),
+        "eligible_count": len(normalized),
+        "scanned": len(candidates),
+        "light_analyzed": len(light_results),
+        "deep_analyzed": sum(x.get("analysis_stage") == "DEEP" for x in deep_results),
+        "returned": len(deep_results),
+        "truncated": len(normalized) > len(candidates),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "items": deep_results,
+        "trading_mode": "simulation",
+        "live_trading_enabled": False,
+        "note": "Scores are heuristic research ranks, not calibrated win probabilities. Deep analysis is limited to the highest-ranked light-pass candidates.",
+    }
+
+
 @app.get("/api/multi-timeframe/{symbol}")
 async def multi_timeframe(symbol: str, category: str = "spot"):
     if category not in ("spot", "linear"):
@@ -578,6 +739,132 @@ async def learning_monitoring_endpoint():
 async def engines():
     """Return implementation status for the 15 logical QUANT NEXUS engines."""
     return engine_registry()
+
+
+@app.get("/api/engine-catalog")
+async def engine_catalog_endpoint():
+    """Return the auditable 156-engine catalogue and honest implementation states."""
+    return engine_catalog()
+
+@app.get("/api/engine-suite/coverage")
+async def engine_suite_coverage():
+    """Show how many catalogue entries have callable runtime adapters."""
+    return catalogue_runtime_coverage()
+
+
+@app.get("/api/engine-suite/{symbol}")
+@app.get("/api/early-opportunity/{symbol}")
+async def market_engine_suite(symbol: str, category: str = "spot", interval: str = "15m",
+                              limit: int = Query(300, ge=60, le=500),
+                              engine_ids: str | None = None):
+    """Run the 156-engine catalogue against one validated, read-only market snapshot."""
+    if category not in ("spot", "linear") or interval not in INTERVALS:
+        raise HTTPException(status_code=400, detail="Invalid market category or interval")
+    symbol = symbol.upper()
+    if not symbol.endswith("USDT") or not symbol.replace("USDT", "").isalnum():
+        raise HTTPException(status_code=400, detail="Only USDT crypto symbols are supported")
+    raw_rows, provider = await get_market_klines(symbol, category, interval, limit)
+    analysis = analyze_klines(raw_rows, include_all_candles=True)
+    # Exchange kline endpoints commonly include a still-forming final candle.
+    # Exclude it from all signal calculations to prevent intrabar repainting.
+    completed = analysis["candles"][:-1]
+    if len(completed) < 60:
+        raise HTTPException(status_code=502, detail="At least 60 completed candles are required")
+    analysis["candles"] = completed
+    closes = [x["close"] for x in completed]
+    regime = market_regime(completed)
+    structure = market_structure(completed)
+
+    book_result, trade_result = await asyncio.gather(
+        get_orderbook(symbol, category), get_recent_trades(symbol, category),
+        return_exceptions=True
+    )
+    async with PAPER_LOCK:
+        paper_equity = PAPER_BALANCE
+        paper_positions = [dict(x) for x in PAPER_TRADES]
+    context = {
+        "symbol": symbol, "category": category, "interval": interval,
+        "candles": completed, "closes": closes,
+        "analysis": analysis, "regime": regime, "structure": structure,
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "account": {"equity": paper_equity},
+        "positions": paper_positions,
+        "closed_trades": [x for x in paper_positions if x.get("status") == "CLOSED"],
+    }
+    auxiliary = {"orderbook": False, "trade_flow": False, "derivatives": False}
+    if not isinstance(book_result, Exception):
+        bids, asks, book_provider = book_result
+        context["orderbook"] = {"bids": bids, "asks": asks}
+        auxiliary["orderbook"] = True
+    else:
+        logger.warning("Engine suite orderbook unavailable for %s: %s", symbol, type(book_result).__name__)
+    if not isinstance(trade_result, Exception):
+        trades, trade_provider = trade_result
+        context["trades"] = trades
+        auxiliary["trade_flow"] = True
+    else:
+        logger.warning("Engine suite trade flow unavailable for %s: %s", symbol, type(trade_result).__name__)
+    if category == "linear":
+        try:
+            oi_result, funding_result = await asyncio.gather(
+                bybit_get("/v5/market/open-interest", {
+                    "category": "linear", "symbol": symbol, "intervalTime": "5min", "limit": 50
+                }),
+                bybit_get("/v5/market/funding/history", {
+                    "category": "linear", "symbol": symbol, "limit": 20
+                })
+            )
+            summary = summarize_derivatives(oi_result.get("list", []), funding_result.get("list", []))
+            context["derivatives"] = {
+                "open_interest": summary.get("open_interest"),
+                "funding_rate": summary.get("funding_rate"),
+            }
+            auxiliary["derivatives"] = bool(context["derivatives"]["open_interest"] is not None and
+                                            context["derivatives"]["funding_rate"] is not None)
+        except Exception as exc:
+            logger.warning("Engine suite derivatives unavailable for %s: %s", symbol, type(exc).__name__)
+    # Populate independent 5m/1h/4h snapshots for timeframe-specific adapters.
+    frames = {}
+    frame_names = ("5m", "1h", "4h")
+    frame_results = await asyncio.gather(
+        *(get_market_klines(symbol, category, frame, 120) for frame in frame_names),
+        return_exceptions=True
+    )
+    for frame, frame_result in zip(frame_names, frame_results):
+        if isinstance(frame_result, Exception):
+            logger.warning("Engine suite timeframe %s unavailable for %s: %s", frame, symbol, type(frame_result).__name__)
+            continue
+        frame_rows, frame_provider = frame_result
+        try:
+            frame_analysis = analyze_klines(frame_rows, include_all_candles=True)
+            frame_candles = frame_analysis["candles"][:-1]
+            if frame_candles:
+                frames[frame] = {
+                    "timeframe": frame, "direction": frame_analysis["direction"],
+                    "score": frame_analysis["score"], "provider": frame_provider,
+                    "completed_bars": len(frame_candles),
+                }
+        except HTTPException:
+            continue
+    context["timeframes"] = frames
+    context["system_health"] = {
+        "api": "ok", "candles": "ok", "orderbook": "ok" if auxiliary["orderbook"] else "degraded",
+        "trade_flow": "ok" if auxiliary["trade_flow"] else "degraded",
+        "timeframes": "ok" if len(frames) >= 2 else "degraded",
+        "paper_ledger": "ok",
+    }
+    selected = [x.strip().upper() for x in engine_ids.split(",") if x.strip()] if engine_ids else None
+    suite = run_engine_suite(context, selected)
+    early = early_opportunity_assessment(context)
+    return {
+        "symbol": symbol, "category": category, "interval": interval,
+        "provider": provider, "completed_candles": len(completed),
+        "auxiliary_data": auxiliary, "market_regime": regime,
+        "market_structure": structure, "early_opportunity": early,
+        "engine_suite": suite, "engine_coverage": catalogue_runtime_coverage(),
+        "trading_mode": "simulation", "live_trading_enabled": False,
+    }
+
 
 @app.get("/api/derivatives/{symbol}")
 async def derivatives(symbol: str):

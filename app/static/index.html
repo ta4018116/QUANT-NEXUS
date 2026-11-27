@@ -149,12 +149,13 @@
 @media(max-width:900px){.dashboard-home{grid-template-columns:repeat(3,minmax(0,1fr))}.engine-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px){.dashboard-home{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:7px 5px}.home-card{min-height:105px;padding:11px;border-radius:11px}.home-card b{font-size:13px}.home-card small{font-size:10px}.home-card .card-icon{font-size:22px}.page-toolbar{margin:6px;padding:8px}.page-mode .layout{padding:0 6px}.opp-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.opp-score{font-size:18px}.engine-grid{grid-template-columns:1fr}.opportunity-card{padding:10px}.home-title{font-size:15px}}
 @media(max-width:360px){.dashboard-home{grid-template-columns:repeat(2,minmax(0,1fr))}.home-card{min-height:96px;padding:9px}}
-.command.selected{border-color:var(--green);background:#06251a}.command small{display:block;color:var(--muted);font-size:10px;margin-top:5px}.command b{display:block;color:var(--green);font-size:10px;margin-top:5px}</style><link rel="stylesheet" href="/static/monitoring-room.css"></head><body>
+.early-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.early-card{background:#061522;border:1px solid #12617b;border-radius:10px;padding:10px;cursor:pointer;min-width:0}.early-card:hover{border-color:var(--green);box-shadow:0 0 12px #20ff8320}.early-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:900}.early-card-meta{display:flex;justify-content:space-between;gap:6px;color:var(--muted);font-size:11px;margin:7px 0}.early-card-reasons{font-size:11px;color:#c9e5ed;line-height:1.7}.early-card-progress{height:6px;background:#163344;border-radius:8px;overflow:hidden;margin:7px 0}.early-card-progress i{display:block;height:100%;background:linear-gradient(90deg,#0bcf72,#20ff83)}@media(max-width:600px){.early-results{grid-template-columns:1fr}.early-card{padding:11px}}.command.selected{border-color:var(--green);background:#06251a}.command small{display:block;color:var(--muted);font-size:10px;margin-top:5px}.command b{display:block;color:var(--green);font-size:10px;margin-top:5px}</style><link rel="stylesheet" href="/static/monitoring-room.css"></head><body>
 <header class="top"><div class="brand">◈ QUANT <em>NEXUS</em><small>منصة التحليل الكمي الذكي</small></div><span class="pill mode">● PAPER TRADING (تجريبي)</span><span class="pill disabled-live">⛔ التداول الحقيقي: معطّل</span><button id="stop" class="btn stop" disabled>■ إيقاف</button><button id="run" class="btn run">▶ تشغيل الماسح</button><label>السوق <select id="category"><option value="spot">Spot</option><option value="linear">Futures</option></select></label><label>العمق <select id="depth"><option>32</option><option>64</option><option>128</option><option>256</option><option>AUTO</option></select></label><label>الإطار <select id="tf"><option>5m</option><option>15m</option><option>1h</option><option>4h</option><option>1d</option></select></label></header>
 <section class="stats"><div class="stat"><span>فرص قوية</span><b id="strong">—</b></div><div class="stat"><span>تحتاج تأكيد</span><b class="gold" id="confirm">—</b></div><div class="stat"><span>مخاطر مرتفعة</span><b class="negative" id="risk">—</b></div><div class="stat"><span>العملات المرصودة</span><b id="tracked">—</b></div><div class="stat"><span>حالة الماسح</span><b id="status">متوقف</b></div><div class="stat"><span>مصدر البيانات</span><b id="provider" style="font-size:14px">—</b></div></section>
 <section id="dashboardHome" class="dashboard-home">
 <div class="home-title"><span>QUANT NEXUS X · مركز القيادة</span><span class="pill mode">● تداول تجريبي فقط</span></div>
 <button class="home-card" data-open-page="opportunities"><span class="card-icon">◎</span><b>فرص التداول</b><small>قوة الإشارة · الدخول · وقف الخسارة · الأهداف</small><strong id="homeOppCount">افتح الفرص ←</strong></button>
+<button class="home-card" data-open-page="early"><span class="card-icon">⌁</span><b>اصطياد الفرص المبكرة</b><small>فحص واسع ثم تحليل عميق لأفضل المرشحين</small><strong>ابدأ Early Hunter ←</strong></button>
 <button class="home-card" data-open-page="scanner"><span class="card-icon">◉</span><b>ماسح السوق والرادار</b><small>مسح Spot وFutures وعمق 32–256 وAUTO</small><strong>فتح الماسح ←</strong></button>
 <button class="home-card" data-open-page="orders"><span class="card-icon">▣</span><b>الأوامر والمحفظة</b><small>شراء وبيع تجريبي ومتابعة الصفقات</small><strong>فتح التداول التجريبي ←</strong></button>
 <button class="home-card" data-open-page="chart"><span class="card-icon">▥</span><b>الرسم البياني</b><small>شموع ومؤشرات وتحليل العملة</small><strong>فتح الرسم ←</strong></button>
@@ -173,6 +174,7 @@
 <div class="panel" id="commandsPanel"><div class="head">⌘ مكتبة الأوامر التحليلية</div><div class="body"><input id="cmdSearch" class="field" style="width:100%" placeholder="ابحث في الأوامر..."><div id="commandSelectionCount" class="muted" style="margin:8px 0">4 أوامر مفعّلة</div><div class="muted" style="font-size:11px;margin-bottom:8px">اختر الأوامر التي تريد أن يبحث الماسح عنها. النتائج لا تظهر إلا إذا طابقت أمراً مفعّلاً.</div><div id="commands" class="commands"></div></div></div></section>
 <section class="col"><div class="panel" id="radarPanel"><div class="head">◎ رادار السوق الذكي <strong id="radarState">READY</strong></div><div class="radarwrap"><div class="radarinfo">قائمة المسح: <b id="pool">TOP 50</b><br>المطابقات: <b id="matches">0</b><br>قرب الدعم: <b id="near">0</b><br>حجم مرتفع: <b id="highvol">0</b><br>الحالة: <b class="positive" id="radarRun">READY</b></div><div class="radar" id="radar"><span class="radarlabel" style="top:48%;left:57%">SCAN</span></div><div class="filters"><b>⚑ فلاتر المسح</b><label><input type="checkbox" id="fSupport" checked> مناطق الدعم</label><label><input type="checkbox" id="fVolume" checked> حجم تداول مرتفع</label><label><input type="checkbox" id="fNear" checked> قرب الدعم ≤ 1%</label><label><input type="checkbox" id="fUnv"> حجم غير معتاد</label><label><input type="checkbox" id="fBreak"> اختراق النطاق</label><small class="muted">الإطار الزمني: <b id="tfLabel">5m</b></small></div></div></div>
 <div class="panel" id="chartPanel"><div class="charthead"><b>▥ <span id="chartSymbol">—</span> · <span id="chartTf">5m</span></b><b class="bigprice" style="font-size:21px" id="chartPrice">—</b></div><canvas id="chart" class="chart"></canvas><div class="indicators"><span class="tag" id="rsiTag">RSI —</span><span class="tag" id="emaTag">EMA —</span><span class="tag" id="macdTag">MACD —</span><span class="tag" id="vwapTag">VWAP —</span><span class="tag" id="rrTag">R:R —</span></div></div>
+<div class="panel" id="earlyHunterPanel"><div class="head">⌁ اصطياد الفرص قبل الاختراق <span class="muted">EARLY OPPORTUNITY HUNTER</span></div><div class="body"><div class="actions"><button class="btn run" id="earlyHunterRun">ابدأ الفحص المبكر</button><label class="muted">التحليل العميق <select id="earlyDeepLimit" class="field"><option value="8">أفضل 8</option><option value="16" selected>أفضل 16</option><option value="24">أفضل 24</option><option value="32">أفضل 32</option></select></label></div><div id="earlyHunterMeta" class="muted" style="margin:10px 0">افحص السوق بحثاً عن الانضغاط والتجميع والحجم والسيولة قبل الاختراق.</div><div id="earlyHunterResults" class="early-results"><div class="muted">لم يبدأ الفحص بعد.</div></div></div></div>
 <div class="panel" id="opportunitiesPanel"><div class="head">🎯 فرص التداول · قوة الإشارة وخطة الدخول والخروج <span class="muted">حسب التقييم</span></div><div class="body" id="signals"><div class="muted">لا توجد نتائج بعد</div><div id="entryTicker" class="entry-ticker"><b>مراقبة الدخول</b><div class="muted">اختر عملة من الفرص لمتابعة تأكيد الإشارة وحركة الصفقة</div><div class="ticker-track"><i id="tickerProgress"></i></div></div></div></div></section>
 <section class="col"><div class="panel" id="coinsPanel"><div class="head">◉ قائمة العملات · البث المباشر <span class="muted">(TOP SCAN)</span></div><div id="feed"><div class="body muted">بانتظار بيانات السوق...</div></div></div>
 <div class="panel" id="analysisPanel"><div class="head">♧ تقييم الإشارة الذكي</div><div class="body"><div class="bigprice" id="aiScore">—</div><p id="aiText" class="muted">اختر عملة لعرض تحليلها وأسباب التقييم.</p><div id="reasons" class="muted" style="font-size:11px;margin:8px 0">أسباب التقييم ستظهر هنا.</div><div class="kv"><div><small>الدخول</small><b id="entry">—</b></div><div><small>وقف الخسارة</small><b id="sl">—</b></div><div><small>الهدف الأول</small><b id="tp1">—</b></div><div><small>الهدف الثاني</small><b id="tp2">—</b></div></div></div></div>
@@ -182,7 +184,7 @@
 <div id="intelOutput" class="logrow muted" style="margin-top:12px">اختر عملة ثم شغّل أحد محركات التحليل.</div>
 <div id="backtestOutput" class="kv" style="margin-top:12px"></div>
 </div></div>
-<div class="panel" id="enginesPanel"><div class="head">🧠 QUANT BRAIN · سجل المحركات الخمسة عشر <span class="muted" id="engineCounts">جارٍ التحميل...</span></div><div class="body"><div id="engineSummary" class="kv"></div><div id="engineGrid" class="engine-grid" style="margin-top:12px"><div class="muted">جارٍ تحميل سجل المحركات...</div></div><div id="engineError" class="muted" style="margin-top:10px"></div></div></div><div class="panel" id="riskPanel"><div class="head">⚖️ حاسبة حجم الصفقة وإدارة المخاطر</div><div class="body">
+<div class="panel" id="enginesPanel"><div class="head">🧠 QUANT BRAIN · سجل المحركات الـ156 <span class="muted" id="engineCounts">جارٍ التحميل...</span></div><div class="body"><div id="engineSummary" class="kv"></div><div id="engineGrid" class="engine-grid" style="margin-top:12px"><div class="muted">جارٍ تحميل سجل المحركات...</div></div><div id="engineError" class="muted" style="margin-top:10px"></div></div></div><div class="panel" id="riskPanel"><div class="head">⚖️ حاسبة حجم الصفقة وإدارة المخاطر</div><div class="body">
 <div class="kv"><div><small>قيمة المحفظة</small><input class="field" id="riskEquity" type="number" value="10000" min="1"></div><div><small>المخاطرة % (حد أقصى 2%)</small><input class="field" id="riskPct" type="number" value="1" min=".1" max="2" step=".1"></div><div><small>سعر الدخول</small><input class="field" id="riskEntry" type="number" min=".0000001"></div><div><small>وقف الخسارة</small><input class="field" id="riskStop" type="number" min=".0000001"></div></div>
 <button class="btn run" id="calcRisk" style="margin-top:10px;width:100%">احسب حجم الصفقة</button><div id="riskResult" class="muted" style="margin-top:9px">سيتم حساب الكمية والمبلغ المعرض للخطر.</div>
 </div></div></section>
@@ -214,6 +216,49 @@ function render(items){lastItems=items;const visible=applyRadarFilters(items);$(
 function scanIntervalMs(){let d=$('depth').value;return d==='AUTO'||Number(d)>=128?60000:20000}
 function scheduleScan(){if(timer)clearInterval(timer);timer=setInterval(()=>scan().catch(e=>log(e.message,false)),scanIntervalMs())}
 async function scan(){if(scanInFlight)return;scanInFlight=true;try{if(!selectedCommandIds.size)throw Error('فعّل أمراً واحداً على الأقل من مكتبة الأوامر قبل المسح');let depth=$('depth').value;let limit=depth==='AUTO'?500:Number(depth);let minTurnover=depth==='AUTO'?0:1000000;let url='/api/scan?category='+cat()+'&interval='+tf()+'&limit='+limit+'&depth='+depth+'&min_turnover='+minTurnover+'&direction=all&command_ids='+encodeURIComponent([...selectedCommandIds].join(','));let d=await api(url);$('provider').textContent=d.provider||'—';$('pool').textContent=depth==='AUTO'?'AUTO · '+d.scanned+'/'+d.universeAvailable+(d.truncated?' · cap 500':''):'TOP '+d.effectiveDepth;render(d.items||[]);log('مسح الأوامر: '+[...selectedCommandIds].length+' · '+d.scanned+'/'+d.universeAvailable+' زوجاً · '+(d.returned||0)+' تطابق')}finally{scanInFlight=false}}
+
+async function runEarlyHunter(){
+ const button=$('earlyHunterRun'),host=$('earlyHunterResults'),meta=$('earlyHunterMeta');
+ if(button.disabled)return;
+ button.disabled=true;button.textContent='جارٍ اصطياد الفرص...';
+ host.textContent='يتم فحص الأصول المؤهلة ثم تحليل أعلى المرشحين بعمق...';
+ try{
+  const depth=$('depth').value;
+  const maxCandidates=depth==='AUTO'?500:Number(depth);
+  const deepLimit=Number($('earlyDeepLimit').value)||16;
+  const query='/api/early-opportunity-scan?category='+cat()+'&interval='+tf()+'&depth='+depth+'&max_candidates='+maxCandidates+'&deep_limit='+deepLimit+'&min_turnover='+(depth==='AUTO'?0:1000000);
+  const data=await api(query);
+  meta.textContent='السوق '+data.category+' · الإطار '+data.interval+' · المؤهل '+data.eligible_count+' · فُحص أولياً '+data.light_analyzed+' · تحليل عميق '+data.deep_analyzed+' · '+(data.truncated?'الكون محدود بالعمق المختار':'اكتمل فحص الكون المؤهل');
+  host.replaceChildren();
+  const labels={GOLD_EARLY:'ذهبي مبكر',GREEN_WATCH:'أخضر للمراقبة',SILVER_EARLY:'فضي مبكر',BREAKOUT_CONFIRMED:'اختراق مؤكد',NO_SETUP:'لا توجد إشارة',UNRATED:'غير مكتمل'};
+  const color=t=>t==='GOLD_EARLY'||t==='BREAKOUT_CONFIRMED'?'gold':t==='GREEN_WATCH'?'positive':t==='SILVER_EARLY'?'muted':'negative';
+  for(const item of (data.items||[]).slice(0,32)){
+   const card=document.createElement('article');card.className='early-card';card.tabIndex=0;
+   const head=document.createElement('div');head.className='early-card-head';
+   const symbol=document.createElement('b');symbol.textContent=item.symbol||'—';
+   const tier=document.createElement('span');tier.className='badge '+color(item.tier);tier.textContent=labels[item.tier]||item.tier||'—';
+   head.append(symbol,tier);
+   const line=document.createElement('div');line.className='early-card-meta';
+   const score=document.createElement('strong');score.textContent='التقييم '+(item.score??'—')+'/100';
+   const stage=document.createElement('span');stage.textContent=item.analysis_stage==='DEEP'?'تحليل عميق':'فحص أولي';
+   line.append(score,stage);
+   const bar=document.createElement('div');bar.className='early-card-progress';
+   const fill=document.createElement('i');fill.style.width=Math.max(0,Math.min(100,Number(item.score)||0))+'%';bar.append(fill);
+   const price=document.createElement('div');price.className='early-card-meta';price.textContent='السعر '+fmt(item.last_price)+' · 24h '+fmt(item.change24h_pct)+'% · دوران '+fmt((item.turnover24h||0)/1e6)+'M';
+   const reasons=document.createElement('div');reasons.className='early-card-reasons';
+   reasons.textContent=(item.reasons||[]).slice(0,3).join(' · ')||'لا توجد أدلة موجبة كافية';
+   const missing=document.createElement('small');missing.className='muted';missing.textContent='التأكيدات الناقصة: '+((item.missing_confirmations||[]).join('، ')||'لا توجد');
+   card.append(head,line,bar,price,reasons,missing);
+   const open=()=>{selectCoin(item.symbol);openPage('opportunities')};
+   card.addEventListener('click',open);card.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();open()}});
+   host.append(card);
+  }
+  if(!data.items?.length)host.textContent='لم تظهر فرص مؤهلة في هذه الدورة. لا تعني النتيجة تعطل الماسح؛ يمكن تغيير السوق أو الإطار أو العمق.';
+  log('Early Hunter: '+data.scanned+' أصل · '+data.deep_analyzed+' تحليل عميق · '+data.returned+' نتيجة');
+ }catch(error){meta.textContent='فشل الفحص: '+error.message;host.textContent='تعذر إكمال الفحص. راجع سجل النظام ومصدر البيانات.';log('فشل Early Hunter: '+error.message,false)}
+ finally{button.disabled=false;button.textContent='ابدأ الفحص المبكر'}
+}
+
 async function selectCoin(symbol){selected=symbol;$('selectedName').textContent=symbol;$('chartSymbol').textContent=symbol;document.querySelectorAll('.coin').forEach(x=>x.classList.toggle('active',x.dataset.symbol===symbol));try{let d=await api('/api/klines/'+encodeURIComponent(symbol)+'?category='+cat()+'&interval='+tf()+'&limit=120');lastAnalysis=d;updateAnalysis(d);drawChart(d.candles||[])}catch(e){log('تعذر تحليل '+symbol+': '+e.message,false)}}
 function updateAnalysis(d){$('riskEntry').value=d.entry||d.price||'';$('riskStop').value=d.stopLoss||'';$('reasons').innerHTML=(d.reasons||[]).map(x=>'• '+x).join('<br>')||'لا توجد أسباب كافية';$('price').textContent=fmt(d.price);$('chartPrice').textContent=fmt(d.price);$('change').textContent=d.direction+' · '+(d.score||0)+'/100';$('support').textContent=fmt(d.support);$('resistance').textContent=fmt(d.resistance);$('rsi').textContent=fmt(d.rsi);$('ema').textContent=fmt(d.ema20)+' / '+fmt(d.ema50);$('volume').textContent=d.volumeRatio?d.volumeRatio+'x':'—';$('score').textContent=d.score+'/100';$('aiScore').textContent=d.score+'/100';let c=classification(d);$('aiText').textContent=c[0]+' · '+(d.direction==='LONG'?'ميل صاعد':d.direction==='SHORT'?'ميل هابط':'اتجاه غير حاسم')+' · مراقبة ما قبل الحركة '+fmt(d.preMoveScore)+'/100 · ATR '+fmt(d.atrPercent)+'% · RSI '+fmt(d.rsi)+' · EMA20 '+fmt(d.ema20)+' · EMA50 '+fmt(d.ema50);$('reasons').innerHTML=(d.reasons||[]).concat(d.preMoveReasons?.length?['مؤشرات متابعة مبكرة: '+d.preMoveReasons.join('، ')]:[]).map(x=>'• '+x).join('<br>')||'لا توجد أسباب كافية';$('entry').textContent=fmt(d.entry);$('sl').textContent=fmt(d.stopLoss);$('tp1').textContent=fmt(d.target1);$('tp2').textContent=fmt(d.target2);$('rsiTag').textContent='RSI(14) '+fmt(d.rsi);$('emaTag').textContent='EMA20 '+fmt(d.ema20);$('macdTag').textContent='MACD '+fmt(d.macdHistogram);$('vwapTag').textContent='VWAP '+fmt(d.vwap);$('rrTag').textContent='R:R '+(d.target1&&d.stopLoss?'1:1.5':'—');$('tfLabel').textContent=tf();$('chartTf').textContent=tf()}
 function drawChart(c){let cv=$('chart'),ctx=cv.getContext('2d'),w=cv.clientWidth,h=cv.clientHeight,ratio=devicePixelRatio||1;cv.width=w*ratio;cv.height=h*ratio;ctx.scale(ratio,ratio);ctx.fillStyle='#020a12';ctx.fillRect(0,0,w,h);if(!c.length)return;let lo=Math.min(...c.map(x=>x.low)),hi=Math.max(...c.map(x=>x.high)),pad=(hi-lo)*.12||1;lo-=pad;hi+=pad;let y=v=>h-18-(v-lo)/(hi-lo)*(h-36),step=w/c.length;ctx.strokeStyle='#123142';ctx.lineWidth=1;for(let j=1;j<5;j++){let yy=h*j/5;ctx.beginPath();ctx.moveTo(0,yy);ctx.lineTo(w,yy);ctx.stroke()}c.forEach((x,i)=>{let xx=i*step+step/2,up=x.close>=x.open;ctx.strokeStyle=up?'#20ff83':'#ff4268';ctx.fillStyle=ctx.strokeStyle;ctx.beginPath();ctx.moveTo(xx,y(x.high));ctx.lineTo(xx,y(x.low));ctx.stroke();let top=y(Math.max(x.open,x.close)),bottom=y(Math.min(x.open,x.close));ctx.fillRect(xx-step*.28,top,Math.max(2,step*.56),Math.max(2,bottom-top))})}
@@ -261,11 +306,13 @@ $('run').onclick=async()=>{if(timer)return; $('run').disabled=true;$('stop').dis
 $('stop').onclick=()=>{if(timer)clearInterval(timer);timer=null;$('run').disabled=false;$('stop').disabled=true;status('STOPPED');log('تم إيقاف الماسح')};
 $('tf').onchange=()=>{if(selected)selectCoin(selected);$('tfLabel').textContent=tf()};$('category').onchange=()=>{$('leverage').disabled=cat()==='spot';$('paperShort').disabled=cat()==='spot';$('paperShort').title=cat()==='spot'?'البيع على المكشوف متاح في Futures التجريبي فقط':'';if(selected)selectCoin(selected);if(timer)scan().catch(e=>log(e.message,false))};
 $('depth').onchange=()=>{if(timer){scan().catch(e=>log(e.message,false));scheduleScan()}};
+$('earlyHunterRun').onclick=runEarlyHunter;
 async function init(){try{let h=await api('/health');if(h.live_trading_enabled!==false)throw Error('حالة التداول الحقيقي غير آمنة');$('provider').textContent='متصل';let engine=await api('/api/engine/status');$('intelOutput').textContent='المحرك '+engine.engine_version+' · مزودو Crypto Spot/Futures · تخزين '+engine.paper_storage+(engine.durable_storage_configured?' دائم مهيأ':' محلي/قد يكون مؤقتاً')+' · التداول الحقيقي معطّل';}catch(e){log('فحص الاتصال: '+e.message,false)}await refreshPaper();try{let d=await api('/api/markets?category=spot&limit=10');$('provider').textContent=d.provider||'—';if(d.items?.length){let x=d.items[0];selected=x.symbol;$('selectedName').textContent=x.symbol;$('chartSymbol').textContent=x.symbol;$('price').textContent=fmt(x.lastPrice);$('change').textContent=fmt(x.change24h)+'%';selectCoin(x.symbol)}}catch(e){log('تعذر جلب السوق: '+e.message,false)}}
 
 const PAGE_CONFIG={
 dashboard:{title:'لوحة التحكم',panels:[]},
 opportunities:{title:'فرص التداول',panels:['opportunitiesPanel','analysisPanel']},
+early:{title:'اصطياد الفرص المبكرة',panels:['earlyHunterPanel']},
 scanner:{title:'ماسح السوق والرادار',panels:['radarPanel']},
 orders:{title:'الأوامر والمحفظة التجريبية',panels:['ordersPanel']},
 chart:{title:'الرسم البياني',panels:['chartPanel']},
@@ -289,6 +336,7 @@ function openPage(key){
  if(key==='intelligence')loadEngines();
  if(key==='opportunities')renderOpportunityCards(lastItems);
  if(key==='scanner'){$('run').focus()}
+ if(key==='early'){$('earlyHunterRun').focus()}
  window.scrollTo({top:0,behavior:'smooth'});
 }
 $('dashboardHome').addEventListener('click',e=>{const b=e.target.closest('[data-open-page]');if(b)openPage(b.dataset.openPage)});
@@ -318,10 +366,10 @@ $('signals').addEventListener('click',e=>{const add=e.target.closest('[data-add-
 async function loadEngines(){
  $('engineError').textContent='';$('engineGrid').innerHTML='<div class="muted">جارٍ تحميل سجل المحركات...</div>';
  try{
-  const d=await api('/api/engines');
+  const d=await api('/api/engine-catalog');
   $('engineCounts').textContent=d.total+' محرك';
   $('engineSummary').innerHTML='<div><small>مكتملة</small><b class="positive">'+d.counts.implemented+'</b></div><div><small>جزئية</small><b class="gold">'+d.counts.partial+'</b></div><div><small>مخططة</small><b>'+d.counts.planned+'</b></div><div><small>وضع التشغيل</small><b>Simulation فقط</b></div>';
-  $('engineGrid').innerHTML=d.engines.map(x=>'<article class="engine-card '+(x.accent==='purple'?'engine-purple':'')+'"><span class="engine-status '+x.status+'">'+({implemented:'مكتمل',partial:'جزئي',planned:'مخطط'}[x.status]||x.status)+'</span><b>'+x.name_ar+'</b><small>'+x.name_en+'</small><small style="margin-top:7px">'+(x.capabilities||[]).join(' · ')+'</small>'+(x.gaps?.length?'<small class="gold" style="margin-top:7px">المتبقي: '+x.gaps.join(' · ')+'</small>':'')+'</article>').join('');
+  $('engineGrid').innerHTML=d.engines.map(x=>'<article class="engine-card"><span class="engine-status '+x.status+'">'+({implemented:'مكتمل',partial:'جزئي',planned:'مخطط'}[x.status]||x.status)+'</span><b>'+x.name_ar+'</b><small>'+x.name+' · '+x.group+'</small><small style="margin-top:7px">'+(x.capabilities||[]).join(' · ')+'</small>'+(x.gaps?.length?'<small class="gold" style="margin-top:7px">المتبقي: '+x.gaps.join(' · ')+'</small>':'')+'</article>').join('');
   if(d.live_trading_enabled!==false)throw Error('فشل فحص الأمان: حالة التداول الحقيقي غير معطلة');
  }catch(e){$('engineGrid').innerHTML='<div class="muted">تعذر تحميل المحركات.</div>';$('engineError').textContent=e.message+' · أعد فتح الصفحة للمحاولة.'}
 }

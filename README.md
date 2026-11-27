@@ -104,3 +104,29 @@ scores are heuristic and are not calibrated win probabilities.
 - The central monitoring room displays live liquidation events, liquidated LONG/SHORT notional and a rolling recent-event list for the selected symbol.
 - The feed reports executed liquidation prints only; it is not a complete map of positions at risk. The stream is read-only and cannot place orders.
 - Live trading remains disabled; all portfolio and order workflows remain simulation-only.
+
+## 156-engine runtime catalogue and early opportunity evaluation
+- `GET /api/engine-catalog` returns the canonical 156-entry catalogue split across 12 workstreams. Each entry has an auditable `implemented`, `partial`, or `planned` status.
+- `GET /api/engine-suite/coverage` reports callable adapter coverage. A callable adapter is not a claim that every data feed, trained model, or production capability is present.
+- `GET /api/engine-suite/{symbol}?category=spot|linear&interval=15m` evaluates the engine suite against one validated market snapshot. The endpoint uses completed candles for signal calculations and obtains optional order-book, trade-flow and 5m/1h/4h context when available.
+- `GET /api/early-opportunity/{symbol}?category=spot|linear&interval=15m` returns the same evidence bundle with emphasis on pre-breakout compression, accumulation proxy, volume expansion, order-book imbalance, trade flow, structure and derivatives context.
+- Results include explicit missing-input states. News, options, cross-market feeds, model artifacts and full autonomous learning are not fabricated when unavailable.
+- The early-opportunity score is a heuristic research score, not a calibrated probability or a guaranteed signal. The entry zone and targets are watch references only; the endpoint never creates a paper order.
+- The runtime suite routes all 156 catalogue IDs. Engines requiring unavailable feeds or trained model artifacts return `blocked_missing_input` until their dependencies are integrated and validated.
+- Trading mode remains simulation; `live_trading_enabled` is false; no live-order endpoint or exchange trade credential is introduced.
+
+## Market-wide early opportunity scan
+- `GET /api/early-opportunity-scan?category=spot&interval=15m&depth=AUTO&max_candidates=256&deep_limit=24`
+- Stage 1 checks up to the selected 32/64/128/256/AUTO universe using completed OHLCV candles and a cheap early-setup score.
+- Stage 2 deep-checks only the highest-ranked candidates with order-book depth and recent trade prints; linear futures also request funding and open-interest context when available.
+- A missing provider result is recorded as a missing confirmation rather than silently treated as positive evidence.
+- The endpoint never creates paper or live orders. It returns research watch-ranks and the exact scan/deep-scan counts.
+
+## Additional research engines
+- A small two-hidden-layer MLP and tabular Q-learning simulator are included as research adapters with chronological holdouts. Neither is a persisted production model, and neither can authorize an order.
+- Options analytics calculate Black-Scholes Greeks and implied volatility only when a valid options chain and underlying mark are supplied. Net dealer gamma is omitted unless dealer-side positioning is explicitly supplied.
+- LSTM and Transformer now have deterministic research adapters: a fixed-gate recurrent feature extractor and a single-head self-attention feature extractor, each with a trained logistic readout and purged chronological holdout. They are intentionally marked partial because their recurrent/attention projection weights are not end-to-end trained or persisted. The XGBoost-style adapter is a pure-Python research implementation, not the upstream XGBoost library.
+
+- The statistical ML adapters score the latest completed candle for live inference; chronological training and holdout partitions are separate, and all model outputs remain research-only.
+- A pure-Python second-order gradient-boosted tree engine is included as an XGBoost-style research implementation. It is not the upstream XGBoost package.
+- No catalogue entries are left in the planned state. All 156 IDs have callable runtime adapters. Two sequence-model adapters are research-grade partial implementations with explicit architectural limits; all other partial engines still require the feed or service inputs named in their catalogue gaps.
