@@ -27,7 +27,7 @@ class EngineEventStore:
         )
         if self.path != ":memory:":
             Path(self.path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
-        self.durable_configured = os.getenv("ENGINE_EVENT_STORAGE_DURABLE", "false").lower() == "true"
+        self.durable_configured = os.getenv("ENGINE_EVENT_STORAGE_DURABLE", os.getenv("PAPER_STORAGE_DURABLE", "false")).lower() == "true"
         self._initialize()
 
     def _connect(self):
