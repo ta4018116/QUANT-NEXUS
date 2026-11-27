@@ -7,7 +7,8 @@ market data, probabilities, or orders are produced.
 """
 from __future__ import annotations
 
-from math import isfinite, sqrt
+from math import exp, isfinite, sqrt
+import random
 from statistics import mean, median, pstdev
 from typing import Any
 
@@ -623,6 +624,279 @@ def _system_health(ctx):
     if not isinstance(health,dict): return _blocked("runtime health snapshot required",["system_health"])
     return _ready({"services":health,"degraded":any(str(v).lower() not in ("ok","healthy","up") for v in health.values())},
                   "read-only infrastructure health snapshot")
+
+
+
+
+def _ml_dataset(ctx, horizon: int = 3):
+    rows, err = _base(ctx, 140)
+    if err: return None, err
+    samples=[]
+    start=55
+    for i in range(start, len(rows)-horizon):
+        hist=rows[:i+1]
+        closes=[x["close"] for x in hist]
+        current=hist[-1]
+        vol_base=mean(x["volume"] for x in hist[-21:-1]) if len(hist)>=21 else 0
+        atr=_atr(hist[-30:])
+        rsi=_rsi(closes[-60:])
+        e20=_ema(closes[-50:],20); e50=_ema(closes[-60:],50)
+        span=current["high"]-current["low"]
+        features=[
+            closes[-1]/closes[-2]-1 if closes[-2] else 0,
+            closes[-1]/closes[-4]-1 if closes[-4] else 0,
+            closes[-1]/closes[-6]-1 if closes[-6] else 0,
+            (current["close"]-current["open"])/current["close"],
+            (current["close"]-current["low"])/span if span else 0.5,
+            current["volume"]/vol_base if vol_base>0 else 1.0,
+            atr/current["close"] if atr else 0.0,
+            (rsi/100.0) if rsi is not None else 0.5,
+            ((e20/e50)-1) if e20 and e50 else 0.0,
+        ]
+        future=rows[i+horizon]["close"]
+        label=1 if future>current["close"] else 0
+        samples.append((features,label))
+    if len(samples)<60:
+        return None,_blocked("too_few_chronological_training_samples",["at_least_60_labeled_samples"])
+    return samples,None
+
+
+def _standardize(train, test):
+    width=len(train[0][0])
+    means=[mean(row[0][j] for row in train) for j in range(width)]
+    scales=[]
+    for j in range(width):
+        sd=pstdev(row[0][j] for row in train)
+        scales.append(sd if sd>1e-12 else 1.0)
+    def transform(rows):
+        return [([(row[0][j]-means[j])/scales[j] for j in range(width)],row[1]) for row in rows]
+    return transform(train),transform(test),means,scales
+
+
+def _sigmoid(x):
+    x=max(-35.0,min(35.0,x))
+    return 1.0/(1.0+exp(-x))
+
+
+def _logistic_model(ctx):
+    dataset,err=_ml_dataset(ctx)
+    if err: return err
+    split=max(40,int(len(dataset)*0.8))
+    train_raw,test_raw=dataset[:split],dataset[split:]
+    train,test,means,scales=_standardize(train_raw,test_raw)
+    width=len(train[0][0]); weights=[0.0]*width; bias=0.0
+    lr=0.04; l2=0.015; epochs=260
+    for _ in range(epochs):
+        grad=[0.0]*width; gb=0.0
+        for features,label in train:
+            p=_sigmoid(sum(w*x for w,x in zip(weights,features))+bias)
+            error=p-label
+            for j,x in enumerate(features): grad[j]+=error*x
+            gb+=error
+        n=len(train)
+        weights=[weights[j]-lr*(grad[j]/n+l2*weights[j]) for j in range(width)]
+        bias-=lr*gb/n
+    probs=[_sigmoid(sum(w*x for w,x in zip(weights,features))+bias) for features,_ in test]
+    labels=[label for _,label in test]
+    accuracy=sum((p>=0.5)==bool(y) for p,y in zip(probs,labels))/len(labels) if labels else None
+    brier=mean((p-y)**2 for p,y in zip(probs,labels)) if labels else None
+    latest_features=dataset[-1][0]
+    normalized=[(latest_features[j]-means[j])/scales[j] for j in range(width)]
+    probability=_sigmoid(sum(w*x for w,x in zip(weights,normalized))+bias)
+    names=["return_1","return_3","return_5","body_pct","close_location","volume_ratio","atr_pct","rsi_scaled","ema_gap"]
+    explanation=sorted([{"feature":names[j],"coefficient":round(weights[j],6),
+                         "standardized_contribution":round(weights[j]*normalized[j],6)}
+                        for j in range(width)],key=lambda x:abs(x["standardized_contribution"]),reverse=True)
+    return _ready({"model":"regularized_logistic_regression","horizon_bars":3,
+                   "training_samples":len(train),"holdout_samples":len(test),
+                   "chronological_holdout_accuracy_pct":round(accuracy*100,2) if accuracy is not None else None,
+                   "holdout_brier_score":round(brier,5) if brier is not None else None,
+                   "research_probability_up":round(probability,5),
+                   "feature_contributions":explanation[:5],
+                   "warning":"Small-sample research model; accuracy is not evidence of future edge and probability is not independently calibrated."},
+                  "pure-Python logistic regression; chronological 80/20 split, standardized on training data only")
+
+
+def _tree_gini(labels):
+    if not labels: return 0.0
+    p=sum(labels)/len(labels)
+    return 2*p*(1-p)
+
+
+def _build_tree(rows, depth, rng):
+    labels=[x[1] for x in rows]
+    majority=1 if sum(labels)>=len(labels)/2 else 0
+    if depth<=0 or len(set(labels))<=1 or len(rows)<12:
+        return {"leaf":majority}
+    feature_count=len(rows[0][0])
+    candidates=rng.sample(range(feature_count),max(1,int(sqrt(feature_count))))
+    best=None
+    parent=_tree_gini(labels)
+    for feature in candidates:
+        values=sorted(x[0][feature] for x in rows)
+        for q in (0.2,0.4,0.6,0.8):
+            threshold=values[min(len(values)-1,int(q*(len(values)-1)))]
+            left=[x for x in rows if x[0][feature]<=threshold]
+            right=[x for x in rows if x[0][feature]>threshold]
+            if len(left)<4 or len(right)<4: continue
+            impurity=(len(left)*_tree_gini([x[1] for x in left])+len(right)*_tree_gini([x[1] for x in right]))/len(rows)
+            gain=parent-impurity
+            if best is None or gain>best[0]: best=(gain,feature,threshold,left,right)
+    if best is None or best[0]<=0:
+        return {"leaf":majority}
+    _,feature,threshold,left,right=best
+    return {"feature":feature,"threshold":threshold,
+            "left":_build_tree(left,depth-1,rng),"right":_build_tree(right,depth-1,rng)}
+
+
+def _tree_predict(tree,features):
+    node=tree
+    while "leaf" not in node:
+        node=node["left"] if features[node["feature"]]<=node["threshold"] else node["right"]
+    return node["leaf"]
+
+
+def _random_forest(ctx):
+    dataset,err=_ml_dataset(ctx)
+    if err: return err
+    split=max(40,int(len(dataset)*0.8))
+    train,test,_,_=_standardize(dataset[:split],dataset[split:])
+    rng=random.Random(20261127)
+    trees=[]
+    for i in range(21):
+        boot=[train[rng.randrange(len(train))] for _ in range(len(train))]
+        trees.append(_build_tree(boot,3,rng))
+    predictions=[sum(_tree_predict(tree,features) for tree in trees)/len(trees) for features,_ in test]
+    labels=[label for _,label in test]
+    accuracy=sum((p>=0.5)==bool(y) for p,y in zip(predictions,labels))/len(labels) if labels else None
+    latest=dataset[-1][0]
+    means=[mean(row[0][j] for row in dataset[:split]) for j in range(len(latest))]
+    scales=[pstdev(row[0][j] for row in dataset[:split]) or 1.0 for j in range(len(latest))]
+    normalized=[(latest[j]-means[j])/scales[j] for j in range(len(latest))]
+    probability=sum(_tree_predict(tree,normalized) for tree in trees)/len(trees)
+    return _ready({"model":"random_forest_21_shallow_trees","training_samples":len(train),
+                   "holdout_samples":len(test),"chronological_holdout_accuracy_pct":round(accuracy*100,2) if accuracy is not None else None,
+                   "research_vote_fraction_up":round(probability,5),
+                   "warning":"Small deterministic forest for research only; no calibrated probability or live strategy approval."},
+                  "pure-Python bootstrap forest, depth 3, randomized feature subsets and chronological holdout")
+
+
+def _anomaly_detection(ctx):
+    rows,err=_base(ctx,45)
+    if err:return err
+    current=rows[-1]; previous=rows[-31:-1]
+    values={
+      "return_pct":(current["close"]/rows[-2]["close"]-1)*100 if rows[-2]["close"] else 0,
+      "volume":current["volume"],
+      "range_pct":(current["high"]-current["low"])/current["close"]*100,
+    }
+    histories={
+      "return_pct":[(x["close"]/previous[i-1]["close"]-1)*100 for i,x in enumerate(previous) if i>0 and previous[i-1]["close"]>0],
+      "volume":[x["volume"] for x in previous],
+      "range_pct":[(x["high"]-x["low"])/x["close"]*100 for x in previous if x["close"]>0],
+    }
+    zscores={}
+    for key,value in values.items():
+        hist=histories[key]; sd=pstdev(hist) if len(hist)>1 else 0
+        zscores[key]=round((value-mean(hist))/sd,4) if sd else 0
+    return _ready({"observations":values,"z_scores":zscores,
+                   "anomaly_flags":[k for k,v in zscores.items() if abs(v)>=2.5]},
+                  "30-bar rolling z-score of return, volume and candle range")
+
+
+def _clustering(ctx):
+    rows,err=_base(ctx,60)
+    if err:return err
+    samples=[]
+    for i in range(20,len(rows)):
+        window=rows[i-20:i]
+        close=window[-1]["close"]
+        ret=close/window[0]["close"]-1 if window[0]["close"] else 0
+        vol=pstdev([x["close"]/window[j-1]["close"]-1 for j,x in enumerate(window) if j>0 and window[j-1]["close"]>0])
+        vr=window[-1]["volume"]/(mean(x["volume"] for x in window[:-1]) or 1)
+        samples.append([ret,vol,vr])
+    means=[mean(x[j] for x in samples) for j in range(3)]
+    scales=[pstdev(x[j] for x in samples) or 1 for j in range(3)]
+    data=[[(x[j]-means[j])/scales[j] for j in range(3)] for x in samples]
+    centers=[data[0],data[len(data)//2],data[-1]]
+    labels=[0]*len(data)
+    for _ in range(30):
+        new=[]
+        for row in data:
+            distances=[sum((row[j]-center[j])**2 for j in range(3)) for center in centers]
+            new.append(min(range(3),key=lambda k:distances[k]))
+        updated=[]
+        for k in range(3):
+            group=[data[i] for i,label in enumerate(new) if label==k]
+            updated.append([mean(x[j] for x in group) for j in range(3)] if group else centers[k])
+        if new==labels and updated==centers: break
+        labels,centers=new,updated
+    return _ready({"clusters":3,"latest_cluster":labels[-1],
+                   "cluster_sizes":[labels.count(k) for k in range(3)],
+                   "features":["20-bar_return","20-bar_volatility","last_volume_ratio"]},
+                  "deterministic three-cluster k-means on standardized rolling market features")
+
+
+def _forecast(ctx):
+    rows,err=_base(ctx,40)
+    if err:return err
+    closes=[x["close"] for x in rows[-30:]]
+    returns=[closes[i]/closes[i-1]-1 for i in range(1,len(closes)) if closes[i-1]>0]
+    drift=mean(returns) if returns else 0
+    dispersion=pstdev(returns) if len(returns)>1 else 0
+    last=closes[-1]
+    return _ready({"horizon_bars":3,"drift_per_bar_pct":drift*100,
+                   "naive_projection":last*((1+drift)**3),
+                   "historical_return_dispersion_pct":dispersion*100},
+                  "rolling mean-return extrapolation; scenario estimate, not calibrated forecast")
+
+
+def _empirical_probability(ctx):
+    dataset,err=_ml_dataset(ctx)
+    if err:return err
+    labels=[label for _,label in dataset[:-1]]
+    probability=sum(labels)/len(labels) if labels else None
+    return _ready({"historical_up_frequency":round(probability,5) if probability is not None else None,
+                   "sample_count":len(labels),"horizon_bars":3},
+                  "empirical historical base rate; not conditional or calibrated for the current setup")
+
+
+def _ai_analyst(ctx):
+    trend=_trend(ctx); comp=_compression(ctx); volume=_volume(ctx); acc=_accumulation(ctx)
+    parts=[x for x in (trend,comp,volume,acc) if x.get("status")=="computed"]
+    if not parts:return _blocked("insufficient technical evidence",["trend","compression","volume","accumulation"])
+    direction=trend["value"]["direction"] if trend.get("status")=="computed" else "UNKNOWN"
+    notes=[]
+    if comp.get("status")=="computed" and comp["value"]["compressed"]:notes.append("السوق في نطاق منضغط")
+    if acc.get("status")=="computed" and acc["value"]["possible_absorption"]:notes.append("يوجد ضغط شراء محتمل مع نطاق محدود")
+    if volume.get("status")=="computed" and volume["value"]["anomaly"]:notes.append("الحجم شاذ مقارنة بالعينة السابقة")
+    return _ready({"directional_context":direction,"observations":notes,
+                   "evidence_modules":len(parts),"analyst_type":"deterministic_explainable"},
+                  "rule-based synthesis of independent market features; not a generative model")
+
+
+def _ensemble(ctx):
+    logistic=_logistic_model(ctx); forest=_random_forest(ctx); trend=_trend(ctx)
+    evidence=[]
+    for model in (logistic,forest):
+        if model.get("status")=="computed":
+            value=model["value"].get("research_probability_up",model["value"].get("research_vote_fraction_up"))
+            evidence.append(value)
+    if not evidence:return _blocked("no trained research model available",["historical_training_window"])
+    p=mean(evidence)
+    trend_up=trend.get("status")=="computed" and trend["value"]["direction"]=="UP"
+    return _ready({"ensemble_research_score_up":round(p,5),"models_used":len(evidence),
+                   "trend_agreement":trend_up},
+                  "unweighted ensemble of in-session research models; not probability-calibrated or trade-authorizing")
+
+
+def _explain_model(ctx):
+    model=_logistic_model(ctx)
+    if model.get("status")!="computed":return model
+    return _ready({"top_feature_contributions":model["value"]["feature_contributions"],
+                   "holdout_accuracy_pct":model["value"]["chronological_holdout_accuracy_pct"],
+                   "model":"regularized_logistic_regression"},
+                  "feature attribution from standardized linear coefficients; correlational, not causal")
 
 
 # Each catalogue engine is routable. Similar engines share audited mathematical primitives,
