@@ -269,3 +269,52 @@ def test_operations_adapters_report_explicit_read_only_state():
     assert watchdog["value"]["watchdog_alert"] is True
     audit = _audit_log({"audit_events":[{"event_id":"x"},{"event_id":"x"}]})
     assert audit["value"]["duplicate_event_ids"] == 1
+
+
+def test_remaining_backtest_metrics_and_optimization_adapters():
+    from app.engine_suite import _win_rate, _profit_factor, _expectancy, _strategy_optimizer, _parameter_optimizer
+    trades = [{"pnl": 12}, {"pnl": -4}, {"pnl": 8}, {"pnl": 0}]
+    win = _win_rate({"closed_trades": trades})
+    factor = _profit_factor({"closed_trades": trades})
+    expectancy = _expectancy({"closed_trades": trades})
+    assert win["value"]["win_rate_pct"] == 50
+    assert factor["value"]["profit_factor"] == 5
+    assert expectancy["value"]["expectancy_per_trade"] == 4
+    optimizer = _strategy_optimizer({"strategy_candidates": [
+        {"name":"A","validation_return":0.15,"validation_drawdown":8,"validation_trades":45},
+        {"name":"B","validation_return":0.20,"validation_drawdown":25,"validation_trades":80}
+    ]})
+    assert optimizer["value"]["selected_for_manual_review"]["name"] == "A"
+    params = _parameter_optimizer({"parameter_trials": [
+        {"parameters":{"fast":10},"validation_score":0.2,"validation_trades":45},
+        {"parameters":{"fast":20},"validation_score":0.3,"validation_trades":35}
+    ]})
+    assert params["value"]["best_trial"]["parameters"]["fast"] == 20
+
+
+def test_security_news_liquidation_and_scheduler_adapters_are_fail_closed():
+    from app.engine_suite import _security, _news_events, _liquidation_heatmap, _scheduler
+    security = _security({"security_policy":{
+        "trading_mode":"simulation","live_trading_enabled":False,
+        "exchange_trade_credentials_present":False,"https_enabled":True,
+        "secrets_redacted":True,"admin_auth_enabled":True
+    }})
+    assert security["value"]["secure"] is True
+    news = _news_events({"news_events":[
+        {"title":"Exchange announces new listing","source":"verified","published_at":"2026-11-27T00:00:00Z"}
+    ]})
+    assert news["value"]["events"][0]["sentiment"] == "POSITIVE"
+    heat = _liquidation_heatmap({"liquidations":[
+        {"price":100,"notional_usdt":1000},{"price":110,"notional_usdt":2000}
+    ]})
+    assert heat["status"] == "computed"
+    scheduler = _scheduler({"scheduled_jobs":[{"name":"scan","interval_seconds":5,"enabled":True}],
+                            "scheduler_backend_configured":False})
+    assert scheduler["value"]["enabled_jobs"] == 1
+    assert scheduler["value"]["scheduler_backend_configured"] is False
+
+
+def test_news_and_external_models_are_never_fabricated():
+    from app.engine_suite import _news_events
+    assert _news_events({})["status"] == "blocked_missing_input"
+    assert run_engine("E047", {"candles":make_candles(180)})["runtime"]["status"] == "blocked_missing_input"
