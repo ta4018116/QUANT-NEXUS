@@ -19,6 +19,7 @@ from .paper_store import PaperStore
 from .quant_engine import ema_crossover_backtest, enrich_analysis
 from .engine_registry import engine_registry
 from .engine_catalog import engine_catalog
+from .engine_suite import run_engine_suite, early_opportunity_assessment, catalogue_runtime_coverage
 from .command_engine import COMMANDS, matches_command, evaluate_entry
 from .derivatives_engine import summarize_derivatives, normalize_liquidations
 from .advanced_engines import market_regime, market_structure, opportunity_assessment, learning_monitoring
@@ -585,6 +586,93 @@ async def engines():
 async def engine_catalog_endpoint():
     """Return the auditable 156-engine catalogue and honest implementation states."""
     return engine_catalog()
+
+@app.get("/api/engine-suite/coverage")
+async def engine_suite_coverage():
+    """Show how many catalogue entries have callable runtime adapters."""
+    return catalogue_runtime_coverage()
+
+
+@app.get("/api/engine-suite/{symbol}")
+@app.get("/api/early-opportunity/{symbol}")
+async def market_engine_suite(symbol: str, category: str = "spot", interval: str = "15m",
+                              limit: int = Query(300, ge=60, le=500),
+                              engine_ids: str | None = None):
+    """Run the 156-engine catalogue against one validated, read-only market snapshot."""
+    if category not in ("spot", "linear") or interval not in INTERVALS:
+        raise HTTPException(status_code=400, detail="Invalid market category or interval")
+    symbol = symbol.upper()
+    if not symbol.endswith("USDT") or not symbol.replace("USDT", "").isalnum():
+        raise HTTPException(status_code=400, detail="Only USDT crypto symbols are supported")
+    raw_rows, provider = await get_market_klines(symbol, category, interval, limit)
+    analysis = analyze_klines(raw_rows, include_all_candles=True)
+    # Exchange kline endpoints commonly include a still-forming final candle.
+    # Exclude it from all signal calculations to prevent intrabar repainting.
+    completed = analysis["candles"][:-1]
+    if len(completed) < 60:
+        raise HTTPException(status_code=502, detail="At least 60 completed candles are required")
+    analysis["candles"] = completed
+    closes = [x["close"] for x in completed]
+    regime = market_regime(completed)
+    structure = market_structure(completed)
+
+    book_result, trade_result = await asyncio.gather(
+        get_orderbook(symbol, category), get_recent_trades(symbol, category),
+        return_exceptions=True
+    )
+    context = {
+        "symbol": symbol, "category": category, "interval": interval,
+        "candles": completed, "closes": closes,
+        "analysis": analysis, "regime": regime, "structure": structure,
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "account": {"equity": PAPER_BALANCE},
+        "positions": [dict(x) for x in PAPER_TRADES],
+        "closed_trades": [dict(x) for x in PAPER_TRADES if x.get("status") == "CLOSED"],
+    }
+    auxiliary = {"orderbook": False, "trade_flow": False, "derivatives": False}
+    if not isinstance(book_result, Exception):
+        bids, asks, book_provider = book_result
+        context["orderbook"] = {"bids": bids, "asks": asks}
+        auxiliary["orderbook"] = True
+    else:
+        logger.warning("Engine suite orderbook unavailable for %s: %s", symbol, type(book_result).__name__)
+    if not isinstance(trade_result, Exception):
+        trades, trade_provider = trade_result
+        context["trades"] = trades
+        auxiliary["trade_flow"] = True
+    else:
+        logger.warning("Engine suite trade flow unavailable for %s: %s", symbol, type(trade_result).__name__)
+    if category == "linear":
+        try:
+            oi_result, funding_result = await asyncio.gather(
+                bybit_get("/v5/market/open-interest", {
+                    "category": "linear", "symbol": symbol, "intervalTime": "5min", "limit": 50
+                }),
+                bybit_get("/v5/market/funding/history", {
+                    "category": "linear", "symbol": symbol, "limit": 20
+                })
+            )
+            summary = summarize_derivatives(oi_result.get("list", []), funding_result.get("list", []))
+            context["derivatives"] = {
+                "open_interest": summary.get("open_interest"),
+                "funding_rate": summary.get("funding_rate"),
+            }
+            auxiliary["derivatives"] = bool(context["derivatives"]["open_interest"] is not None and
+                                            context["derivatives"]["funding_rate"] is not None)
+        except Exception as exc:
+            logger.warning("Engine suite derivatives unavailable for %s: %s", symbol, type(exc).__name__)
+    selected = [x.strip().upper() for x in engine_ids.split(",") if x.strip()] if engine_ids else None
+    suite = run_engine_suite(context, selected)
+    early = early_opportunity_assessment(context)
+    return {
+        "symbol": symbol, "category": category, "interval": interval,
+        "provider": provider, "completed_candles": len(completed),
+        "auxiliary_data": auxiliary, "market_regime": regime,
+        "market_structure": structure, "early_opportunity": early,
+        "engine_suite": suite, "engine_coverage": catalogue_runtime_coverage(),
+        "trading_mode": "simulation", "live_trading_enabled": False,
+    }
+
 
 @app.get("/api/derivatives/{symbol}")
 async def derivatives(symbol: str):
