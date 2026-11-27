@@ -245,6 +245,7 @@ def _number(value: Any) -> float | None:
 def provider_configuration() -> dict:
     """Describe real provider readiness without exposing secret values."""
     coinglass = bool(os.getenv("COINGLASS_API_KEY"))
+    coinalyze = bool(os.getenv("COINALYZE_API_KEY"))
     cryptopanic = bool(os.getenv("CRYPTOPANIC_API_TOKEN"))
     twelve = bool(os.getenv("TWELVE_DATA_API_KEY"))
     telegram = bool(os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"))
@@ -260,6 +261,7 @@ def provider_configuration() -> dict:
             "gdelt": {"status": "public_feed_configured", "auth_required": False, "rate_limited": True, "cache_seconds": 300},
             "cryptopanic": {"status": "configured" if cryptopanic else "credential_required", "auth_required": True},
             "coinglass_liquidations": {"status": "configured" if coinglass else "credential_required", "auth_required": True, "minimum_plan": "Hobbyist for aggregate 1h exchange totals"},
+            "coinalyze_derivatives": {"status": "configured" if coinalyze else "credential_required", "auth_required": True, "markets": ["USDT perpetual open interest", "funding rates", "historical long/short ratio"], "rate_limit_per_minute": 40},
             "twelve_data": {"status": "configured" if twelve else "credential_required", "auth_required": True, "markets": ["forex", "stocks", "indices", "commodities"]},
         },
         "operations": {
@@ -273,6 +275,7 @@ def provider_configuration() -> dict:
             name for name, enabled in (
                 ("TWELVE_DATA_API_KEY", twelve),
                 ("COINGLASS_API_KEY", coinglass),
+                ("COINALYZE_API_KEY", coinalyze),
                 ("CRYPTOPANIC_API_TOKEN", cryptopanic),
                 ("TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID", telegram),
                 ("ALERT_WEBHOOK_URL", webhook),

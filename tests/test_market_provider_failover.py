@@ -179,3 +179,29 @@ def test_okx_derivatives_fallback_rejects_incomplete_payload(monkeypatch):
         assert exc.status_code == 502
     else:
         raise AssertionError("incomplete OKX data must not be marked healthy")
+
+
+
+def test_derivatives_snapshot_uses_coinalyze_after_exchange_fallbacks_fail(monkeypatch):
+    async def fake_coinalyze(client, symbol):
+        assert symbol == "BTCUSDT"
+        assert client is not None
+        return {
+            "provider": "Coinalyze",
+            "open_interest": 123000000,
+            "funding_rate": 0.0001,
+            "long_short_ratio": None,
+        }
+
+    monkeypatch.setattr(main, "bybit_get", _fail_provider)
+    monkeypatch.setattr(main, "_binance_get", _fail_provider)
+    monkeypatch.setattr(main, "okx_get", _fail_provider)
+    monkeypatch.setenv("COINALYZE_API_KEY", "test-key")
+    monkeypatch.setattr(main, "shared_http_client", lambda: object())
+    monkeypatch.setattr(main, "get_coinalyze_derivatives_snapshot", fake_coinalyze)
+
+    result = asyncio.run(main.get_derivatives_snapshot("BTCUSDT"))
+
+    assert result["provider"] == "Coinalyze"
+    assert result["open_interest"] == 123000000
+    assert result["funding_rate"] == 0.0001

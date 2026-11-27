@@ -28,6 +28,7 @@ from .engine_sources import engine_source_registry
 from .command_engine import COMMANDS, matches_command, evaluate_entry
 from .derivatives_engine import summarize_derivatives, normalize_liquidations
 from .okx_derivatives import get_okx_derivatives_snapshot
+from .coinalyze_derivatives import get_coinalyze_derivatives_snapshot
 from .advanced_engines import market_regime, market_structure, opportunity_assessment, learning_monitoring
 from .provider_feeds import (
     fetch_gdelt_news, fetch_cryptopanic_news, fetch_coinglass_liquidations,
@@ -210,6 +211,23 @@ async def _binance_get(category: str, path: str, params: dict):
     raise HTTPException(status_code=502, detail="Binance market data unavailable")
 
 
+async def _get_derivatives_fallback(symbol: str) -> dict:
+    """Use OKX first, then Coinalyze only when its server-side key is configured."""
+    try:
+        return await get_okx_derivatives_snapshot(okx_get, symbol)
+    except HTTPException as okx_error:
+        if not os.getenv("COINALYZE_API_KEY"):
+            raise
+        try:
+            return await get_coinalyze_derivatives_snapshot(shared_http_client(), symbol)
+        except Exception as coinalyze_error:
+            logger.warning(
+                "OKX and Coinalyze derivatives unavailable for %s (Coinalyze: %s)",
+                symbol, type(coinalyze_error).__name__,
+            )
+            raise okx_error
+
+
 async def get_derivatives_snapshot(symbol: str) -> dict:
     """Return verified public OI/funding/long-short data with Bybit then Binance failover."""
     symbol = symbol.upper()
@@ -261,11 +279,11 @@ async def get_derivatives_snapshot(symbol: str) -> dict:
     current_oi, oi_history, funding_history, ratio_history = binance_calls
     if isinstance(current_oi, Exception) or isinstance(funding_history, Exception):
         logger.warning("Bybit and Binance derivatives unavailable for %s; trying OKX", symbol)
-        return await get_okx_derivatives_snapshot(okx_get, symbol)
+        return await _get_derivatives_fallback(symbol)
     oi_value = safe_float(current_oi.get("openInterest")) if isinstance(current_oi, dict) else 0.0
     if oi_value <= 0:
         logger.warning("Binance returned invalid open interest for %s; trying OKX", symbol)
-        return await get_okx_derivatives_snapshot(okx_get, symbol)
+        return await _get_derivatives_fallback(symbol)
     oi_rows = oi_history if isinstance(oi_history, list) else []
     oi_values = [safe_float(x.get("sumOpenInterest")) for x in oi_rows if isinstance(x, dict)]
     oi_values = [x for x in oi_values if x > 0]
@@ -275,7 +293,7 @@ async def get_derivatives_snapshot(symbol: str) -> dict:
     funding_rate = safe_float(funding_rows[-1].get("fundingRate")) if funding_rows else None
     if funding_rate is None:
         logger.warning("Binance returned no funding history for %s; trying OKX", symbol)
-        return await get_okx_derivatives_snapshot(okx_get, symbol)
+        return await _get_derivatives_fallback(symbol)
     ratio_rows = ratio_history if isinstance(ratio_history, list) else []
     long_short_ratio = safe_float(ratio_rows[-1].get("longShortRatio")) if ratio_rows else None
     return {

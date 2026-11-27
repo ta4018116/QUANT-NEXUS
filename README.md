@@ -3,7 +3,7 @@
 A responsive, Arabic-first quantitative market intelligence and simulation platform.
 
 ## Live market coverage
-- Crypto Spot and USDT linear Futures data through Bybit, with OKX fallback where supported.
+- Crypto Spot and USDT linear Futures data through Bybit, Binance and OKX provider failover; Coinalyze is an optional final derivatives fallback when its API key is configured.
 - Forex, US equities, indices and commodities are shown as not connected until a dedicated provider is configured. The application does not fabricate prices for unavailable markets.
 
 ## Analysis and research
@@ -131,7 +131,7 @@ The engine-suite endpoint now attempts read-only public enrichment on each analy
 - Spot-versus-linear prices are sampled to feed basis analysis.
 - Public Cointelegraph and CoinDesk RSS headlines are passed to a keyword-triage adapter. This is not fact-checking, and feeds can be unavailable.
 - Public Deribit option summaries are used for BTC and ETH only. Greeks/IV are research analytics; dealer-side positioning is not supplied, so net dealer gamma remains unavailable.
-- The Twelve Data bridge is exposed at /api/multi-market-engine-suite?market=forex|stocks|indices|commodities&symbol=... and requires TWELVE_DATA_API_KEY to be set as a Render environment variable (never place it in frontend code or chat). It requests time-series OHLCV and returns explicit HTTP 503 until that key is configured.
+- The Twelve Data bridge is exposed at /api/multi-market-engine-suite?market=forex|stocks|indices|commodities&symbol=... and requires TWELVE_DATA_API_KEY to be set as a Render environment variable (never place it in frontend code or chat). It requests time-series OHLCV and returns explicit HTTP 503 until that key is configured. This feed remains the configured cross-market source; no delayed or differently scoped feed is silently substituted.
 - Liquidation prints are cached in process memory only while a client is connected to the public liquidation stream. This is not a complete historical liquidation feed.
 
 The provider_health field in the engine-suite response reports each integration's availability. A missing or unsupported source remains explicitly blocked. No source credentials are needed for the public feeds above. Forex, equities, indices and commodities still require a configured dedicated provider such as Twelve Data. No API key has been invented or inserted.
@@ -157,7 +157,7 @@ The provider bridge added in `app/provider_feeds.py` uses:
 - Deribit public BTC/ETH options instruments and book summaries for option-chain analytics. The feed does not disclose dealer-side position signs, so the system must not manufacture net dealer gamma.
 - Cointelegraph/CoinDesk RSS plus GDELT DOC 2.0 symbol-filtered article discovery. GDELT and RSS headlines are unverified source material, not fact-checked events. GDELT is rate-limited and cached for five minutes.
 - Optional CryptoPanic news, requiring `CRYPTOPANIC_API_TOKEN`.
-- Optional CoinGlass one-hour cross-exchange liquidation totals, requiring `COINGLASS_API_KEY`. The Exchange List endpoint returns aggregate USD totals; these totals are not individual liquidation price levels and are never passed off as a price heatmap. The individual Liquidation Orders endpoint requires CoinGlass Standard or higher and is not enabled as a free feed.
+- Optional CoinGlass one-hour cross-exchange liquidation totals, requiring `COINGLASS_API_KEY`. The Exchange List endpoint returns aggregate USD totals; these totals are not individual liquidation price levels and are never passed off as a price heatmap. The individual Liquidation Orders endpoint requires CoinGlass Standard or higher and is not enabled as a free feed.\n- Optional Coinalyze final derivatives failover, requiring `COINALYZE_API_KEY`. It resolves an actual supported USDT perpetual market from `/future-markets`, then requests current USD-converted open interest and funding. Historical long/short ratio is an optional series and is not treated as a live account ratio. Requests are cached and subject to Coinalyze's documented 40 requests/minute/key rate limit.
 - Twelve Data for FX, stocks, indices and commodities, requiring `TWELVE_DATA_API_KEY`.
 
 ### Operations API and environment
