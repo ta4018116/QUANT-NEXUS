@@ -350,3 +350,18 @@ def test_implied_volatility_can_be_inverted_from_mid_price():
     market_price = _bs_price(spot, strike, years, rate, volatility, True)
     recovered = _implied_volatility(market_price, spot, strike, years, rate, True)
     assert recovered == pytest.approx(volatility, rel=1e-5)
+
+
+def test_deep_learning_mlp_and_q_learning_use_time_ordered_holdouts():
+    from app.engine_suite import _deep_learning_mlp, _rl_agent
+    context = {"candles": make_candles(190)}
+    mlp = _deep_learning_mlp(context)
+    assert mlp["status"] == "computed"
+    assert mlp["value"]["training_samples"] > mlp["value"]["holdout_samples"] > 0
+    assert 0 <= mlp["value"]["research_score_up"] <= 1
+    assert 0 <= mlp["value"]["chronological_holdout_accuracy_pct"] <= 100
+    rl = _rl_agent(context)
+    assert rl["status"] == "computed"
+    assert rl["value"]["training_transitions"] > rl["value"]["holdout_transitions"] > 0
+    assert set(rl["value"]["holdout_action_counts"]) == {"LONG", "SHORT", "FLAT"}
+    assert "Toy OHLCV simulator" in rl["value"]["warning"]
