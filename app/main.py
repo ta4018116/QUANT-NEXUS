@@ -643,21 +643,13 @@ async def early_opportunity_scan(
                     context["trades"] = trades
                 if category == "linear":
                     try:
-                        oi_result, funding_result = await asyncio.gather(
-                            bybit_get("/v5/market/open-interest", {
-                                "category": "linear", "symbol": symbol,
-                                "intervalTime": "5min", "limit": 50
-                            }),
-                            bybit_get("/v5/market/funding/history", {
-                                "category": "linear", "symbol": symbol, "limit": 20
-                            }),
-                        )
-                        summary = summarize_derivatives(
-                            oi_result.get("list", []), funding_result.get("list", [])
-                        )
+                        derivative_snapshot = await get_derivatives_snapshot(symbol)
                         context["derivatives"] = {
-                            "open_interest": summary.get("open_interest"),
-                            "funding_rate": summary.get("funding_rate"),
+                            "open_interest": derivative_snapshot.get("open_interest"),
+                            "open_interest_change_pct": derivative_snapshot.get("open_interest_change_pct"),
+                            "funding_rate": derivative_snapshot.get("funding_rate"),
+                            "long_short_ratio": derivative_snapshot.get("long_short_ratio"),
+                            "provider": derivative_snapshot.get("provider"),
                         }
                     except Exception as exc:
                         logger.warning("Deep scan derivatives unavailable for %s: %s", symbol, type(exc).__name__)
@@ -966,21 +958,18 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         logger.warning("Engine suite trade flow unavailable for %s: %s", symbol, type(trade_result).__name__)
     if category == "linear":
         try:
-            oi_result, funding_result = await asyncio.gather(
-                bybit_get("/v5/market/open-interest", {
-                    "category": "linear", "symbol": symbol, "intervalTime": "5min", "limit": 50
-                }),
-                bybit_get("/v5/market/funding/history", {
-                    "category": "linear", "symbol": symbol, "limit": 20
-                })
-            )
-            summary = summarize_derivatives(oi_result.get("list", []), funding_result.get("list", []))
+            derivative_snapshot = await get_derivatives_snapshot(symbol)
             context["derivatives"] = {
-                "open_interest": summary.get("open_interest"),
-                "funding_rate": summary.get("funding_rate"),
+                "open_interest": derivative_snapshot.get("open_interest"),
+                "open_interest_change_pct": derivative_snapshot.get("open_interest_change_pct"),
+                "funding_rate": derivative_snapshot.get("funding_rate"),
+                "long_short_ratio": derivative_snapshot.get("long_short_ratio"),
+                "provider": derivative_snapshot.get("provider"),
             }
-            auxiliary["derivatives"] = bool(context["derivatives"]["open_interest"] is not None and
-                                            context["derivatives"]["funding_rate"] is not None)
+            auxiliary["derivatives"] = bool(
+                context["derivatives"]["open_interest"] is not None and
+                context["derivatives"]["funding_rate"] is not None
+            )
         except Exception as exc:
             logger.warning("Engine suite derivatives unavailable for %s: %s", symbol, type(exc).__name__)
     # Populate independent 5m/1h/4h snapshots for timeframe-specific adapters.
