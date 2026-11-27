@@ -279,11 +279,11 @@ async def get_derivatives_snapshot(symbol: str) -> dict:
     current_oi, oi_history, funding_history, ratio_history = binance_calls
     if isinstance(current_oi, Exception) or isinstance(funding_history, Exception):
         logger.warning("Bybit and Binance derivatives unavailable for %s; trying OKX", symbol)
-        return await get_okx_derivatives_snapshot(okx_get, symbol)
+        return await _get_derivatives_fallback(symbol)
     oi_value = safe_float(current_oi.get("openInterest")) if isinstance(current_oi, dict) else 0.0
     if oi_value <= 0:
         logger.warning("Binance returned invalid open interest for %s; trying OKX", symbol)
-        return await get_okx_derivatives_snapshot(okx_get, symbol)
+        return await _get_derivatives_fallback(symbol)
     oi_rows = oi_history if isinstance(oi_history, list) else []
     oi_values = [safe_float(x.get("sumOpenInterest")) for x in oi_rows if isinstance(x, dict)]
     oi_values = [x for x in oi_values if x > 0]
@@ -293,7 +293,7 @@ async def get_derivatives_snapshot(symbol: str) -> dict:
     funding_rate = safe_float(funding_rows[-1].get("fundingRate")) if funding_rows else None
     if funding_rate is None:
         logger.warning("Binance returned no funding history for %s; trying OKX", symbol)
-        return await get_okx_derivatives_snapshot(okx_get, symbol)
+        return await _get_derivatives_fallback(symbol)
     ratio_rows = ratio_history if isinstance(ratio_history, list) else []
     long_short_ratio = safe_float(ratio_rows[-1].get("longShortRatio")) if ratio_rows else None
     return {
