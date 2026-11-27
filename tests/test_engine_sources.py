@@ -36,13 +36,16 @@ def test_sensitive_engines_have_specific_sources_and_limits():
     assert by_id["E156"]["source_class"] == "real_service_heartbeat_records"
 
 
-def test_noncrypto_market_groups_declare_twelve_data_source():
+def test_noncrypto_market_groups_declare_free_daily_and_optional_twelve_data_sources():
     registry = engine_source_registry()
     by_id = {item["engine_id"]: item for item in registry["engines"]}
-    assert "Twelve Data (non-crypto market data; API key required)" in by_id["E009"]["providers"]
-    assert "Twelve Data /time_series (stocks, forex, indices and commodities)" in by_id["E045"]["endpoints"]
-    assert "TWELVE_DATA_API_KEY_required_for_noncrypto" in by_id["E101"]["credential_model"]
-    assert "Twelve Data (non-crypto market data; API key required)" not in by_id["E060"]["providers"]
+    assert "Stooq public daily OHLCV (stocks, indices and supported commodities; no key)" in by_id["E009"]["providers"]
+    assert "Frankfurter public daily FX reference rates (no key; close-only)" in by_id["E009"]["providers"]
+    assert "Twelve Data optional intraday provider (API key required)" in by_id["E009"]["providers"]
+    assert "Stooq /q/d/l/ daily CSV" in by_id["E045"]["endpoints"]
+    assert "Frankfurter /{start}..{end} daily reference rates" in by_id["E045"]["endpoints"]
+    assert "Twelve_Data_key_optional_for_intraday" in by_id["E101"]["credential_model"]
+    assert "Stooq public daily OHLCV (stocks, indices and supported commodities; no key)" not in by_id["E060"]["providers"]
 
 
 def test_knowledge_memory_and_audit_log_are_not_overstated():
