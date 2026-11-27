@@ -160,3 +160,20 @@ def test_every_catalogue_engine_runs_individually_with_auditable_contract():
     assert len(ENGINE_CATALOG) == 156
     assert len(seen) == 156
     assert errors == []
+
+
+def test_watchdog_missing_heartbeat_age_is_json_safe():
+    import json
+    from app.engine_suite import run_engine
+
+    result = run_engine("E156", {
+        "heartbeats": {
+            "api": {"age_seconds": 0},
+            "background_scheduler": {"age_seconds": None},
+        }
+    })
+    assert result["runtime"]["status"] == "computed"
+    value = result["runtime"]["value"]
+    assert value["heartbeat_ages_seconds"]["background_scheduler"] is None
+    assert value["unknown_services"] == ["background_scheduler"]
+    json.dumps(result, allow_nan=False)
