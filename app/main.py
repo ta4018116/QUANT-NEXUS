@@ -1334,22 +1334,6 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         risk_checks["recent_trade_flow_available"] = True
     else:
         logger.warning("Engine suite trade flow unavailable for %s: %s", symbol, type(trade_result).__name__)
-    if category == "linear":
-        try:
-            derivative_snapshot = await get_derivatives_snapshot(symbol)
-            context["derivatives"] = {
-                "open_interest": derivative_snapshot.get("open_interest"),
-                "open_interest_change_pct": derivative_snapshot.get("open_interest_change_pct"),
-                "funding_rate": derivative_snapshot.get("funding_rate"),
-                "long_short_ratio": derivative_snapshot.get("long_short_ratio"),
-                "provider": derivative_snapshot.get("provider"),
-            }
-            auxiliary["derivatives"] = bool(
-                context["derivatives"]["open_interest"] is not None and
-                context["derivatives"]["funding_rate"] is not None
-            )
-        except Exception as exc:
-            logger.warning("Engine suite derivatives unavailable for %s: %s", symbol, type(exc).__name__)
     # Populate independent 5m/1h/4h snapshots for timeframe-specific adapters.
     frames = {}
     frame_names = ("5m", "1h", "4h")
@@ -1390,13 +1374,15 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
 
     context["cache"] = {"status":"ok","backend":"process-local","persistent":False}
     context["database"] = {
-        "status":"ok","backend":"sqlite",
+        "status":"ok" if bool(getattr(PAPER_STORE,"durable_configured",False)) else "degraded",
+        "backend":"sqlite",
         "persistent":bool(getattr(PAPER_STORE,"durable_configured",False)),
         "path_configured":bool(os.getenv("PAPER_DB_PATH")),
     }
     context["websocket"] = {
         "status":"ok",
         "liquidation_capture":"in-memory only while a client is connected",
+        "independent_connection_monitoring":False,
         "captured_events":len(context["liquidations"]),
     }
     context["scheduled_jobs"] = []
@@ -1412,6 +1398,7 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
     ]
     context["resource_snapshot"] = _runtime_memory_snapshot()
     context["heartbeats"] = {"api":{"age_seconds":0,"scope":"current_request_only"}}
+    context["heartbeat_scope"] = "current API request only; no independent worker heartbeat backend is configured"
     context["security_policy"] = {
         "trading_mode":"simulation",
         "live_trading_enabled":False,
