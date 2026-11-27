@@ -1322,6 +1322,106 @@ def _duplicate_signal_filter(ctx):
                   "deduplication by symbol/category/direction/signal_time; persistence still required")
 
 
+
+
+def _take_profit(ctx):
+    plan=ctx.get("plan") or {}
+    entry=_num(plan.get("entry")); stop=_num(plan.get("stop")); side=str(plan.get("side","LONG")).upper()
+    if entry<=0 or stop<=0 or entry==stop or side not in ("LONG","SHORT"):
+        return _blocked("valid entry, stop and side required",["plan.entry","plan.stop","plan.side"])
+    risk=abs(entry-stop)
+    ratios=ctx.get("reward_risk_targets") or [1.5,2.0,3.0]
+    ratios=[_num(x) for x in ratios if _num(x)>0]
+    if not ratios:return _blocked("positive reward/risk targets required",["reward_risk_targets"])
+    targets=[entry+risk*x if side=="LONG" else entry-risk*x for x in ratios]
+    return _ready({"entry":entry,"risk_distance":risk,"reward_risk_ratios":ratios,
+                   "target_references":targets,"side":side},
+                  "mechanical reward/risk target calculation; not a recommendation or order")
+
+
+def _signal_expiration(ctx):
+    from datetime import datetime, timezone
+    created=ctx.get("signal_created_at"); now=ctx.get("now_utc")
+    max_age=max(1,_num(ctx.get("max_age_seconds"),900))
+    if not created or not now:return _blocked("signal timestamp and current UTC time required",["signal_created_at","now_utc"])
+    try:
+        created_at=datetime.fromisoformat(str(created).replace("Z","+00:00"))
+        now_at=datetime.fromisoformat(str(now).replace("Z","+00:00"))
+        if created_at.tzinfo is None or now_at.tzinfo is None:raise ValueError("timezone_required")
+        age=(now_at-created_at).total_seconds()
+    except (TypeError,ValueError):
+        return _blocked("timestamps must be timezone-aware ISO-8601 values",["timezone_aware_signal_created_at","now_utc"])
+    return _ready({"age_seconds":age,"max_age_seconds":max_age,"expired":age>max_age or age<0},
+                  "UTC age check with explicit expiry threshold")
+
+
+def _autonomous_research(ctx):
+    candidates=ctx.get("strategy_candidates")
+    if not isinstance(candidates,list) or not candidates:return _blocked("research strategy candidates and validation metrics required",["strategy_candidates"])
+    evaluated=[]
+    for item in candidates:
+        if not isinstance(item,dict):continue
+        train=_num(item.get("train_return")); validation=_num(item.get("validation_return"))
+        dd=_num(item.get("validation_drawdown"),100)
+        enough=int(_num(item.get("validation_trades")))>=30
+        passed=validation>0 and dd<20 and enough and validation<=train+0.05
+        evaluated.append({"name":str(item.get("name","unnamed")),"validation_return":validation,
+                          "validation_drawdown":dd,"validation_trades":int(_num(item.get("validation_trades"))),
+                          "research_gate_passed":passed,"promotion":"MANUAL_REVIEW_REQUIRED"})
+    return _ready({"candidates":evaluated,"research_only":True},
+                  "screening against supplied out-of-sample metrics; no autonomous promotion or deployment")
+
+
+def _data_replay(ctx):
+    events=ctx.get("replay_events")
+    if not isinstance(events,list) or not events:return _blocked("timestamped replay events required",["replay_events"])
+    valid=[x for x in events if isinstance(x,dict) and x.get("timestamp") is not None]
+    return _ready({"ordered_events":sorted(valid,key=lambda x:str(x["timestamp"])),"event_count":len(valid)},
+                  "stable timestamp ordering of supplied events; does not fetch historical venue packets")
+
+
+def _audit_log(ctx):
+    events=ctx.get("audit_events")
+    if not isinstance(events,list):return _blocked("audit event records required",["audit_events"])
+    ids=[str(x.get("event_id")) for x in events if isinstance(x,dict) and x.get("event_id")]
+    return _ready({"events":len(events),"identified_events":len(ids),
+                   "duplicate_event_ids":len(ids)-len(set(ids))},
+                  "read-only audit event integrity check")
+
+
+def _model_registry(ctx):
+    models=ctx.get("model_versions")
+    if not isinstance(models,list):return _blocked("registered model metadata required",["model_versions"])
+    valid=[x for x in models if isinstance(x,dict) and x.get("name") and x.get("version")]
+    return _ready({"registered_models":valid,"count":len(valid)},
+                  "read-only model metadata inventory; no artifact loading or deployment")
+
+
+def _resource_monitor(ctx):
+    resources=ctx.get("resource_snapshot")
+    if not isinstance(resources,dict):return _blocked("CPU, memory and worker metrics required",["resource_snapshot"])
+    return _ready({"resources":resources,"pressure_detected":_num(resources.get("cpu_pct"))>=90 or _num(resources.get("memory_pct"))>=90},
+                  "threshold alert on supplied runtime metrics")
+
+
+def _watchdog(ctx):
+    heartbeats=ctx.get("heartbeats")
+    if not isinstance(heartbeats,dict) or not heartbeats:return _blocked("service heartbeat timestamps required",["heartbeats"])
+    max_age=max(1,_num(ctx.get("heartbeat_max_age_seconds"),60))
+    ages={k:_num(v.get("age_seconds"),float("inf")) if isinstance(v,dict) else float("inf") for k,v in heartbeats.items()}
+    stale=[k for k,v in ages.items() if v>max_age]
+    return _ready({"heartbeat_ages_seconds":ages,"stale_services":stale,"watchdog_alert":bool(stale)},
+                  "read-only heartbeat age check; does not restart external services")
+
+
+def _event_bus(ctx):
+    stats=ctx.get("event_bus")
+    if not isinstance(stats,dict):return _blocked("event-bus counters required",["event_bus"])
+    published=int(_num(stats.get("published"))); consumed=int(_num(stats.get("consumed")))
+    return _ready({"published":published,"consumed":consumed,"backlog":max(0,published-consumed)},
+                  "read-only event-bus counters supplied by runtime")
+
+
 # Each catalogue engine is routable. Similar engines share audited mathematical primitives,
 # while model- and provider-dependent engines remain explicitly blocked when inputs are absent.
 _HANDLER_IDS = {
