@@ -34,3 +34,12 @@ def test_sensitive_engines_have_specific_sources_and_limits():
     assert by_id["E145"]["source_class"] == "websocket_stream_runtime"
     assert by_id["E150"]["source_class"] == "notification_delivery_transport"
     assert by_id["E156"]["source_class"] == "real_service_heartbeat_records"
+
+
+def test_noncrypto_market_groups_declare_twelve_data_source():
+    registry = engine_source_registry()
+    by_id = {item["engine_id"]: item for item in registry["engines"]}
+    assert "Twelve Data (non-crypto market data; API key required)" in by_id["E009"]["providers"]
+    assert "Twelve Data /time_series (stocks, forex, indices and commodities)" in by_id["E045"]["endpoints"]
+    assert "TWELVE_DATA_API_KEY_required_for_noncrypto" in by_id["E101"]["credential_model"]
+    assert "Twelve Data (non-crypto market data; API key required)" not in by_id["E060"]["providers"]
