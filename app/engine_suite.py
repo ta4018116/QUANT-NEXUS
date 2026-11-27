@@ -400,51 +400,6 @@ def _external(ctx):
                     ["verified_provider_or_model_artifact"])
 
 
-# Each catalogue engine is routable. Similar engines share audited mathematical primitives,
-# while model- and provider-dependent engines remain explicitly blocked when inputs are absent.
-_HANDLER_IDS = {
-    "E005":_base, "E006":_base, "E008":_external,
-    "E009":_trend, "E011":_support_resistance, "E012":_accumulation,
-    "E013":_sweep, "E014":_sweep, "E015":_fvg, "E016":_breakout,
-    "E017":_divergence, "E019":_candlestick, "E020":_fibonacci,
-    "E022":_volume_profile, "E023":_divergence, "E024":_candlestick,
-    "E026":_higher_timeframe, "E027":_lower_timeframe, "E028":_regime_timeframe_sync, "E029":_market_phase,
-    "E030":_timing, "E031":_timing, "E032":_momentum,
-    "E034":_early_breakout, "E035":_accumulation, "E036":_sweep,
-    "E037":_momentum_explosion, "E038":_whale_activity, "E039":_volume, "E040":_compression,
-    "E042":_breakout, "E043":_external,
-    "E044":_external, "E045":_external, "E046":_external, "E047":_external,
-    "E048":_external, "E049":_external, "E050":_external, "E051":_external,
-    "E052":_external, "E053":_external, "E054":_market_phase, "E055":_external,
-    "E056":_external, "E057":_external, "E058":_external, "E059":_external,
-    "E060":_derivatives, "E061":_derivatives, "E062":_derivatives,
-    "E063":_external, "E064":_external, "E065":_external, "E066":_external,
-    "E067":_risk, "E068":_derivatives, "E069":_external, "E070":_external, "E071":_external,
-    "E073":_external, "E074":_risk, "E075":_risk, "E076":_risk, "E077":_risk,
-    "E078":_external, "E079":_external, "E080":_breakout, "E081":_external,
-    "E082":_external, "E083":_external, "E084":_backtest, "E085":_external,
-    "E086":_risk, "E087":_risk, "E088":_portfolio, "E089":_portfolio,
-    "E090":_portfolio, "E091":_portfolio, "E092":_risk, "E093":_external,
-    "E094":_external, "E095":_risk, "E096":_risk, "E097":_risk,
-    "E098":_risk, "E099":_external, "E100":_risk,
-    "E102":_backtest, "E104":_external, "E105":_external, "E106":_external,
-    "E107":_external, "E108":_external, "E109":_backtest, "E110":_backtest,
-    "E111":_backtest, "E112":_backtest, "E113":_external, "E114":_external, "E115":_external,
-    "E116":_portfolio, "E117":_portfolio, "E118":_external, "E119":_portfolio,
-    "E120":_portfolio, "E121":_external, "E122":_external, "E123":_external,
-    "E124":_backtest, "E125":_portfolio,
-    "E127":_agents, "E128":_orderbook, "E129":_sweep, "E130":_derivatives,
-    "E131":_trend, "E132":_external, "E133":_risk, "E134":_external,
-    "E135":_agents, "E136":_agents, "E137":_agents, "E138":_external, "E139":_external, "E140":_external,
-    "E141":_external, "E142":_external, "E143":_external, "E144":_external,
-    "E145":_external, "E146":_external, "E147":_external, "E148":_external,
-    "E149":_external, "E150":_external, "E151":_external, "E152":_external,
-    "E153":_external, "E154":_external, "E155":_external, "E156":_external,
-}
-
-
-
-
 def _early_breakout(ctx):
     rows, err = _base(ctx, 50)
     if err: return err
@@ -668,6 +623,49 @@ def _system_health(ctx):
     if not isinstance(health,dict): return _blocked("runtime health snapshot required",["system_health"])
     return _ready({"services":health,"degraded":any(str(v).lower() not in ("ok","healthy","up") for v in health.values())},
                   "read-only infrastructure health snapshot")
+
+
+# Each catalogue engine is routable. Similar engines share audited mathematical primitives,
+# while model- and provider-dependent engines remain explicitly blocked when inputs are absent.
+_HANDLER_IDS = {
+    "E005":_base, "E006":_base, "E008":_external,
+    "E009":_trend, "E011":_support_resistance, "E012":_accumulation,
+    "E013":_sweep, "E014":_sweep, "E015":_fvg, "E016":_breakout,
+    "E017":_divergence, "E019":_candlestick, "E020":_fibonacci,
+    "E022":_volume_profile, "E023":_divergence, "E024":_candlestick,
+    "E026":_higher_timeframe, "E027":_lower_timeframe, "E028":_regime_timeframe_sync, "E029":_market_phase,
+    "E030":_timing, "E031":_timing, "E032":_momentum,
+    "E034":_early_breakout, "E035":_accumulation, "E036":_sweep,
+    "E037":_momentum_explosion, "E038":_whale_activity, "E039":_volume, "E040":_compression,
+    "E042":_breakout, "E043":_external,
+    "E044":_external, "E045":_external, "E046":_external, "E047":_external,
+    "E048":_external, "E049":_external, "E050":_external, "E051":_external,
+    "E052":_external, "E053":_external, "E054":_market_phase, "E055":_external,
+    "E056":_external, "E057":_external, "E058":_external, "E059":_external,
+    "E060":_derivatives, "E061":_derivatives, "E062":_derivatives,
+    "E063":_external, "E064":_external, "E065":_external, "E066":_external,
+    "E067":_risk, "E068":_derivatives, "E069":_external, "E070":_external, "E071":_external,
+    "E073":_external, "E074":_risk, "E075":_risk, "E076":_risk, "E077":_risk,
+    "E078":_external, "E079":_external, "E080":_breakout, "E081":_external,
+    "E082":_external, "E083":_external, "E084":_backtest, "E085":_external,
+    "E086":_risk, "E087":_risk, "E088":_portfolio, "E089":_portfolio,
+    "E090":_portfolio, "E091":_portfolio, "E092":_risk, "E093":_external,
+    "E094":_external, "E095":_risk, "E096":_risk, "E097":_risk,
+    "E098":_risk, "E099":_external, "E100":_risk,
+    "E102":_backtest, "E104":_external, "E105":_external, "E106":_external,
+    "E107":_external, "E108":_external, "E109":_backtest, "E110":_backtest,
+    "E111":_backtest, "E112":_backtest, "E113":_external, "E114":_external, "E115":_external,
+    "E116":_portfolio, "E117":_portfolio, "E118":_external, "E119":_portfolio,
+    "E120":_portfolio, "E121":_external, "E122":_external, "E123":_external,
+    "E124":_backtest, "E125":_portfolio,
+    "E127":_agents, "E128":_orderbook, "E129":_sweep, "E130":_derivatives,
+    "E131":_trend, "E132":_external, "E133":_risk, "E134":_external,
+    "E135":_agents, "E136":_agents, "E137":_agents, "E138":_external, "E139":_external, "E140":_external,
+    "E141":_external, "E142":_external, "E143":_external, "E144":_external,
+    "E145":_external, "E146":_external, "E147":_external, "E148":_external,
+    "E149":_external, "E150":_external, "E151":_external, "E152":_external,
+    "E153":_external, "E154":_external, "E155":_external, "E156":_external,
+}
 
 
 _HANDLER_IDS.update({
