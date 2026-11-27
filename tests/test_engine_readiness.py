@@ -39,7 +39,7 @@ def _readiness(suite, *, snapshot=None, health=None):
 
 
 def test_all_four_statuses_require_distinct_evidence():
-    partial = next(item for item in ENGINE_CATALOG if item["status"] == "partial")
+    partial = next(item for item in ENGINE_CATALOG if item["id"] == "E011")
     overrides = {
         "E001": _evidence("E001"),
         partial["id"]: _evidence(partial["id"]),
@@ -82,6 +82,86 @@ def test_missing_engine_specific_source_health_blocks_otherwise_computed_adapter
     assert item["test_result"]["status"] == "passed"
     assert item["status"] == "BLOCKED"
     assert any("مصدر" in reason or "المصدر" in reason for reason in item["readiness_reasons"])
+
+
+def test_internal_runtime_engine_does_not_require_unrelated_market_snapshot():
+    evidence = _evidence("E146")
+    evidence["input_evidence"].update({
+        "api_heartbeat_fresh": True,
+        "heartbeat_records_available": True,
+    })
+    result = build_engine_readiness(
+        _suite({"E146": evidence}),
+        provider_health={},
+        market_snapshot={},
+    )
+    item = next(row for row in result["engines"] if row["id"] == "E146")
+    assert item["status"] == "ACTIVE"
+    assert item["source_evidence"]["market_snapshot_required"] is False
+    assert item["source_evidence"]["observed_input"] is True
+
+
+def test_market_engine_still_requires_a_fresh_timestamped_market_snapshot():
+    evidence = _evidence("E001")
+    result = build_engine_readiness(
+        _suite({"E001": evidence}),
+        provider_health={"market_data": {"status": "ok"}},
+        market_snapshot={},
+    )
+    item = next(row for row in result["engines"] if row["id"] == "E001")
+    assert item["status"] == "BLOCKED"
+    assert item["source_evidence"]["market_snapshot_required"] is True
+    assert item["source_evidence"]["observed_input"] is False
+
+
+def test_live_news_source_can_be_healthy_when_it_returns_no_matching_headlines():
+    evidence = _evidence("E007")
+    result = _readiness(
+        _suite({"E007": evidence}),
+        health={
+            "market_data": {"status": "ok"},
+            "news": {"status": "ok", "event_count": 0},
+        },
+    )
+    item = next(row for row in result["engines"] if row["id"] == "E007")
+    assert item["status"] == "ACTIVE"
+    assert item["source_evidence"]["health_ok"] is True
+
+
+def test_orderbook_engines_require_a_recent_observed_snapshot():
+    health = {"market_data": {"status": "ok"}, "orderbook": {"status": "ok"}}
+    for engine_id in ("E002", "E003"):
+        evidence = _evidence(engine_id)
+        evidence["input_evidence"].update({
+            "orderbook_available": True,
+            "orderbook_fresh": True,
+        })
+        fresh = _readiness(_suite({engine_id: evidence}), health=health)
+        fresh_item = next(row for row in fresh["engines"] if row["id"] == engine_id)
+        assert fresh_item["status"] == "ACTIVE"
+
+        evidence["input_evidence"]["orderbook_fresh"] = False
+        stale = _readiness(_suite({engine_id: evidence}), health=health)
+        stale_item = next(row for row in stale["engines"] if row["id"] == engine_id)
+        assert stale_item["status"] == "BLOCKED"
+
+
+def test_multi_timeframe_activation_requires_engine_specific_fresh_frame_evidence():
+    evidence = _evidence("E025")
+    evidence["input_evidence"]["timeframes_fresh"] = True
+    result = _readiness(
+        _suite({"E025":evidence}),
+        health={"market_data":{"status":"ok"}, "timeframes":{"status":"ok"}},
+    )
+    row=next(item for item in result["engines"] if item["id"]=="E025")
+    assert row["status"]=="ACTIVE"
+    evidence["input_evidence"]["timeframes_fresh"] = False
+    stale = _readiness(
+        _suite({"E025":evidence}),
+        health={"market_data":{"status":"ok"}, "timeframes":{"status":"ok"}},
+    )
+    row=next(item for item in stale["engines"] if item["id"]=="E025")
+    assert row["status"]=="BLOCKED"
 
 
 def test_declared_planned_engine_stays_planned_after_smoke_test(monkeypatch):

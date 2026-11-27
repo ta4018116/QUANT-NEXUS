@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi.testclient import TestClient
 from datetime import datetime, timezone
 
@@ -53,12 +55,16 @@ def test_engine_suite_receives_confirmation_risk_and_mark_context(monkeypatch):
     )
     assert response.status_code == 200
     assert captured["symbol"] == "BTCUSDT"
+    assert len(captured["raw_candle_rows"]) == 121
     assert captured["current_prices"]["BTCUSDT"] > 0
     assert captured["entry_confirmation"]["state"] in {
         "WAITING", "APPROACH", "CONFIRMED"
     }
     assert captured["risk_checks"]["visible_orderbook_available"] is True
     assert captured["risk_checks"]["recent_trade_flow_available"] is True
+    assert captured["orderbook"]["provider"] == "TEST"
+    assert captured["orderbook_observed_at"]
+    assert captured["trades_observed_at"]
     assert captured["risk_checks"]["live_trading_disabled"] is True
     assert captured["risk_approval"]["approved"] is all(
         captured["risk_checks"].values()
@@ -67,6 +73,7 @@ def test_engine_suite_receives_confirmation_risk_and_mark_context(monkeypatch):
     assert captured["risk_pct"] == 1.0
     assert captured["volatility_pct"] >= 0
     assert isinstance(captured["strategy_returns"], list)
+    assert isinstance(captured["opportunity_candidates"], list)
     
 def test_multi_market_engine_suite_uses_twelve_data_and_keeps_paper_only(monkeypatch):
     async def fake_twelve(symbol, interval, limit, market=None):
@@ -114,4 +121,20 @@ def test_multi_market_engine_suite_rejects_intraday_without_key(monkeypatch):
     )
     assert response.status_code == 503
     assert "daily only" in response.json()["detail"]
+
+
+def test_cross_market_peer_feed_aligns_public_exchange_candles(monkeypatch):
+    async def fake_klines(symbol, category, interval, limit):
+        return _trend_rows(121), "TEST"
+
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    rows = _trend_rows(121)
+    base = [{"time":int(row[0]) // 1000,"close":float(row[4])} for row in rows]
+    base_values, related, evidence = asyncio.run(
+        main._aligned_peer_closes("BTCUSDT", "spot", "15m", base)
+    )
+    assert evidence["status"] == "ok"
+    assert evidence["aligned_samples"] == 120
+    assert len(base_values) == 120
+    assert set(related) == {"ETHUSDT", "SOLUSDT", "BNBUSDT"}
 

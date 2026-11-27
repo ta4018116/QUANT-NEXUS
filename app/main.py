@@ -136,6 +136,8 @@ TWELVE_DATA_INTERVALS = {
     "1m":"1min","5m":"5min","15m":"15min","30m":"30min",
     "1h":"1h","2h":"2h","4h":"4h","1d":"1day","1w":"1week",
 }
+INTERVAL_SECONDS = {"1m":60,"3m":180,"5m":300,"15m":900,"30m":1800,
+                    "1h":3600,"2h":7200,"4h":14400,"1d":86400,"1w":604800}
 
 
 def _market_snapshot_evidence(candles: list[dict], interval: str, provider: str | dict,
@@ -1405,7 +1407,13 @@ async def collect_engine_enrichment(symbol: str, category: str, interval: str, b
     if not isinstance(news,Exception):
         events, news_status = news
         context["news_events"] = events
-        providers["news"] = {"status":"ok" if events else "unavailable","sources":news_status,"event_count":len(events)}
+        healthy_sources = [name for name, state in news_status.items()
+                           if isinstance(state, dict) and state.get("status") in {"ok", "healthy"}]
+        providers["news"] = {
+            "status":"ok" if healthy_sources else "unavailable",
+            "sources":news_status, "healthy_sources":healthy_sources,
+            "event_count":len(events),
+        }
     else:
         providers["news"] = {"status":"unavailable","reason":type(news).__name__}
 
@@ -1520,7 +1528,8 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         direction in ("LONG", "SHORT") and entry > 0 and stop > 0 and entry != stop
         and not (category == "spot" and direction == "SHORT")
     ):
-        plan = {"side": direction, "entry": entry, "stop": stop}
+        plan = {"side": direction, "entry": entry, "stop": stop,
+                "target": safe_float(analysis.get("target1"))}
     daily_loss_breached = (
         paper_equity > 0 and max(0.0, -daily_pnl) / paper_equity * 100 >= daily_loss_limit_pct
     )
@@ -1549,7 +1558,7 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
 
     context = {
         "symbol": symbol, "category": category, "interval": interval,
-        "candles": completed, "closes": closes,
+        "candles": completed, "raw_candle_rows": raw_rows, "closes": closes,
         "analysis": analysis, "regime": regime, "structure": structure,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "account": {"equity": paper_equity},
@@ -1570,7 +1579,8 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
     auxiliary = {"orderbook": False, "trade_flow": False, "derivatives": False}
     if not isinstance(book_result, Exception):
         bids, asks, book_provider = book_result
-        context["orderbook"] = {"bids": bids, "asks": asks}
+        context["orderbook"] = {"bids": bids, "asks": asks, "provider": book_provider}
+        context["orderbook_observed_at"] = datetime.now(timezone.utc).isoformat()
         auxiliary["orderbook"] = True
         risk_checks["visible_orderbook_available"] = True
     else:
@@ -1578,13 +1588,14 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
     if not isinstance(trade_result, Exception):
         trades, trade_provider = trade_result
         context["trades"] = trades
+        context["trades_observed_at"] = datetime.now(timezone.utc).isoformat()
         auxiliary["trade_flow"] = True
         risk_checks["recent_trade_flow_available"] = True
     else:
         logger.warning("Engine suite trade flow unavailable for %s: %s", symbol, type(trade_result).__name__)
     # Populate independent 5m/1h/4h snapshots for timeframe-specific adapters.
     frames = {}
-    frame_names = ("5m", "1h", "4h")
+    frame_names = tuple(dict.fromkeys((interval, "5m", "15m", "1h", "4h")))
     frame_results = await asyncio.gather(
         *(get_market_klines(symbol, category, frame, 120) for frame in frame_names),
         return_exceptions=True
@@ -1602,6 +1613,9 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
                     "timeframe": frame, "direction": frame_analysis["direction"],
                     "score": frame_analysis["score"], "provider": frame_provider,
                     "completed_bars": len(frame_candles),
+                    "last_completed_at": datetime.fromtimestamp(
+                        frame_candles[-1]["time"] + INTERVAL_SECONDS.get(frame, 900), timezone.utc
+                    ).isoformat(),
                 }
         except HTTPException:
             continue
@@ -1684,6 +1698,9 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         "websocket":"degraded",
     }
     early = early_opportunity_assessment(context)
+    context["opportunity_candidates"] = ([{
+        "symbol":symbol,"score":early.get("score"),"tier":early.get("tier")
+    }] if early.get("status") == "computed" else [])
 
     # Persist compact, attributable research and audit events. No orders or
     # private exchange endpoints are involved in this event path.
@@ -1878,7 +1895,7 @@ async def multi_market_engine_suite(
     direction=str(analysis.get("direction","NEUTRAL")).upper()
     entry=safe_float(analysis.get("entry"))
     stop=safe_float(analysis.get("stopLoss"))
-    plan={"side":direction,"entry":entry,"stop":stop} if direction in ("LONG","SHORT") and entry>0 and stop>0 and entry!=stop else {}
+    plan={"side":direction,"entry":entry,"stop":stop,"target":safe_float(analysis.get("target1"))} if direction in ("LONG","SHORT") and entry>0 and stop>0 and entry!=stop else {}
     volatility_ranges=[]
     previous_close=completed[0]["close"]
     for candle in completed[1:]:
@@ -1899,11 +1916,13 @@ async def multi_market_engine_suite(
         "live_trading_disabled":LIVE_TRADING_ENABLED is False,
     }
     timeframe_jobs=await asyncio.gather(
-        *(get_twelve_data_klines(symbol,frame,min(limit,180),market) for frame in ("5m","1h","4h")),
+        *(get_twelve_data_klines(symbol,frame,min(limit,180),market)
+          for frame in tuple(dict.fromkeys((interval,"5m","15m","1h","4h")))),
         return_exceptions=True,
     )
     frames={}
-    for frame,result in zip(("5m","1h","4h"),timeframe_jobs):
+    frame_names=tuple(dict.fromkeys((interval,"5m","15m","1h","4h")))
+    for frame,result in zip(frame_names,timeframe_jobs):
         if isinstance(result,Exception):
             continue
         frame_rows,frame_provider=result
@@ -1913,12 +1932,16 @@ async def multi_market_engine_suite(
             if frame_candles:
                 frames[frame]={"timeframe":frame,"direction":frame_analysis["direction"],
                                "score":frame_analysis["score"],"provider":"Twelve Data",
-                               "completed_bars":len(frame_candles)}
+                               "completed_bars":len(frame_candles),
+                               "last_completed_at":datetime.fromtimestamp(
+                                   frame_candles[-1]["time"] + INTERVAL_SECONDS.get(frame,900),timezone.utc
+                               ).isoformat()}
         except HTTPException:
             continue
     context={
         "symbol":symbol.upper(),"category":market,"market_type":market,"interval":interval,
-        "candles":completed,"closes":closes,"analysis":analysis,"regime":regime,"structure":structure,
+        "candles":completed,"raw_candle_rows":rows,"closes":closes,
+        "analysis":analysis,"regime":regime,"structure":structure,
         "timestamp_utc":datetime.now(timezone.utc).isoformat(),
         "account":{"equity":paper_equity},"positions":paper_positions,"closed_trades":closed_trades,
         "current_prices":{symbol.upper():last_price},
@@ -1964,6 +1987,9 @@ async def multi_market_engine_suite(
     }]
     context["scheduler_backend_configured"] = OPS_RUNTIME.status().get("status") == "running"
     early=early_opportunity_assessment(context)
+    context["opportunity_candidates"] = ([{
+        "symbol":symbol.upper(),"score":early.get("score"),"tier":early.get("tier")
+    }] if early.get("status") == "computed" else [])
     if early.get("status")=="computed" and early.get("score",0)>=65:
         context["notification_events"]=[{
             "type":"OPPORTUNITY","title":f"{symbol.upper()} {market} opportunity watch",

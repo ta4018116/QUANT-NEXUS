@@ -17,7 +17,7 @@ def test_engine_catalog_statuses_are_auditable_and_conservative():
     assert result["total"] == 156
     assert result["counts"]["implemented"] + result["counts"]["partial"] + result["counts"]["planned"] == 156
     assert result["counts"]["planned"] == 0
-    assert result["counts"]["partial"] >= 135
+    assert result["counts"] == {"implemented": 36, "partial": 120, "planned": 0}
     assert all(item["evidence"] != "not_yet_implemented" for item in result["engines"]
                if item["status"] != "planned")
     assert all(item["capabilities"] for item in result["engines"]
