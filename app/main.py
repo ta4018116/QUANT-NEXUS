@@ -245,7 +245,7 @@ async def get_derivatives_snapshot(symbol: str) -> dict:
     }
 
 
-async def get_market_tickersasync def get_market_tickers(category: str):
+async def get_market_tickers(category: str):
     try:
         result = await bybit_get("/v5/market/tickers", {"category": category})
         items = result.get("list", [])
@@ -307,7 +307,7 @@ async def get_market_tickersasync def get_market_tickers(category: str):
     return normalized, "Binance"
 
 
-async def get_market_klinesasync def get_market_klines(symbol: str, category: str, interval: str, limit: int):
+async def get_market_klines(symbol: str, category: str, interval: str, limit: int):
     try:
         result = await bybit_get("/v5/market/kline", {
             "category": category, "symbol": symbol.upper(),
@@ -342,7 +342,7 @@ async def get_market_klinesasync def get_market_klines(symbol: str, category: st
     return rows, "Binance"
 
 
-def ema(def ema(values, period):
+def ema(values, period):
     if len(values) < period:
         return None
     alpha = 2 / (period + 1)
@@ -1025,7 +1025,7 @@ async def derivatives(symbol: str):
     }
 
 
-@app.websocket("/ws/derivatives@app.websocket("/ws/derivatives/{symbol}/liquidations")
+@app.websocket("/ws/derivatives/{symbol}/liquidations")
 async def derivatives_liquidation_stream(websocket: WebSocket, symbol: str):
     """Proxy Bybit's public all-liquidation stream for one USDT linear symbol."""
     symbol = symbol.upper()
@@ -1139,7 +1139,7 @@ async def get_orderbook(symbol: str, category: str):
     return data["bids"], data["asks"], "Binance"
 
 
-@app.get("/api/liquidity@app.get("/api/liquidity/{symbol}")
+@app.get("/api/liquidity/{symbol}")
 async def liquidity(symbol: str, category: str = "spot"):
     if category not in ("spot", "linear"):
         raise HTTPException(status_code=400, detail="Invalid category")
@@ -1208,7 +1208,7 @@ async def get_recent_trades(symbol: str, category: str):
     return normalized, "Binance"
 
 
-@app.get("/api/flow@app.get("/api/flow/{symbol}")
+@app.get("/api/flow/{symbol}")
 async def market_flow(symbol: str, category: str = "spot"):
     if category not in ("spot", "linear"):
         raise HTTPException(status_code=400, detail="Invalid category")
