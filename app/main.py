@@ -14,7 +14,7 @@ from xml.etree import ElementTree as ET
 
 import httpx
 import websockets
-from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -1069,7 +1069,7 @@ async def engines():
 async def engine_catalog_endpoint(symbol: str = "BTCUSDT", category: str = "spot",
                                  interval: str = "15m", limit: int = Query(180, ge=60, le=500)):
     """Return catalogue declarations joined to request-time runtime evidence."""
-    result = await market_engine_suite(symbol, category, interval, limit)
+    result = await market_engine_suite(symbol, category, interval, limit, request=None)
     readiness = result["engine_readiness"]
     catalog = engine_catalog(readiness)
     catalog.update({"readiness":readiness, "last_checked_at":readiness["last_checked_at"],
@@ -1117,7 +1117,7 @@ async def engine_sources_endpoint():
 async def engine_suite_coverage(symbol: str = "BTCUSDT", category: str = "spot",
                                 interval: str = "15m", limit: int = Query(180, ge=60, le=500)):
     """Run the functional suite and return dynamic readiness counts and evidence."""
-    result = await market_engine_suite(symbol, category, interval, limit)
+    result = await market_engine_suite(symbol, category, interval, limit, request=None)
     readiness = result["engine_readiness"]
     return {**readiness, "adapter_coverage":result["engine_coverage"],
             "symbol":result["symbol"], "category":result["category"],
@@ -1458,7 +1458,7 @@ def _runtime_memory_snapshot() -> dict:
 @app.get("/api/early-opportunity/{symbol}")
 async def market_engine_suite(symbol: str, category: str = "spot", interval: str = "15m",
                               limit: int = Query(300, ge=60, le=500),
-                              engine_ids: str | None = None):
+                              engine_ids: str | None = None, request: Request = None):
     """Run the 156-engine catalogue against one validated, read-only market snapshot."""
     if category not in ("spot", "linear") or interval not in INTERVALS:
         raise HTTPException(status_code=400, detail="Invalid market category or interval")
@@ -1736,10 +1736,11 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
             "message":f"Research score {early['score']}/100; tier {early.get('tier')}. Confirmation and risk checks remain required.",
             "dedupe_key":f"{symbol}:{interval}:{early.get('tier')}",
         }]
+    notification_enabled = bool(request and request.url.path.startswith("/api/early-opportunity/"))
     notification_delivery = [
         await deliver_notification(shared_http_client(), event)
         for event in context["notification_events"]
-    ]
+    ] if notification_enabled else []
     selected = [x.strip().upper() for x in engine_ids.split(",") if x.strip()] if engine_ids else None
     market_snapshot = _market_snapshot_evidence(completed, interval, provider)
     context["market_snapshot"] = market_snapshot
@@ -2498,7 +2499,7 @@ async def _scheduled_watchlist_scan() -> dict:
     failures = []
     for symbol in symbols:
         try:
-            result = await market_engine_suite(symbol, category="spot", interval="15m", limit=120)
+            result = await market_engine_suite(symbol, category="spot", interval="15m", limit=120, request=None)
             early = result.get("early_opportunity", {})
             checked.append({
                 "symbol": symbol,

@@ -144,6 +144,48 @@ def test_engine_suite_api_uses_completed_candles_and_stays_paper_only(monkeypatc
     assert payload["live_trading_enabled"] is False
 
 
+def test_coverage_read_endpoint_never_delivers_opportunity_notifications(monkeypatch):
+    import time
+    delivered = []
+
+    async def fake_klines(symbol, category, interval, limit):
+        now_ms = int(time.time() * 1000)
+        rows=[]
+        for i, candle in enumerate(make_candles(121)):
+            rows.append([str(now_ms - (120-i)*900_000), str(candle["open"]), str(candle["high"]),
+                         str(candle["low"]), str(candle["close"]), str(candle["volume"])])
+        return rows, "TEST"
+
+    async def fake_book(symbol, category):
+        return [[100, 100]], [[100.1, 20]], "TEST"
+
+    async def fake_trades(symbol, category):
+        return [{"price":100,"size":10,"side":"BUY"}], "TEST"
+
+    async def fake_enrichment(symbol, category, interval, candles):
+        return {}, {"derivatives":{"status":"unavailable"},"cross_market":{"status":"unavailable"}}
+
+    async def fake_news(symbol):
+        return [], {}
+
+    async def fake_delivery(client, event):
+        delivered.append(event)
+        return {"status":"sent"}
+
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    monkeypatch.setattr(main, "get_orderbook", fake_book)
+    monkeypatch.setattr(main, "get_recent_trades", fake_trades)
+    monkeypatch.setattr(main, "collect_engine_enrichment", fake_enrichment)
+    monkeypatch.setattr(main, "_rss_news_events", fake_news)
+    monkeypatch.setattr(main, "early_opportunity_assessment", lambda context: {"status":"computed","score":80})
+    monkeypatch.setattr(main, "deliver_notification", fake_delivery)
+
+    response = TestClient(main.app).get("/api/engine-suite/coverage")
+    assert response.status_code == 200
+    assert response.json()["live_trading_enabled"] is False
+    assert delivered == []
+
+
 def test_engine_suite_rejects_unsupported_symbol_and_market():
     client = TestClient(main.app)
     assert client.get("/api/engine-suite/BTCUSD").status_code == 400
