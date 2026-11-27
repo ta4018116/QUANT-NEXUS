@@ -363,15 +363,32 @@ function renderOpportunityCards(items){
  if(!$('entryTicker'))host.insertAdjacentHTML('beforeend','<div id="entryTicker" class="entry-ticker"><b>مراقبة الدخول</b><div class="muted">جارٍ تحميل حالة الإشارة...</div><div class="ticker-track"><i style="width:0%"></i></div></div>');
 }
 $('signals').addEventListener('click',e=>{const add=e.target.closest('[data-add-monitor]');if(add){e.preventDefault();e.stopPropagation();window.addMonitoringSymbol?.(add.dataset.addMonitor);return}const card=e.target.closest('[data-opp-symbol]');if(card){selectCoin(card.dataset.oppSymbol);openPage('opportunities')}});
+function engineHtml(value){return String(value??'').replace(/[&<>"']/g,function(ch){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]})}
 async function loadEngines(){
- $('engineError').textContent='';$('engineGrid').innerHTML='<div class="muted">جارٍ تحميل سجل المحركات...</div>';
+ $('engineError').textContent='';
+ $('engineGrid').innerHTML='<div class="muted">جارٍ اختبار المحركات على لقطة سوق حقيقية...</div>';
  try{
-  const d=await api('/api/engine-catalog');
-  $('engineCounts').textContent=d.total+' محرك';
-  $('engineSummary').innerHTML='<div><small>مكتملة</small><b class="positive">'+d.counts.implemented+'</b></div><div><small>جزئية</small><b class="gold">'+d.counts.partial+'</b></div><div><small>مخططة</small><b>'+d.counts.planned+'</b></div><div><small>وضع التشغيل</small><b>Simulation فقط</b></div>';
-  $('engineGrid').innerHTML=d.engines.map(x=>'<article class="engine-card"><span class="engine-status '+x.status+'">'+({implemented:'مكتمل',partial:'جزئي',planned:'مخطط'}[x.status]||x.status)+'</span><b>'+x.name_ar+'</b><small>'+x.name+' · '+x.group+'</small><small style="margin-top:7px">'+(x.capabilities||[]).join(' · ')+'</small>'+(x.gaps?.length?'<small class="gold" style="margin-top:7px">المتبقي: '+x.gaps.join(' · ')+'</small>':'')+'</article>').join('');
-  if(d.live_trading_enabled!==false)throw Error('فشل فحص الأمان: حالة التداول الحقيقي غير معطلة');
- }catch(e){$('engineGrid').innerHTML='<div class="muted">تعذر تحميل المحركات.</div>';$('engineError').textContent=e.message+' · أعد فتح الصفحة للمحاولة.'}
+  const symbol=selected||'BTCUSDT';
+  const d=await api('/api/engine-suite/'+encodeURIComponent(symbol)+'?category='+cat()+'&interval='+tf()+'&limit=180');
+  const readiness=d.engine_readiness;
+  if(!readiness||readiness.total!==156)throw Error('لم يصل تقييم ديناميكي كامل للمحركات الـ156');
+  const counts=readiness.counts;
+  $('engineCounts').textContent=readiness.total+' محرك · اختبار '+engineHtml(symbol);
+  $('engineSummary').innerHTML='<div><small>مكتملة بعد الاختبار</small><b class="positive">'+counts.implemented+'</b></div><div><small>جزئية / محجوبة</small><b class="gold">'+counts.partial+'</b></div><div><small>مخططة</small><b>'+counts.planned+'</b></div><div><small>مصدر اللقطة</small><b>'+engineHtml(d.provider)+'</b></div>';
+  $('engineGrid').innerHTML=readiness.engines.map(function(x){
+   const status=x.status, test=x.test_result||{}, source=x.source_evidence||{};
+   const label=status==='implemented'?'مكتمل ومختبَر':status==='planned'?'مخطط':'جزئي / غير جاهز';
+   const tone=status==='implemented'?'implemented':status==='planned'?'planned':'partial';
+   const reasons=(x.readiness_reasons||[]).map(engineHtml).join(' · ');
+   const providers=(source.providers||[]).slice(0,4).map(engineHtml).join('، ');
+   const testLabel=test.status==='passed'?'نجح على اللقطة الحالية':'لم يجتز / مدخلات ناقصة';
+   return '<article class="engine-card"><span class="engine-status '+tone+'">'+label+'</span><b>'+engineHtml(x.name_ar)+'</b><small>'+engineHtml(x.id)+' · '+engineHtml(x.name)+' · '+engineHtml(x.group)+'</small><small style="margin-top:7px">اختبار التشغيل: '+testLabel+' ('+engineHtml(test.runtime_status)+')</small><small style="margin-top:5px">مصدر البيانات: '+(source.mapped?'موثق':'غير مكتمل')+' · '+(providers||'لا يوجد مصدر محدد')+'</small>'+(reasons?'<small class="gold" style="margin-top:7px">سبب الحالة: '+reasons+'</small>':'<small class="positive" style="margin-top:7px">اجتاز شروط التفعيل على لقطة الاختبار الحالية</small>')+'</article>';
+  }).join('');
+  if(readiness.live_trading_enabled!==false||d.live_trading_enabled!==false)throw Error('فشل فحص الأمان: التداول الحقيقي يجب أن يبقى معطلاً');
+ }catch(e){
+  $('engineGrid').innerHTML='<div class="muted">تعذر تقييم المحركات؛ لم يتم استخدام الحالات الثابتة كبديل.</div>';
+  $('engineError').textContent=e.message+' · اختر رمزاً متاحاً أو أعد المحاولة.';
+ }
 }
 const originalRender=render;
 render=function(items){originalRender(items);renderOpportunityCards(items)};

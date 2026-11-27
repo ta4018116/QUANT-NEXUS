@@ -443,7 +443,9 @@ def test_responsive_card_dashboard_exposes_real_pages_opportunities_and_engine_r
     assert 'data-open-page="intelligence"' in html
     assert "function openPage(key)" in html
     assert "function renderOpportunityCards(items)" in html
-    assert "api('/api/engine-catalog')" in html
+    assert "api('/api/engine-suite/'+encodeURIComponent(symbol)" in html
+    assert "readiness.counts" in html
+    assert "سبب الحالة" in html
     assert "أسلوب الدخول" in html
     assert "وقف الخسارة" in html
     assert "الهدف الأول" in html
