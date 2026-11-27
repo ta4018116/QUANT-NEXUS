@@ -4,6 +4,7 @@ import os
 import logging
 import json
 import re
+import secrets
 import uuid
 from datetime import datetime, timezone
 from html import unescape
@@ -13,7 +14,7 @@ from xml.etree import ElementTree as ET
 
 import httpx
 import websockets
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -23,9 +24,18 @@ from .quant_engine import ema_crossover_backtest, enrich_analysis
 from .engine_registry import engine_registry
 from .engine_catalog import engine_catalog
 from .engine_suite import run_engine_suite, early_opportunity_assessment, catalogue_runtime_coverage
+from .engine_sources import engine_source_registry
 from .command_engine import COMMANDS, matches_command, evaluate_entry
 from .derivatives_engine import summarize_derivatives, normalize_liquidations
 from .advanced_engines import market_regime, market_structure, opportunity_assessment, learning_monitoring
+from .provider_feeds import (
+    fetch_gdelt_news, fetch_cryptopanic_news, fetch_coinglass_liquidations,
+    provider_configuration,
+)
+from .model_lifecycle import train_direction_model, list_model_artifacts
+from .notification_delivery import deliver_notification
+from .ops_runtime import BackgroundSupervisor
+from .engine_event_store import EngineEventStore
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="QUANT NEXUS", version="1.0.0",
@@ -55,6 +65,26 @@ def safe_float(value, default=0.0):
     except (TypeError, ValueError, OverflowError):
         return default
 
+
+def _heartbeat_age_seconds(timestamp: str | None, now: datetime | None = None) -> float | None:
+    """Return a real heartbeat age; never substitute process-running for a heartbeat."""
+    if not timestamp:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        current = now or datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        return max(0.0, (current - parsed).total_seconds())
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+OPS_INTERVAL_SECONDS = min(3600, max(60, int(os.getenv("OPS_INTERVAL_SECONDS", "300"))))
+OPS_RUNTIME = BackgroundSupervisor(OPS_INTERVAL_SECONDS)
+
 BYBIT = "https://api.bybit.com"
 BYBIT_LINEAR_WS = "wss://stream.bybit.com/v5/public/linear"
 TIMEOUT = httpx.Timeout(12.0, connect=5.0)
@@ -74,11 +104,13 @@ def shared_http_client() -> httpx.AsyncClient:
 @app.on_event("shutdown")
 async def close_shared_http_client():
     global HTTP_CLIENT
+    await OPS_RUNTIME.stop()
     if HTTP_CLIENT is not None and not HTTP_CLIENT.is_closed:
         await HTTP_CLIENT.aclose()
     HTTP_CLIENT = None
 PAPER_STORE = PaperStore()
 PAPER_BALANCE, PAPER_TRADES = PAPER_STORE.load()
+ENGINE_EVENT_STORE = EngineEventStore()
 PAPER_LOCK = asyncio.Lock()
 AUTO_ENTRY_LOCK = asyncio.Lock()
 LIQUIDATION_LOCK = asyncio.Lock()
@@ -461,7 +493,76 @@ def analyze_klines(rows, include_all_candles=False):
 async def health():
     return {"application":"QUANT NEXUS","status":"ok","version":"1.0.0",
             "trading_mode":"simulation","live_trading_enabled":False,
+            "background_runtime":OPS_RUNTIME.status(),
             "utc":datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/api/provider-health")
+async def provider_health_endpoint():
+    """Report provider configuration without exposing any credential material."""
+    return {
+        **provider_configuration(),
+        "runtime": OPS_RUNTIME.status(),
+        "engine_coverage": catalogue_runtime_coverage(),
+        "trading_mode": "simulation",
+        "live_trading_enabled": False,
+    }
+
+
+@app.get("/api/ops/status")
+async def operations_status():
+    return {
+        "scheduler": OPS_RUNTIME.status(),
+        "provider_configuration": provider_configuration(),
+        "trading_mode": "simulation",
+        "live_trading_enabled": False,
+    }
+
+
+@app.get("/api/models/registry")
+async def model_registry_endpoint():
+    return {
+        "models": list_model_artifacts(),
+        "count": len(list_model_artifacts()),
+        "registry_path": os.getenv("MODEL_REGISTRY_PATH", "data/models"),
+        "durable_storage_verified": os.getenv("MODEL_REGISTRY_DURABLE", "false").lower() == "true",
+        "warning": "Artifacts are research candidates. Durable status requires a mounted persistent volume.",
+        "trading_mode": "simulation",
+        "live_trading_enabled": False,
+    }
+
+
+@app.post("/api/models/train/{symbol}")
+async def train_direction_model_endpoint(
+    symbol: str,
+    category: str = "spot",
+    interval: str = "15m",
+    limit: int = Query(500, ge=214, le=500),
+    x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+):
+    """Train and persist a calibrated logistic research candidate from real OHLCV."""
+    expected_token = os.getenv("MODEL_ADMIN_TOKEN", "")
+    if not expected_token:
+        raise HTTPException(status_code=503, detail="Set MODEL_ADMIN_TOKEN before enabling remote model training")
+    if not x_admin_token or not secrets.compare_digest(x_admin_token, expected_token):
+        raise HTTPException(status_code=401, detail="Invalid model administration token")
+    if category not in ("spot", "linear") or interval not in INTERVALS:
+        raise HTTPException(status_code=400, detail="Invalid market category or interval")
+    clean_symbol = symbol.upper()
+    if not clean_symbol.endswith("USDT") or not clean_symbol.replace("USDT", "").isalnum():
+        raise HTTPException(status_code=400, detail="Only USDT crypto symbols are supported")
+    raw_rows, provider = await get_market_klines(clean_symbol, category, interval, limit)
+    analysis = analyze_klines(raw_rows, include_all_candles=True)
+    completed = analysis["candles"][:-1]
+    result = train_direction_model(completed, clean_symbol, interval)
+    return {
+        **result,
+        "provider": provider,
+        "completed_candles": len(completed),
+        "category": category,
+        "trading_mode": "simulation",
+        "live_trading_enabled": False,
+    }
 
 @app.get("/api/overview")
 async def overview():
@@ -910,6 +1011,43 @@ async def engine_catalog_endpoint():
     """Return the auditable 156-engine catalogue and honest implementation states."""
     return engine_catalog()
 
+@app.get("/api/events/status")
+async def engine_event_status():
+    """Return event-log health and backlog counters without exposing secrets."""
+    return {
+        **ENGINE_EVENT_STORE.stats(),
+        "trading_mode": "simulation",
+        "live_trading_enabled": False,
+    }
+
+
+@app.get("/api/events/recent")
+async def recent_engine_events(
+    event_type: str | None = None,
+    symbol: str | None = None,
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Read recent persisted research, audit and replay events."""
+    return {
+        "events": ENGINE_EVENT_STORE.list_events(
+            event_type=event_type,
+            symbol=symbol.upper() if symbol else None,
+            limit=limit,
+        ),
+        "trading_mode": "simulation",
+        "live_trading_enabled": False,
+    }
+
+
+@app.get("/api/engine-sources")
+async def engine_sources_endpoint():
+    """Return a per-engine evidence source contract and current provider configuration."""
+    return {
+        **engine_source_registry(),
+        "provider_configuration": provider_configuration(),
+    }
+
+
 @app.get("/api/engine-suite/coverage")
 async def engine_suite_coverage():
     """Show how many catalogue entries have callable runtime adapters."""
@@ -928,8 +1066,8 @@ async def _public_json(url: str, params: dict | None = None) -> dict:
     return payload
 
 
-async def _rss_news_events() -> tuple[list[dict], dict]:
-    """Read public crypto RSS headlines; keyword triage is not factual verification."""
+async def _rss_news_events(symbol: str = "BTCUSDT") -> tuple[list[dict], dict]:
+    """Read public RSS, GDELT and optional CryptoPanic headlines; no source is fact-verified."""
     feeds = {
         "Cointelegraph": "https://cointelegraph.com/rss",
         "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml",
@@ -960,7 +1098,28 @@ async def _rss_news_events() -> tuple[list[dict], dict]:
     results = await asyncio.gather(*(fetch_one(name, url) for name, url in feeds.items()))
     events = [event for batch, _ in results for event in batch]
     status = {name: result for name, result in zip(feeds, [x[1] for x in results])}
-    return events[:50], status
+    gdelt, cryptopanic = await asyncio.gather(
+        fetch_gdelt_news(shared_http_client(), symbol),
+        fetch_cryptopanic_news(shared_http_client(), symbol),
+        return_exceptions=True,
+    )
+    for provider, result in (("GDELT", gdelt), ("CryptoPanic", cryptopanic)):
+        if isinstance(result, Exception):
+            status[provider] = {"status": "unavailable", "reason": type(result).__name__}
+            continue
+        status[provider] = {key: value for key, value in result.items() if key != "events"}
+        events.extend(result.get("events", []))
+    # Stable URL deduplication; keep original source timestamps and attribution.
+    unique = {}
+    for event in events:
+        if isinstance(event, dict) and event.get("url"):
+            unique.setdefault(str(event["url"]), event)
+    ordered = sorted(
+        unique.values(),
+        key=lambda item: str(item.get("published_at") or ""),
+        reverse=True,
+    )
+    return ordered[:100], status
 
 
 async def _deribit_options_snapshot(symbol: str) -> tuple[list[dict] | None, float | None, dict]:
@@ -1128,11 +1287,12 @@ async def collect_engine_enrichment(symbol: str, category: str, interval: str, b
         _aligned_peer_closes(symbol,category,interval,base_candles),
         _cross_exchange_marks(symbol,category),
         _spot_and_linear_marks(symbol),
-        _rss_news_events(),
+        _rss_news_events(symbol),
         _deribit_options_snapshot(symbol),
+        fetch_coinglass_liquidations(shared_http_client(), symbol),
         return_exceptions=True,
     )
-    derivatives, peers, exchange, basis, news, options = jobs
+    derivatives, peers, exchange, basis, news, options, aggregate_liquidations = jobs
 
     if not isinstance(derivatives,Exception):
         context["derivatives"] = {
@@ -1186,6 +1346,18 @@ async def collect_engine_enrichment(symbol: str, category: str, interval: str, b
         providers["options"] = option_status
     else:
         providers["options"] = {"status":"unavailable","reason":type(options).__name__}
+
+    if not isinstance(aggregate_liquidations, Exception):
+        providers["aggregate_liquidations"] = {
+            key: value for key, value in aggregate_liquidations.items()
+            if key not in ("events",)
+        }
+        if aggregate_liquidations.get("status") == "ok":
+            context["liquidations_aggregate"] = aggregate_liquidations
+    else:
+        providers["aggregate_liquidations"] = {
+            "status": "unavailable", "reason": type(aggregate_liquidations).__name__
+        }
 
     return context, providers
 
@@ -1385,25 +1557,41 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         "path_configured":bool(os.getenv("PAPER_DB_PATH")),
     }
     context["websocket"] = {
-        "status":"ok",
+        "status":"degraded",
         "liquidation_capture":"in-memory only while a client is connected",
         "independent_connection_monitoring":False,
         "captured_events":len(context["liquidations"]),
+        "limitation":"No independent durable WebSocket worker or connection heartbeat is configured.",
     }
-    context["scheduled_jobs"] = []
-    context["scheduler_backend_configured"] = False
+    context["scheduled_jobs"] = [{
+        "name": "watchlist_market_monitor",
+        "enabled": OPS_RUNTIME.status().get("status") == "running",
+        "interval_seconds": OPS_INTERVAL_SECONDS,
+        "scope": "single_web_process",
+    }]
+    context["scheduler_backend_configured"] = OPS_RUNTIME.status().get("status") == "running"
     context["recent_failures"] = []
     context["notification_events"] = []
-    context["model_versions"] = [
-        {"name":name,"version":"research-per-request","artifact_persisted":False}
-        for name in ("logistic_regression","random_forest","mlp","lstm_reservoir","transformer_reservoir","xgboost_style_booster")
+    context["model_versions"] = list_model_artifacts() + [
+        {"name":name,"version":"research-per-request","artifact_persisted":False,
+         "training_state":"research_adapter_not_promoted"}
+        for name in ("random_forest","mlp","lstm_reservoir","transformer_reservoir","xgboost_style_booster")
     ]
     context["audit_events"] = [
         {"event_id":f"paper-trade-{x.get('id')}"} for x in paper_positions if x.get("id") is not None
     ]
     context["resource_snapshot"] = _runtime_memory_snapshot()
-    context["heartbeats"] = {"api":{"age_seconds":0,"scope":"current_request_only"}}
-    context["heartbeat_scope"] = "current API request only; no independent worker heartbeat backend is configured"
+    ops_status = OPS_RUNTIME.status()
+    context["heartbeats"] = {
+        "api": {"age_seconds": 0, "scope": "current_request"},
+        "background_scheduler": {
+            "age_seconds": _heartbeat_age_seconds(ops_status.get("last_finished_at")),
+            "last_finished_at": ops_status.get("last_finished_at"),
+            "task_running": ops_status.get("status") == "running",
+            "scope": ops_status.get("scope"),
+        },
+    }
+    context["heartbeat_scope"] = ops_status.get("scope", "single_web_process")
     context["security_policy"] = {
         "trading_mode":"simulation",
         "live_trading_enabled":False,
@@ -1422,9 +1610,54 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         "paper_ledger": "ok",
         "database":"ok" if context["database"]["persistent"] else "degraded",
         "cache":"ok",
-        "websocket":"ok",
+        "websocket":"degraded",
     }
     early = early_opportunity_assessment(context)
+
+    # Persist compact, attributable research and audit events. No orders or
+    # private exchange endpoints are involved in this event path.
+    ENGINE_EVENT_STORE.publish(
+        "audit",
+        {
+            "action": "market_engine_suite",
+            "category": category,
+            "interval": interval,
+            "provider": provider,
+            "completed_candles": len(completed),
+            "engine_count": 156,
+            "trading_mode": "simulation",
+        },
+        symbol=symbol,
+        source="market_engine_suite",
+    )
+    if early.get("status") == "computed" and safe_float(early.get("score")) >= 65:
+        candle_time = completed[-1].get("time") if completed else None
+        ENGINE_EVENT_STORE.publish(
+            "opportunity",
+            {
+                "event_type": "opportunity",
+                "score": safe_float(early.get("score")),
+                "tier": early.get("tier"),
+                "interval": interval,
+                "candle_time": candle_time,
+                "reference_price": early.get("reference_price"),
+                "reasons": early.get("reasons", []),
+                "missing_confirmations": early.get("missing_confirmations", []),
+                "source_provider": provider,
+            },
+            symbol=symbol,
+            source="early_opportunity_assessment",
+            dedupe_key=f"opportunity:{symbol}:{interval}:{candle_time}:{early.get('tier')}",
+        )
+    context["opportunity_events"] = ENGINE_EVENT_STORE.list_events(
+        event_type="opportunity", symbol=symbol, limit=200
+    )
+    context["audit_events"] = ENGINE_EVENT_STORE.list_events(
+        event_type="audit", symbol=symbol, limit=200
+    )
+    context["replay_events"] = ENGINE_EVENT_STORE.list_events(symbol=symbol, limit=500)
+    context["event_bus"] = ENGINE_EVENT_STORE.stats()
+
     if early.get("status")=="computed" and early.get("score",0)>=65:
         context["notification_events"] = [{
             "type":"OPPORTUNITY",
@@ -1432,6 +1665,10 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
             "message":f"Research score {early['score']}/100; tier {early.get('tier')}. Confirmation and risk checks remain required.",
             "dedupe_key":f"{symbol}:{interval}:{early.get('tier')}",
         }]
+    notification_delivery = [
+        await deliver_notification(shared_http_client(), event)
+        for event in context["notification_events"]
+    ]
     selected = [x.strip().upper() for x in engine_ids.split(",") if x.strip()] if engine_ids else None
     suite = run_engine_suite(context, selected)
     return {
@@ -1441,6 +1678,8 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         "market_structure": structure, "early_opportunity": early,
         "engine_suite": suite, "engine_coverage": catalogue_runtime_coverage(),
         "provider_health": provider_health,
+        "notification_delivery": notification_delivery,
+        "background_runtime": OPS_RUNTIME.status(),
         "trading_mode": "simulation", "live_trading_enabled": False,
     }
 
@@ -1615,6 +1854,18 @@ async def multi_market_engine_suite(
         "heartbeats":{"api":{"age_seconds":0,"scope":"current_request_only"}},
         "heartbeat_scope":"current API request only; no independent worker heartbeat backend is configured",
     }
+    # News can also enrich equities/FX/indices/commodities when the query term is a symbol.
+    news_events, news_sources = await _rss_news_events(symbol.upper())
+    context["news_events"] = news_events
+    context["news_provider_health"] = news_sources
+    context["model_versions"] = list_model_artifacts()
+    context["scheduled_jobs"] = [{
+        "name": "watchlist_market_monitor",
+        "enabled": OPS_RUNTIME.status().get("status") == "running",
+        "interval_seconds": OPS_INTERVAL_SECONDS,
+        "scope": "single_web_process",
+    }]
+    context["scheduler_backend_configured"] = OPS_RUNTIME.status().get("status") == "running"
     early=early_opportunity_assessment(context)
     if early.get("status")=="computed" and early.get("score",0)>=65:
         context["notification_events"]=[{
@@ -1624,6 +1875,10 @@ async def multi_market_engine_suite(
         }]
     else:
         context["notification_events"]=[]
+    notification_delivery = [
+        await deliver_notification(shared_http_client(), event)
+        for event in context["notification_events"]
+    ]
     selected=[x.strip().upper() for x in engine_ids.split(",") if x.strip()] if engine_ids else None
     suite=run_engine_suite(context,selected)
     return {
@@ -1631,7 +1886,10 @@ async def multi_market_engine_suite(
         "provider":provider_info,"completed_candles":len(completed),
         "early_opportunity":early,"engine_suite":suite,
         "engine_coverage":catalogue_runtime_coverage(),
-        "provider_health":{"twelve_data":{"status":"ok",**provider_info}},
+        "provider_health":{"twelve_data":{"status":"ok",**provider_info},
+                           "news":news_sources},
+        "notification_delivery":notification_delivery,
+        "background_runtime":OPS_RUNTIME.status(),
         "trading_mode":"simulation","live_trading_enabled":False,
     }
 
@@ -2081,3 +2339,40 @@ async def monitor_paper_trades():
 @app.get("/", response_class=HTMLResponse)
 async def home():
     return (BASE / "static" / "index.html").read_text(encoding="utf-8")
+
+
+
+async def _scheduled_watchlist_scan() -> dict:
+    """Run a bounded, read-only paper research scan on the configured watchlist."""
+    raw = os.getenv("OPS_WATCHLIST", "BTCUSDT,ETHUSDT,SOLUSDT")
+    symbols = [item.strip().upper() for item in raw.split(",") if item.strip()]
+    symbols = [item for item in symbols if item.endswith("USDT") and item.replace("USDT", "").isalnum()][:10]
+    checked = []
+    alerts = []
+    failures = []
+    for symbol in symbols:
+        try:
+            result = await market_engine_suite(symbol, category="spot", interval="15m", limit=120)
+            early = result.get("early_opportunity", {})
+            checked.append({
+                "symbol": symbol,
+                "status": early.get("status"),
+                "score": early.get("score"),
+                "tier": early.get("tier"),
+            })
+            if early.get("status") == "computed" and safe_float(early.get("score")) >= 88:
+                alerts.append(symbol)
+        except Exception as exc:
+            failures.append({"symbol": symbol, "reason": type(exc).__name__})
+    return {
+        "symbols_checked": checked,
+        "alert_symbols": alerts,
+        "failures": failures,
+        "live_trading_enabled": False,
+    }
+
+
+@app.on_event("startup")
+async def start_background_operations():
+    if os.getenv("OPS_BACKGROUND_ENABLED", "true").lower() == "true":
+        await OPS_RUNTIME.start(_scheduled_watchlist_scan)

@@ -13,6 +13,7 @@ from statistics import NormalDist, mean, median, pstdev
 from typing import Any
 
 from .engine_catalog import ENGINE_CATALOG
+from .model_lifecycle import predict_direction_model
 
 
 def _num(value: Any, default: float = 0.0) -> float:
@@ -730,6 +731,9 @@ def _sigmoid(x):
 
 
 def _logistic_model(ctx):
+    persisted = predict_direction_model(ctx)
+    if persisted is not None:
+        return persisted
     dataset,err=_ml_dataset(ctx)
     if err: return err
     split=max(40,int(len(dataset)*0.8))
@@ -1461,11 +1465,28 @@ def _watchdog(ctx):
     heartbeats=ctx.get("heartbeats")
     if not isinstance(heartbeats,dict) or not heartbeats:return _blocked("service heartbeat timestamps required",["heartbeats"])
     max_age=max(1,_num(ctx.get("heartbeat_max_age_seconds"),60))
-    ages={k:_num(v.get("age_seconds"),float("inf")) if isinstance(v,dict) else float("inf") for k,v in heartbeats.items()}
-    stale=[k for k,v in ages.items() if v>max_age]
-    return _ready({"heartbeat_ages_seconds":ages,"stale_services":stale,"watchdog_alert":bool(stale),
+    # Missing heartbeat ages are unknown, never infinity: JSON responses must
+    # remain standards-compliant and must not turn an unreported metric into
+    # a fabricated stale-service duration.
+    ages={}
+    unknown=[]
+    for name, heartbeat in heartbeats.items():
+        raw_age=heartbeat.get("age_seconds") if isinstance(heartbeat,dict) else None
+        if raw_age is None:
+            ages[name]=None
+            unknown.append(name)
+            continue
+        age=_num(raw_age,float("nan"))
+        if not isfinite(age) or age < 0:
+            ages[name]=None
+            unknown.append(name)
+        else:
+            ages[name]=age
+    stale=[name for name,age in ages.items() if age is not None and age>max_age]
+    return _ready({"heartbeat_ages_seconds":ages,"stale_services":stale,
+                   "unknown_services":unknown,"watchdog_alert":bool(stale or unknown),
                    "scope":ctx.get("heartbeat_scope","provided heartbeat set only")},
-                  "read-only heartbeat age check; does not restart external services")
+                  "read-only heartbeat age check; unknown ages are reported separately and no external service is restarted")
 
 
 def _event_bus(ctx):
@@ -2366,6 +2387,26 @@ for _catalogue_item in ENGINE_CATALOG:
     _HANDLER_IDS.setdefault(_catalogue_item["id"], _external)
 
 
+def _sanitize_runtime_value(value: Any, path: str = "$", invalid_paths: list[str] | None = None):
+    """Prevent NaN/Infinity from escaping an engine adapter into strict JSON responses."""
+    if invalid_paths is None:
+        invalid_paths = []
+    if isinstance(value, float) and not isfinite(value):
+        invalid_paths.append(path)
+        return None
+    if isinstance(value, dict):
+        return {
+            str(key): _sanitize_runtime_value(item, f"{path}.{key}", invalid_paths)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [
+            _sanitize_runtime_value(item, f"{path}[{index}]", invalid_paths)
+            for index, item in enumerate(value)
+        ]
+    return value
+
+
 def run_engine(engine_id: str, context: dict) -> dict:
     item = next((x for x in ENGINE_CATALOG if x["id"] == engine_id), None)
     if item is None:
@@ -2381,6 +2422,15 @@ def run_engine(engine_id: str, context: dict) -> dict:
             value = handler(context)
         except (TypeError, ValueError, KeyError, ZeroDivisionError, OverflowError) as exc:
             value = {"status":"input_error","reason":type(exc).__name__}
+    invalid_numeric_paths: list[str] = []
+    value = _sanitize_runtime_value(value, invalid_paths=invalid_numeric_paths)
+    if invalid_numeric_paths:
+        value = {
+            "status": "invalid_numeric_output",
+            "reason": "Engine produced NaN or Infinity; unsafe numeric fields were suppressed.",
+            "invalid_numeric_paths": invalid_numeric_paths,
+            "sanitized_value": value,
+        }
     return {"engine_id":engine_id,"name":item["name"],"group":item["group"],
             "catalog_status":item["status"],"runtime":value,
             "trading_mode":"simulation","live_trading_enabled":False}
