@@ -88,24 +88,28 @@ ENGINE_CATALOG = [
     "name": "News and Events",
     "name_ar": "محرك News and Events",
     "group": "Market Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تصنيف أولي للأخبار والأحداث من عناوين وملخصات مزود موثوق عند تمريرها"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يوجد مزود أخبار مباشر مربوط حالياً والتحليل بالكلمات لا يتحقق من صحة الخبر"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E008",
     "name": "Cross-Market Correlation",
     "name_ar": "محرك Cross-Market Correlation",
     "group": "Market Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "حساب Pearson correlation من سلاسل إغلاقات متزامنة لأصول أخرى"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب سلاسل متعددة الأصول متزامنة من مزود بيانات"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E009",
@@ -848,12 +852,14 @@ ENGINE_CATALOG = [
     "name": "Liquidation Heatmap",
     "name_ar": "محرك Liquidation Heatmap",
     "group": "Derivatives Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تجميع سجلات التصفية المنفذة حسب مستويات السعر"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يتنبأ بمناطق التصفية المستقبلية ولا توجد تغطية تاريخية موحدة لكل المنصات"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E064",
@@ -1418,24 +1424,28 @@ ENGINE_CATALOG = [
     "name": "Strategy Optimizer",
     "name_ar": "محرك Strategy Optimizer",
     "group": "Backtesting & Learning",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "ترتيب نتائج استراتيجيات اختبار مستقلة وفق العائد والتراجع وعدد الصفقات"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يشغّل عمليات بحث أو نشر تلقائي للاستراتيجيات"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E106",
     "name": "Parameter Optimization",
     "name_ar": "محرك Parameter Optimization",
     "group": "Backtesting & Learning",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "اختيار أفضل تجربة معاملات من نتائج تحقق مزودة مع حد أدنى للعينات"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب تشغيل التجارب خارج هذا المحرك ولا يغير معاملات الإنتاج"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E107",
@@ -1484,36 +1494,42 @@ ENGINE_CATALOG = [
     "name": "Win Rate Analytics",
     "name_ar": "محرك Win Rate Analytics",
     "group": "Backtesting & Learning",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "حساب نسبة الصفقات الرابحة من الصفقات الورقية المغلقة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب تاريخاً مغلقاً كافياً ولا يعكس أداءً مستقبلياً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E111",
     "name": "Profit Factor",
     "name_ar": "محرك Profit Factor",
     "group": "Backtesting & Learning",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "حساب Profit Factor من إجمالي الربح والخسارة المحققين"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "غير معرّف عند عدم وجود خسائر ويحتاج عينة ممثلة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E112",
     "name": "Trade Expectancy",
     "name_ar": "محرك Trade Expectancy",
     "group": "Backtesting & Learning",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "حساب متوسط صافي الربح أو الخسارة لكل صفقة مغلقة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "إحصاء وصفي حساس لحجم العينة وتوزيع النتائج"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E113",
@@ -1548,12 +1564,14 @@ ENGINE_CATALOG = [
     "name": "Continuous Learning",
     "name_ar": "محرك Continuous Learning",
     "group": "Backtesting & Learning",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تحديد جاهزية إعادة التدريب عند ظهور انحراف أو عينات موسومة كافية"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا ينفذ تدريباً مستمراً أو استبدال نموذج دون مراجعة خارج العينة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E116",
@@ -1654,12 +1672,14 @@ ENGINE_CATALOG = [
     "name": "Trade Recovery",
     "name_ar": "محرك Trade Recovery",
     "group": "Trade Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "فحص سلامة سجل المراكز الورقية وتحديد بيانات الصفقة الناقصة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "فحص قراءة فقط ولا يعيد إنشاء الصفقات أو يغير سجل الحساب"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E124",
@@ -1776,12 +1796,14 @@ ENGINE_CATALOG = [
     "name": "AI Prediction Agent",
     "name_ar": "محرك AI Prediction Agent",
     "group": "Multi-Agent Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تجميع انحدار لوجستي وغابة عشوائية وتوقع مرجعي لاتجاه بحثي"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "نماذج داخل نافذة الطلب غير معايرة ولا تمثل خدمة تنبؤ إنتاجية"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E133",
@@ -1900,12 +1922,14 @@ ENGINE_CATALOG = [
     "name": "Scheduler",
     "name_ar": "محرك Scheduler",
     "group": "Infrastructure",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "فحص تعريفات الوظائف المجدولة وفواصلها الزمنية وحالة backend"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يبدأ عاملاً مجدولاً دائماً؛ يحتاج ربط runtime scheduler"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E142",
@@ -1926,36 +1950,42 @@ ENGINE_CATALOG = [
     "name": "Cache",
     "name_ar": "محرك Cache",
     "group": "Infrastructure",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "فحص حالة cache من قياسات الخدمة المقدمة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب تكوين Redis أو cache backend فعلي"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E144",
     "name": "Database",
     "name_ar": "محرك Database",
     "group": "Infrastructure",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "فحص حالة قاعدة البيانات من بيانات صحة الخدمة المقدمة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب ربط فحص اتصال PostgreSQL/TimescaleDB فعلي"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E145",
     "name": "WebSocket Manager",
     "name_ar": "محرك WebSocket Manager",
     "group": "Infrastructure",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "فحص حالة WebSocket واتصالاته من مؤشرات الخدمة المقدمة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب تكامل heartbeat وقياسات الاتصالات الفعلية"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E146",
@@ -1986,36 +2016,42 @@ ENGINE_CATALOG = [
     "name": "Error Recovery",
     "name_ar": "محرك Error Recovery",
     "group": "Infrastructure",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تصنيف أعطال الخدمات إلى قابلة لإعادة المحاولة أو تحتاج مراجعة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا ينفذ إعادة التشغيل؛ سياسة التكرار موجودة بعميل المزود"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E149",
     "name": "Duplicate Signal Filter",
     "name_ar": "محرك Duplicate Signal Filter",
     "group": "Infrastructure",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "إزالة تكرار الإشارات حسب الأصل والسوق والاتجاه ووقت الإشارة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب هوية إشارة ثابتة وتخزيناً دائماً عبر عمليات إعادة التشغيل"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E150",
     "name": "Notification Engine",
     "name_ar": "محرك Notification Engine",
     "group": "Infrastructure",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "إنشاء نوايا إشعار موحدة ومفحوصة مع مفاتيح منع التكرار"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يرسل الإشعارات ما لم يربط ناقل إشعارات فعلي"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E151",
@@ -2064,12 +2100,14 @@ ENGINE_CATALOG = [
     "name": "Security Engine",
     "name_ar": "محرك Security Engine",
     "group": "Infrastructure",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "فحص إعدادات الأمان المطلوبة والتأكد من Paper Only"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يعتمد على بيانات سياسة التشغيل المقدمة ولا يفحص قيم الأسرار أو إعدادات الاستضافة بذاته"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E155",
@@ -2109,7 +2147,7 @@ def engine_catalog() -> dict:
               for status in statuses}
     groups = sorted({item["group"] for item in engines})
     group_counts = {group: sum(1 for item in engines if item["group"] == group) for group in groups}
-    return {"name":"QUANT NEXUS","catalog_version":"1.4.0","total":len(engines),
+    return {"name":"QUANT NEXUS","catalog_version":"1.5.0","total":len(engines),
             "counts":counts,"group_counts":group_counts,"engines":engines,
             "priority":"early_opportunity_detection","trading_mode":"simulation",
             "live_trading_enabled":False,"execution_capability":"paper_only",
