@@ -46,3 +46,34 @@ def test_event_store_rejects_non_json_numeric_payload(tmp_path):
         pass
     else:
         raise AssertionError("non-finite event payload must be rejected")
+
+
+
+def test_liquidation_events_are_replayable_and_deduplicated(tmp_path):
+    store = EngineEventStore(str(tmp_path / "events.sqlite3"))
+    payload = {
+        "symbol": "BTCUSDT",
+        "liquidated_position": "LONG",
+        "side": "BUY",
+        "size": 0.25,
+        "bankruptcy_price": 65000.0,
+        "notional_usdt": 16250.0,
+        "timestamp_ms": 1795770000000,
+        "provider": "Bybit",
+        "feed": "allLiquidation",
+    }
+    key = "BTCUSDT:1795770000000:BUY:0.25:65000.0"
+    first = store.publish(
+        "liquidation", payload, symbol="BTCUSDT",
+        source="bybit_allLiquidation_websocket", dedupe_key=key,
+    )
+    duplicate = store.publish(
+        "liquidation", payload, symbol="BTCUSDT",
+        source="bybit_allLiquidation_websocket", dedupe_key=key,
+    )
+    assert first["inserted"] is True
+    assert duplicate["inserted"] is False
+    replay = store.list_events(event_type="liquidation", symbol="BTCUSDT")
+    assert len(replay) == 1
+    assert replay[0]["payload"]["notional_usdt"] == 16250.0
+    assert replay[0]["source"] == "bybit_allLiquidation_websocket"
