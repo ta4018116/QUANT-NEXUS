@@ -1727,6 +1727,104 @@ def _security(ctx):
                   "fail-closed inspection of supplied deployment security flags; does not inspect secret values")
 
 
+
+def _deep_learning_mlp(ctx):
+    dataset,err=_ml_dataset(ctx)
+    if err:return err
+    split=max(40,int(len(dataset)*0.8))
+    train,test,means,scales=_standardize(dataset[:split],dataset[split:])
+    rng=random.Random(20261127)
+    inputs=len(train[0][0]);h1=8;h2=4
+    w1=[[rng.gauss(0,0.12) for _ in range(inputs)] for _ in range(h1)]
+    b1=[0.0]*h1
+    w2=[[rng.gauss(0,0.12) for _ in range(h1)] for _ in range(h2)]
+    b2=[0.0]*h2
+    w3=[rng.gauss(0,0.12) for _ in range(h2)];b3=0.0
+    lr=0.012;l2=0.002
+    def forward(x):
+        a1=[__import__("math").tanh(sum(w*xv for w,xv in zip(row,x))+b) for row,b in zip(w1,b1)]
+        a2=[__import__("math").tanh(sum(w*av for w,av in zip(row,a1))+b) for row,b in zip(w2,b2)]
+        return a1,a2,_sigmoid(sum(w*a for w,a in zip(w3,a2))+b3)
+    for epoch in range(110):
+        order=list(range(len(train)));rng.shuffle(order)
+        rate=lr*(1-0.35*epoch/110)
+        for idx in order:
+            x,y=train[idx];a1,a2,p=forward(x);d3=p-y
+            d2=[d3*w3[j]*(1-a2[j]*a2[j]) for j in range(h2)]
+            d1=[(sum(d2[k]*w2[k][j] for k in range(h2)))*(1-a1[j]*a1[j]) for j in range(h1)]
+            old_w2=[row[:] for row in w2];old_w3=w3[:]
+            w3=[w3[j]-rate*(d3*a2[j]+l2*w3[j]) for j in range(h2)];b3-=rate*d3
+            for k in range(h2):
+                for j in range(h1):w2[k][j]-=rate*(d2[k]*a1[j]+l2*w2[k][j])
+                b2[k]-=rate*d2[k]
+            for j in range(h1):
+                for k in range(inputs):w1[j][k]-=rate*(d1[j]*x[k]+l2*w1[j][k])
+                b1[j]-=rate*d1[j]
+    predictions=[forward(x)[2] for x,_ in test]
+    labels=[y for _,y in test]
+    accuracy=sum((p>=0.5)==bool(y) for p,y in zip(predictions,labels))/len(labels) if labels else None
+    brier=mean((p-y)**2 for p,y in zip(predictions,labels)) if labels else None
+    latest=[(dataset[-1][0][j]-means[j])/scales[j] for j in range(inputs)]
+    probability=forward(latest)[2]
+    return _ready({"model":"two_hidden_layer_mlp","hidden_layers":[h1,h2],
+                   "training_samples":len(train),"holdout_samples":len(test),
+                   "chronological_holdout_accuracy_pct":round(accuracy*100,2) if accuracy is not None else None,
+                   "holdout_brier_score":round(brier,5) if brier is not None else None,
+                   "research_score_up":round(probability,5),
+                   "warning":"Small MLP trained per request on this OHLCV window; not a persistent production model or calibrated probability."},
+                  "pure-Python two-hidden-layer tanh MLP with chronological holdout and train-only normalization")
+
+
+def _rl_agent(ctx):
+    rows,err=_base(ctx,160)
+    if err:return err
+    fee=max(0.0,_num(ctx.get("simulated_fee_per_side_pct"),0.05))/100
+    start=55; transitions=[]
+    def state_at(index):
+        hist=rows[:index+1];closes=[x["close"] for x in hist]
+        fast=_ema(closes[-50:],20);price=closes[-1]
+        trend="UP" if fast and price>fast*1.002 else "DOWN" if fast and price<fast*0.998 else "RANGE"
+        momentum="POS" if price>closes[-4] else "NEG"
+        atr=_atr(hist[-30:]);vol="HIGH" if atr and price and atr/price>0.015 else "LOW"
+        return (trend,momentum,vol)
+    for i in range(start,len(rows)-1):
+        current=rows[i]["close"];future=rows[i+1]["close"]
+        if current<=0:continue
+        transitions.append((state_at(i),state_at(i+1),(future/current-1)*100))
+    if len(transitions)<40:return _blocked("insufficient chronological reinforcement-learning transitions",["at_least_40_transitions"])
+    split=max(30,int(len(transitions)*0.8));training=transitions[:split];testing=transitions[split:]
+    actions=("LONG","SHORT","FLAT")
+    q={};rng=random.Random(20261127);alpha=0.08;gamma=0.85
+    for episode in range(35):
+        epsilon=max(0.02,0.25*(1-episode/35))
+        previous="FLAT"
+        for state,next_state,ret in training:
+            values=q.setdefault(state,{action:0.0 for action in actions})
+            if rng.random()<epsilon:action=rng.choice(actions)
+            else:action=max(actions,key=lambda a:values[a])
+            exposure={"LONG":1.0,"SHORT":-1.0,"FLAT":0.0}[action]
+            reward=exposure*ret-(fee*100 if action!=previous else 0.0)
+            next_values=q.setdefault(next_state,{a:0.0 for a in actions})
+            target=reward+gamma*max(next_values.values())
+            values[action]+=alpha*(target-values[action])
+            previous=action
+    total=1.0;benchmark=1.0;rewards=[];action_counts={x:0 for x in actions};previous="FLAT"
+    for state,next_state,ret in testing:
+        values=q.get(state,{a:0.0 for a in actions})
+        action=max(actions,key=lambda a:values[a])
+        exposure={"LONG":1.0,"SHORT":-1.0,"FLAT":0.0}[action]
+        reward=exposure*ret-(fee*100 if action!=previous else 0.0)
+        total*=max(0.000001,1+reward/100);benchmark*=max(0.000001,1+ret/100)
+        rewards.append(reward);action_counts[action]+=1;previous=action
+    return _ready({"algorithm":"tabular_q_learning","training_transitions":len(training),
+                   "holdout_transitions":len(testing),"holdout_return_pct":round((total-1)*100,4),
+                   "buy_and_hold_return_pct":round((benchmark-1)*100,4),
+                   "mean_reward_per_transition_pct":round(mean(rewards),5) if rewards else None,
+                   "holdout_action_counts":action_counts,
+                   "warning":"Toy OHLCV simulator with discrete states and simplified fees; not evidence of deployable RL edge."},
+                  "chronological Q-learning training on earlier simulated OHLCV transitions and frozen-policy holdout")
+
+
 _HANDLER_IDS = {
     "E005":_base, "E006":_base, "E008":_external,
     "E009":_trend, "E011":_support_resistance, "E012":_accumulation,
@@ -1815,6 +1913,8 @@ def _news_events(ctx):
 
 _HANDLER_IDS.update({
     "E007":_news_events,
+    "E046":_deep_learning_mlp,
+    "E049":_rl_agent,
     "E008":_cross_market_correlation,
     "E014":_order_block,
     "E046":_external,
@@ -1826,9 +1926,6 @@ _HANDLER_IDS.update({
     "E069":_options_analytics,
     "E070":_implied_volatility_engine,
     "E071":_gamma_exposure,
-    "E069":_external,
-    "E070":_external,
-    "E071":_external,
     "E105":_strategy_optimizer,
     "E106":_parameter_optimizer,
     "E110":_win_rate,
