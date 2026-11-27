@@ -96,6 +96,11 @@ def reset_paper_state(balance: float = 10000.0):
 LIVE_TRADING_ENABLED = False
 INTERVALS = {"1m":"1", "3m":"3", "5m":"5", "15m":"15", "30m":"30",
              "1h":"60", "2h":"120", "4h":"240", "1d":"D", "1w":"W"}
+TWELVE_DATA_INTERVALS = {
+    "1m":"1min","5m":"5min","15m":"15min","30m":"30min",
+    "1h":"1h","2h":"2h","4h":"4h","1d":"1day","1w":"1week",
+}
+TWELVE_DATA_MARKETS = {"forex","stocks","indices","commodities"}
 
 async def bybit_get(path: str, params: dict):
     try:
@@ -1047,13 +1052,13 @@ async def _cross_exchange_marks(symbol: str, category: str) -> tuple[dict, dict]
             raise ValueError("invalid_price")
         return value
 
-    for name, task in (
-        ("Bybit",bybit_mark()),("OKX",okx_mark()),("Binance",binance_mark())
-    ):
-        try:
-            marks[name] = await task
-        except Exception as exc:
-            failures[name] = type(exc).__name__
+    names = ("Bybit","OKX","Binance")
+    results = await asyncio.gather(bybit_mark(),okx_mark(),binance_mark(),return_exceptions=True)
+    for name, result in zip(names,results):
+        if isinstance(result,Exception):
+            failures[name] = type(result).__name__
+        else:
+            marks[name] = result
     return marks, {"available_venues":sorted(marks),"unavailable_venues":failures}
 
 
@@ -1437,6 +1442,141 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         "engine_suite": suite, "engine_coverage": catalogue_runtime_coverage(),
         "provider_health": provider_health,
         "trading_mode": "simulation", "live_trading_enabled": False,
+    }
+
+
+
+
+async def get_twelve_data_klines(symbol: str, interval: str, limit: int = 300) -> tuple[list[list],dict]:
+    """Fetch OHLCV from Twelve Data using a server-side environment key only."""
+    api_key = os.getenv("TWELVE_DATA_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Twelve Data provider is not configured; add TWELVE_DATA_API_KEY in the Render environment")
+    if interval not in TWELVE_DATA_INTERVALS:
+        raise HTTPException(status_code=400, detail="Unsupported Twelve Data interval")
+    clean_symbol = str(symbol).strip().upper()
+    if not re.fullmatch(r"[A-Z0-9][A-Z0-9./:_-]{1,31}",clean_symbol):
+        raise HTTPException(status_code=400, detail="Invalid market symbol")
+    try:
+        response = await shared_http_client().get(
+            "https://api.twelvedata.com/time_series",
+            params={
+                "symbol":clean_symbol,
+                "interval":TWELVE_DATA_INTERVALS[interval],
+                "outputsize":max(60,min(int(limit),500)),
+                "format":"JSON",
+            },
+            headers={"Authorization":f"apikey {api_key}"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504,detail="Twelve Data timed out") from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502,detail=f"Twelve Data returned HTTP {exc.response.status_code}") from exc
+    except (httpx.RequestError,ValueError) as exc:
+        raise HTTPException(status_code=502,detail="Twelve Data connection or response error") from exc
+    if not isinstance(payload,dict) or payload.get("status")=="error":
+        message=str(payload.get("message","invalid provider response")) if isinstance(payload,dict) else "invalid provider response"
+        raise HTTPException(status_code=502,detail=f"Twelve Data error: {message[:160]}")
+    values=payload.get("values")
+    if not isinstance(values,list) or len(values)<60:
+        raise HTTPException(status_code=502,detail="Twelve Data returned fewer than 60 candles")
+    tz_name=(payload.get("meta") or {}).get("exchange_timezone") or (payload.get("meta") or {}).get("timezone") or "UTC"
+    try:
+        from zoneinfo import ZoneInfo
+        market_tz=ZoneInfo(str(tz_name))
+    except Exception:
+        market_tz=timezone.utc
+        tz_name="UTC (fallback)"
+    rows=[]
+    for item in values:
+        if not isinstance(item,dict):
+            continue
+        raw_time=str(item.get("datetime",""))
+        try:
+            parsed=datetime.fromisoformat(raw_time)
+            if parsed.tzinfo is None:
+                parsed=parsed.replace(tzinfo=market_tz)
+            stamp=int(parsed.timestamp()*1000)
+            rows.append([
+                str(stamp),str(item.get("open")),str(item.get("high")),
+                str(item.get("low")),str(item.get("close")),str(item.get("volume") or 0),
+            ])
+        except (TypeError,ValueError,OverflowError):
+            continue
+    if len(rows)<60:
+        raise HTTPException(status_code=502,detail="Twelve Data returned invalid candle timestamps")
+    return rows,{"provider":"Twelve Data","timezone":str(tz_name),"market":(payload.get("meta") or {}).get("type"),
+                 "exchange":(payload.get("meta") or {}).get("exchange")}
+
+
+@app.get("/api/multi-market-engine-suite")
+async def multi_market_engine_suite(
+    market: str = Query(..., description="forex, stocks, indices or commodities"),
+    symbol: str = Query(..., min_length=2, max_length=32),
+    interval: str = "15m",
+    limit: int = Query(300, ge=60, le=500),
+    engine_ids: str | None = None,
+):
+    """Run the same read-only 156-engine analysis over Twelve Data market feeds."""
+    market=market.lower().strip()
+    if market not in TWELVE_DATA_MARKETS:
+        raise HTTPException(status_code=400,detail="Market must be forex, stocks, indices or commodities")
+    rows, provider_info=await get_twelve_data_klines(symbol,interval,limit)
+    analysis=analyze_klines(rows,include_all_candles=True)
+    completed=analysis["candles"][:-1]
+    if len(completed)<60:
+        raise HTTPException(status_code=502,detail="At least 60 completed candles are required")
+    analysis["candles"]=completed
+    closes=[x["close"] for x in completed]
+    async with PAPER_LOCK:
+        paper_equity=PAPER_BALANCE
+        paper_positions=[dict(x) for x in PAPER_TRADES]
+    closed_trades=[x for x in paper_positions if x.get("status")=="CLOSED"]
+    regime=market_regime(completed)
+    structure=market_structure(completed)
+    entry_confirmation=evaluate_entry(analysis)
+    analysis["candles"]=completed
+    last_price=completed[-1]["close"]
+    context={
+        "symbol":symbol.upper(),"category":market,"market_type":market,"interval":interval,
+        "candles":completed,"closes":closes,"analysis":analysis,"regime":regime,"structure":structure,
+        "timestamp_utc":datetime.now(timezone.utc).isoformat(),
+        "account":{"equity":paper_equity},"positions":paper_positions,"closed_trades":closed_trades,
+        "current_prices":{symbol.upper():last_price},
+        "timeframes":{},
+        "entry_confirmation":entry_confirmation,
+        "plan":{},"risk_pct":1.0,"risk_approval":{"approved":False,"failed_checks":["multi_market_plan_not_configured"]},
+        "reward_risk_targets":[1.5,2.0,3.0],
+        "system_health":{"api":"ok","candles":"ok","paper_ledger":"ok","orderbook":"degraded","trade_flow":"degraded"},
+        "cache":{"status":"ok","backend":"process-local","persistent":False},
+        "database":{"status":"ok" if getattr(PAPER_STORE,"durable_configured",False) else "degraded",
+                    "backend":"sqlite","persistent":bool(getattr(PAPER_STORE,"durable_configured",False))},
+        "security_policy":{
+            "trading_mode":"simulation","live_trading_enabled":False,
+            "exchange_trade_credentials_present":False,"https_enabled":str(os.getenv("RENDER_EXTERNAL_URL","")).startswith("https://"),
+            "secrets_redacted":True,"admin_auth_enabled":False,
+        },
+    }
+    early=early_opportunity_assessment(context)
+    if early.get("status")=="computed" and early.get("score",0)>=65:
+        context["notification_events"]=[{
+            "type":"OPPORTUNITY","title":f"{symbol.upper()} {market} opportunity watch",
+            "message":f"Research score {early['score']}/100; confirm manually. No order was sent.",
+            "dedupe_key":f"{market}:{symbol.upper()}:{interval}:{early.get('tier')}",
+        }]
+    else:
+        context["notification_events"]=[]
+    selected=[x.strip().upper() for x in engine_ids.split(",") if x.strip()] if engine_ids else None
+    suite=run_engine_suite(context,selected)
+    return {
+        "symbol":symbol.upper(),"market":market,"interval":interval,
+        "provider":provider_info,"completed_candles":len(completed),
+        "early_opportunity":early,"engine_suite":suite,
+        "engine_coverage":catalogue_runtime_coverage(),
+        "provider_health":{"twelve_data":{"status":"ok",**provider_info}},
+        "trading_mode":"simulation","live_trading_enabled":False,
     }
 
 
