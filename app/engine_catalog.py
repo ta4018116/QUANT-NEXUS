@@ -166,12 +166,14 @@ ENGINE_CATALOG = [
     "name": "Smart Money Concepts",
     "name_ar": "محرك Smart Money Concepts",
     "group": "Technical Analysis",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "دمج بنية السوق وسحب السيولة ومرشحات Order Block وFVG"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "مفاهيم SMC هنا تقريبية ولا تثبت تدفقات أوامر مؤسسية"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E014",
@@ -424,12 +426,14 @@ ENGINE_CATALOG = [
     "name": "Trend Exhaustion",
     "name_ar": "محرك Trend Exhaustion",
     "group": "Multi-Timeframe",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "كشف تباطؤ العائد القصير مع حالات RSI المتطرفة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "مرشح إنهاك لا يؤكد انعكاس الاتجاه"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E033",
@@ -718,12 +722,14 @@ ENGINE_CATALOG = [
     "name": "Market Regime Detection",
     "name_ar": "محرك Market Regime Detection",
     "group": "AI Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تصنيف النظام من EMA وATR والانضغاط"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "قواعد تقريبية وليست نموذج Regime تعلمياً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E055",
@@ -828,12 +834,14 @@ ENGINE_CATALOG = [
     "name": "Long Short Ratio",
     "name_ar": "محرك Long Short Ratio",
     "group": "Derivatives Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "قراءة نسبة Long/Short عند توافرها ضمن بيانات المشتقات"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "مزود النسبة غير مدمج في كل مسارات السوق"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E063",
@@ -866,48 +874,56 @@ ENGINE_CATALOG = [
     "name": "Basis Analysis",
     "name_ar": "محرك Basis Analysis",
     "group": "Derivatives Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "حساب أساس السعر بين Spot وFutures المتزامنين"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب علامات أسعار متزامنة من مزودين"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E066",
     "name": "Futures Positioning",
     "name_ar": "محرك Futures Positioning",
     "group": "Derivatives Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "قراءة التمويل والفائدة المفتوحة لتوصيف تمركز العقود"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "محدود ببيانات Bybit المتاحة ولا يشمل كل المنصات"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E067",
     "name": "Leverage Risk Detector",
     "name_ar": "محرك Leverage Risk Detector",
     "group": "Derivatives Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تقدير أولي لخطر الرافعة وسعر التصفية حسب صيانة الهامش"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "تقريب معزول لا يطابق جداول التصفية الفعلية للمنصة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E068",
     "name": "Derivatives Divergence",
     "name_ar": "محرك Derivatives Divergence",
     "group": "Derivatives Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "مقارنة تغير السعر بتغير الفائدة المفتوحة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب سلسلة OI تاريخية موثوقة ومقارنة زمنية"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E069",
@@ -962,12 +978,14 @@ ENGINE_CATALOG = [
     "name": "Confidence Assessment",
     "name_ar": "محرك Confidence Assessment",
     "group": "Opportunity Scoring",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "درجة توافق وتغطية أدلة المحركات"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "ليست احتمال نجاح ولا معايرة إحصائية"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E074",
@@ -988,12 +1006,14 @@ ENGINE_CATALOG = [
     "name": "Entry Precision",
     "name_ar": "محرك Entry Precision",
     "group": "Opportunity Scoring",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "نطاق مراقبة للدخول قائم على ATR وVWAP والدعم والمقاومة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا ينتج أمراً محدداً أو ضمان تنفيذ"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E076",
@@ -1024,12 +1044,14 @@ ENGINE_CATALOG = [
     "name": "Trade Quality",
     "name_ar": "محرك Trade Quality",
     "group": "Opportunity Scoring",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "جودة الخطة من نسبة العائد للمخاطرة ودرجات الأدلة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "التصنيف إرشادي ويتأثر بمدخلات المستخدم"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E079",
@@ -1050,36 +1072,42 @@ ENGINE_CATALOG = [
     "name": "False Breakout Filter",
     "name_ar": "محرك False Breakout Filter",
     "group": "Opportunity Scoring",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "كشف عودة السعر داخل النطاق بعد اختراق الشمعة السابقة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يحتاج شموع مكتملة وقد يتأخر تأكيد الفشل"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E081",
     "name": "Signal Conflict Resolver",
     "name_ar": "محرك Signal Conflict Resolver",
     "group": "Opportunity Scoring",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "حل تعارض اتجاهات وكلاء التحليل بالتصويت"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "التصويت غير موزون ولا يضمن استقلال الوكلاء"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E082",
     "name": "Opportunity Ranking",
     "name_ar": "محرك Opportunity Ranking",
     "group": "Opportunity Scoring",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "ترتيب فرص مزودة مسبقاً حسب درجاتها"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يجمع الكون بنفسه ولا يتحقق من جودة كل مدخل"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E083",
@@ -1112,12 +1140,14 @@ ENGINE_CATALOG = [
     "name": "Entry Readiness",
     "name_ar": "محرك Entry Readiness",
     "group": "Opportunity Scoring",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "جاهزية الدخول عبر اجتماع التأكيد وموافقة المخاطر"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب نتائج تأكيد ومخاطر مزودة صراحة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E086",
@@ -1136,48 +1166,56 @@ ENGINE_CATALOG = [
     "name": "Dynamic Risk",
     "name_ar": "محرك Dynamic Risk",
     "group": "Risk Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تعديل المخاطرة وفق التقلب والتراجع"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "قواعد ثابتة وليست معايرة حسب استراتيجية أو أصل"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E088",
     "name": "Portfolio Risk",
     "name_ar": "محرك Portfolio Risk",
     "group": "Risk Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "حساب التعرض الاسمي للمراكز التجريبية مقابل حقوق الحساب"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يحسب كل مخاطر الارتباط أو الهامش"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E089",
     "name": "Maximum Drawdown",
     "name_ar": "محرك Maximum Drawdown",
     "group": "Risk Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "حساب أقصى تراجع من تسلسل أرباح وخسائر المراكز المغلقة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يشمل الربح والخسارة العائمين"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E090",
     "name": "Correlation Risk",
     "name_ar": "محرك Correlation Risk",
     "group": "Risk Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تصنيف أزواج ارتباط عالية من بيانات ارتباط مزودة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب سلاسل عوائد متزامنة للمحفظة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E091",
@@ -1198,108 +1236,126 @@ ENGINE_CATALOG = [
     "name": "Liquidation Protection",
     "name_ar": "محرك Liquidation Protection",
     "group": "Risk Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "مقارنة الوقف بسعر تصفية تقريبي للرافعة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يعتمد هامش صيانة مبسط ولا يضمن الحماية الفعلية"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E093",
     "name": "Slippage Estimation",
     "name_ar": "محرك Slippage Estimation",
     "group": "Risk Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "محاكاة عبور مستويات دفتر الأوامر لتقدير الانزلاق"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يحسب أولوية الطابور أو السيولة المخفية"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E094",
     "name": "Fee Calculator",
     "name_ar": "محرك Fee Calculator",
     "group": "Risk Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "حساب رسوم التداول من قيمة الصفقة ومعدل الرسوم"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يجب تزويده بمعدل الرسوم الصحيح لكل حساب ومنصة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E095",
     "name": "Volatility Stop",
     "name_ar": "محرك Volatility Stop",
     "group": "Risk Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "وقف مرجعي متكيف مع ATR"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "مرجع بحثي وليس تعديل أمر فعلي"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E096",
     "name": "Breakeven",
     "name_ar": "محرك Breakeven",
     "group": "Risk Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "حساب سعر التعادل بعد رسوم الدخول والخروج"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يشمل التمويل والانزلاق والضرائب"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E097",
     "name": "Trailing Stop",
     "name_ar": "محرك Trailing Stop",
     "group": "Risk Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "حساب وقف متحرك مرجعي من أعلى/أدنى سعر وATR"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يحرك مراكز فعلية"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E098",
     "name": "Daily Loss Limit",
     "name_ar": "محرك Daily Loss Limit",
     "group": "Risk Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "قياس خسارة اليوم مقابل حد خسارة محدد"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب تزويد صافي PnL اليومي بصورة موثوقة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E099",
     "name": "Circuit Breaker",
     "name_ar": "محرك Circuit Breaker",
     "group": "Risk Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "قاطع منطقي يعتمد حد الخسارة وصحة الخدمات"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "حالة مراقبة فقط ولا يوقف خدمات التنفيذ الخارجية"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E100",
     "name": "Risk Approval",
     "name_ar": "محرك Risk Approval",
     "group": "Risk Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "بوابة موافقة تفشل عند أي فحص مخاطرة مفقود أو مرفوض"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب نتائج الفحوص المستقلة قبل الموافقة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E101",
@@ -1318,12 +1374,14 @@ ENGINE_CATALOG = [
     "name": "Walk Forward Validation",
     "name_ar": "محرك Walk Forward Validation",
     "group": "Backtesting & Learning",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تقسيم عوائد الاستراتيجية زمنياً إلى تدريب واختبار"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "تقسيم واحد وليس Walk-Forward متكرر كامل"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E103",
@@ -1342,12 +1400,14 @@ ENGINE_CATALOG = [
     "name": "Monte Carlo Simulation",
     "name_ar": "محرك Monte Carlo Simulation",
     "group": "Backtesting & Learning",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "محاكاة Monte Carlo بإعادة سحب عوائد تاريخية"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا تمثل توقعاً لاحتمالات المستقبل"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E105",
@@ -1378,36 +1438,42 @@ ENGINE_CATALOG = [
     "name": "Overfitting Detection",
     "name_ar": "محرك Overfitting Detection",
     "group": "Backtesting & Learning",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "قياس فجوة أداء التدريب والتحقق"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب مقاييس تدريب وتحقق خارجية موثوقة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E108",
     "name": "Out-of-Sample Validation",
     "name_ar": "محرك Out-of-Sample Validation",
     "group": "Backtesting & Learning",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "عرض مقاييس عينة اختبار مستقلة مقدمة للنظام"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا ينشئ بنفسه مجموعة اختبار مستقلة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E109",
     "name": "Performance Attribution",
     "name_ar": "محرك Performance Attribution",
     "group": "Backtesting & Learning",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "نسب صافي PnL إلى تسمية الاستراتيجية/مصدر الإشارة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب تسجيل مصدر كل صفقة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E110",
@@ -1450,24 +1516,28 @@ ENGINE_CATALOG = [
     "name": "Strategy Comparison",
     "name_ar": "محرك Strategy Comparison",
     "group": "Backtesting & Learning",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "مقارنة نتائج استراتيجيات مزودة حسب العائد والتراجع"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يجري تحسيناً أو ترقية تلقائية"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E114",
     "name": "Model Drift Detection",
     "name_ar": "محرك Model Drift Detection",
     "group": "Backtesting & Learning",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "كشف تغير مقاييس النموذج بين خط أساس ونافذة حديثة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب مقاييس محفوظة ومقارنة متجانسة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E115",
@@ -1510,60 +1580,70 @@ ENGINE_CATALOG = [
     "name": "Entry Confirmation Monitor",
     "name_ar": "محرك Entry Confirmation Monitor",
     "group": "Trade Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "مراجعة حالة التأكيد مع موافقة المخاطر"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "قراءة شرطية ولا تنفذ دخولاً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E119",
     "name": "Target Tracker",
     "name_ar": "محرك Target Tracker",
     "group": "Trade Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "رصد وصول السعر لهدف أو وقف من علامات سعر مزودة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "مراقبة فقط ولا تغلق المركز آلياً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E120",
     "name": "Stop Loss Monitor",
     "name_ar": "محرك Stop Loss Monitor",
     "group": "Trade Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "مراقبة مستويات الوقف والأهداف للمراكز التجريبية"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "تحتاج علامات أسعار حديثة موثوقة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E121",
     "name": "Smart Exit",
     "name_ar": "محرك Smart Exit",
     "group": "Trade Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "مؤشرات خروج مبنية على مستوى الوقف والهدف"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يتخذ قرار خروج مستقل ولا يرسل أوامر"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E122",
     "name": "Partial Profit Taking",
     "name_ar": "محرك Partial Profit Taking",
     "group": "Trade Management",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "إظهار وصول المراكز إلى مستويات أهداف جزئية"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا ينفذ جني أرباح جزئي تلقائياً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E123",
@@ -1622,60 +1702,70 @@ ENGINE_CATALOG = [
     "name": "Market Analyst Agent",
     "name_ar": "محرك Market Analyst Agent",
     "group": "Multi-Agent Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "وكيل تحليل سوق حتمي يجمع الاتجاه والحجم والانضغاط"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "ليس نموذج ذكاء توليدي ولا يملك تدريباً مستقلاً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E128",
     "name": "Liquidity Agent",
     "name_ar": "محرك Liquidity Agent",
     "group": "Multi-Agent Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "وكيل سيولة يقرأ عمق دفتر الأوامر واختلاله"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لقطة الدفتر قابلة للإلغاء والتغيير"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E129",
     "name": "Smart Money Agent",
     "name_ar": "محرك Smart Money Agent",
     "group": "Multi-Agent Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "وكيل Smart Money تجميعي من البنية والسحب والفجوات"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يحدد هوية المؤسسات أو أوامرها"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E130",
     "name": "Derivatives Agent",
     "name_ar": "محرك Derivatives Agent",
     "group": "Multi-Agent Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "وكيل مشتقات يقرأ OI والتمويل والتصفية عند توافرها"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "تغطية مزود واحدة ولا تشمل كامل أسواق المشتقات"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E131",
     "name": "Technical Analysis Agent",
     "name_ar": "محرك Technical Analysis Agent",
     "group": "Multi-Agent Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "وكيل فني يعتمد الاتجاه والزخم ومؤشرات الشموع"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يعتمد قواعد قابلة للتفسير لا تنبؤاً احتماليّاً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E132",
@@ -1694,84 +1784,98 @@ ENGINE_CATALOG = [
     "name": "Risk Officer Agent",
     "name_ar": "محرك Risk Officer Agent",
     "group": "Multi-Agent Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "وكيل مخاطرة يختبر شروط الخطة وحدودها"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "موافقة نهائية تتطلب جميع مدخلات المخاطر"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E134",
     "name": "Strategy Manager Agent",
     "name_ar": "محرك Strategy Manager Agent",
     "group": "Multi-Agent Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "توجيه بحثي للاستراتيجية حسب نظام السوق"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يغير استراتيجية التداول تلقائياً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E135",
     "name": "Decision Fusion",
     "name_ar": "محرك Decision Fusion",
     "group": "Multi-Agent Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "دمج تصويت الوكلاء المتاحين"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا توجد أوزان أو تعلم لتصحيح موثوقية كل وكيل"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E136",
     "name": "Agent Disagreement",
     "name_ar": "محرك Agent Disagreement",
     "group": "Multi-Agent Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "كشف اختلاف اتجاهات الوكلاء وتحديد التعارض"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب مخرجات وكلاء مستقلة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E137",
     "name": "Consensus Engine",
     "name_ar": "محرك Consensus Engine",
     "group": "Multi-Agent Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تجميع توافق اتجاهات الوكلاء"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "تصويت غير معاير ولا يعادل احتمال النجاح"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E138",
     "name": "Knowledge Memory",
     "name_ar": "محرك Knowledge Memory",
     "group": "Multi-Agent Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تلخيص أحداث الفرص المخزنة حسب نوع الحدث"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب سجل أحداث محفوظاً ومكتملًا"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E139",
     "name": "Adaptive Strategy Router",
     "name_ar": "محرك Adaptive Strategy Router",
     "group": "Multi-Agent Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "توجيه بحثي إلى نمط تحليل حسب نظام السوق"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يفعّل أو يروّج استراتيجيات آلياً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E140",
@@ -1987,7 +2091,7 @@ def engine_catalog() -> dict:
               for status in statuses}
     groups = sorted({item["group"] for item in engines})
     group_counts = {group: sum(1 for item in engines if item["group"] == group) for group in groups}
-    return {"name":"QUANT NEXUS","catalog_version":"1.2.0","total":len(engines),
+    return {"name":"QUANT NEXUS","catalog_version":"1.3.0","total":len(engines),
             "counts":counts,"group_counts":group_counts,"engines":engines,
             "priority":"early_opportunity_detection","trading_mode":"simulation",
             "live_trading_enabled":False,"execution_capability":"paper_only",
