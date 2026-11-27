@@ -1,8 +1,8 @@
 """Auditable 156-engine capability catalogue for QUANT NEXUS.
 
-The catalogue is deliberately honest: a name in the catalogue is not proof of
-implementation. Only capabilities already present in the application are marked
-implemented/partial; planned entries cannot emit trading signals.
+A catalogue entry is not proof of a production-ready capability. Statuses
+reflect tested runtime paths; approximations, missing feeds, untrained models
+and deployment gaps remain explicit.
 """
 from __future__ import annotations
 
@@ -140,24 +140,26 @@ ENGINE_CATALOG = [
     "group": "Technical Analysis",
     "status": "partial",
     "capabilities": [
-      "وجود مسار وظيفي مرتبط في النسخة الحالية"
+      "دعم ومقاومة من قمم وقيعان النطاق المتحرك"
     ],
     "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+      "النطاقات تقريبية وتتطلب تحققاً من بنية السوق والسيولة"
     ],
-    "evidence": "partial_existing_capability"
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E012",
     "name": "Supply and Demand",
     "name_ar": "محرك Supply and Demand",
     "group": "Technical Analysis",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "مناطق عرض وطلب تقريبية من نطاقات الدعم والمقاومة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "ليست دفتر أوامر مؤسسياً ولا تثبت وجود أوامر معلقة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E013",
@@ -176,48 +178,56 @@ ENGINE_CATALOG = [
     "name": "Order Block",
     "name_ar": "محرك Order Block",
     "group": "Technical Analysis",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "مرشح Order Block من آخر شمعة عكسية قبل كسر نطاقها"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "تعريف تقريبي ولا يثبت تمركز جهة مؤسسية"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E015",
     "name": "Fair Value Gap",
     "name_ar": "محرك Fair Value Gap",
     "group": "Technical Analysis",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "كشف فجوة ثلاث شمعات غير متداخلة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "مرشح هندسي لا يثبت استمرار الفجوة أو أهميتها"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E016",
     "name": "Breakout",
     "name_ar": "محرك Breakout",
     "group": "Technical Analysis",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تأكيد اختراق بإغلاق شمعة مكتملة خارج نطاق 20 شمعة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يتطلب تأكيد الحجم والسياق قبل اعتماد إشارة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E017",
     "name": "Reversal",
     "name_ar": "محرك Reversal",
     "group": "Technical Analysis",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "مرشحات انعكاس وانحراف RSI بين نوافذ سعرية"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "النقاط المحورية والانحراف غير مؤكدين حتى اكتمال السياق"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E018",
@@ -236,24 +246,28 @@ ENGINE_CATALOG = [
     "name": "Candlestick Patterns",
     "name_ar": "محرك Candlestick Patterns",
     "group": "Technical Analysis",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تصنيف هندسي لشموع Doji وHammer وEngulfing"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "النماذج لا تعمل منفردة ولا تتضمن كل نماذج الشموع"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E020",
     "name": "Fibonacci",
     "name_ar": "محرك Fibonacci",
     "group": "Technical Analysis",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "مستويات ارتداد فيبوناتشي من نطاق 100 شمعة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "اختيار القمة والقاع تقريبي وقابل للتغير"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E021",
@@ -272,36 +286,42 @@ ENGINE_CATALOG = [
     "name": "Volume Profile",
     "name_ar": "محرك Volume Profile",
     "group": "Technical Analysis",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "توزيع حجم تقريبي حسب منتصف النطاق السعري"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "ليس Volume-at-Price مبنياً على كل صفقة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E023",
     "name": "Divergence",
     "name_ar": "محرك Divergence",
     "group": "Technical Analysis",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "مرشحات انحراف RSI صاعد وهابط"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "تحتاج تثبيت القمم والقيعان لتجنب الإشارات المبكرة الكاذبة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E024",
     "name": "Pattern Recognition",
     "name_ar": "محرك Pattern Recognition",
     "group": "Technical Analysis",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "التعرف على أشكال شموع أساسية"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "التعرف على النماذج المركبة والأنماط الإحصائية غير مكتمل"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E025",
@@ -320,72 +340,84 @@ ENGINE_CATALOG = [
     "name": "Higher Timeframe Analysis",
     "name_ar": "محرك Higher Timeframe Analysis",
     "group": "Multi-Timeframe",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "قراءة اتجاه إطار 4 ساعات من لقطة مكتملة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "تعتمد على توفر مزود الإطار الزمني"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E027",
     "name": "Lower Timeframe Analysis",
     "name_ar": "محرك Lower Timeframe Analysis",
     "group": "Multi-Timeframe",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "قراءة اتجاه إطار 5 أو 15 دقيقة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "تحتاج مزود إطار قصير مكتمل"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E028",
     "name": "Timeframe Synchronization",
     "name_ar": "محرك Timeframe Synchronization",
     "group": "Multi-Timeframe",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "قياس توافق الاتجاهات بين الأطر الزمنية المتاحة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يستبدل تحليل الاعتماد الزمني أو اختبار التأخر"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E029",
     "name": "Market Phase",
     "name_ar": "محرك Market Phase",
     "group": "Multi-Timeframe",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تصنيف مرحلة السوق من الانضغاط والامتصاص والاختراق"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "التجميع والتوزيع استدلالات تقريبية لا حقائق مؤكدة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E030",
     "name": "Trading Sessions",
     "name_ar": "محرك Trading Sessions",
     "group": "Multi-Timeframe",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تصنيف جلسات آسيا ولندن ونيويورك وفق UTC"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "النوافذ مبسطة ولا تشمل العطلات أو التوقيت الصيفي المحلي"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E031",
     "name": "Market Timing",
     "name_ar": "محرك Market Timing",
     "group": "Multi-Timeframe",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تحديد جلسة النشاط من وقت UTC"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يوفر توقيتاً تنبؤياً أو نموذج موسمية مدرباً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E032",
@@ -416,84 +448,98 @@ ENGINE_CATALOG = [
     "name": "Early Breakout Detector",
     "name_ar": "محرك Early Breakout Detector",
     "group": "Opportunity Hunter",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "اكتشاف مرشح اختراق مبكر قرب حافة نطاق منضغط"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يضمن حدوث الاختراق وقد يفشل دون تأكيد لاحق"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E035",
     "name": "Accumulation Detector",
     "name_ar": "محرك Accumulation Detector",
     "group": "Opportunity Hunter",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تقييم ضغط الحجم وموقع الإغلاق داخل النطاق"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يحدد هوية المشتري أو نية المشاركين"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E036",
     "name": "Liquidity Sweep Hunter",
     "name_ar": "محرك Liquidity Sweep Hunter",
     "group": "Opportunity Hunter",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "كشف سحب سيولة من قمم وقيعان سابقة ثم الإغلاق داخل النطاق"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "إشارة OHLCV تقريبية وليست دليلاً على stop hunts مؤسسية"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E037",
     "name": "Momentum Explosion Detector",
     "name_ar": "محرك Momentum Explosion Detector",
     "group": "Opportunity Hunter",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "كشف توسع جسم الشمعة مقارنة بـ ATR مع شذوذ الحجم"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يعتمد على الشموع المكتملة والحدود الإحصائية"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E038",
     "name": "Whale Activity Detector",
     "name_ar": "محرك Whale Activity Detector",
     "group": "Opportunity Hunter",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "كشف صفقات كبيرة شاذة مقارنة بوسيط أحجام الصفقات"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يحدد المحافظ أو هوية الحيتان"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E039",
     "name": "Volume Anomaly Detector",
     "name_ar": "محرك Volume Anomaly Detector",
     "group": "Opportunity Hunter",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "كشف حجم تداول غير طبيعي عبر z-score"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "يحتاج حجم موثوق وفترات مكتملة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E040",
     "name": "Squeeze Detector",
     "name_ar": "محرك Squeeze Detector",
     "group": "Opportunity Hunter",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "قياس انضغاط متوسط المدى السعري"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "ليس نموذج Bollinger-Keltner squeeze متكاملاً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E041",
@@ -514,24 +560,28 @@ ENGINE_CATALOG = [
     "name": "Spot Opportunity Hunter",
     "name_ar": "محرك Spot Opportunity Hunter",
     "group": "Opportunity Hunter",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تقييم فرصة Spot مع مراعاة اتجاه الشراء"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "مرشح مراقبة وليس أمراً أو توقع نجاح معايراً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E043",
     "name": "Cross-Exchange Arbitrage",
     "name_ar": "محرك Cross-Exchange Arbitrage",
     "group": "Opportunity Hunter",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "مقارنة أسعار منصات متزامنة بعد رسوم وانزلاق مدخلين"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يحسب مخاطر التحويل والكمون والتنفيذ والرصيد المتاح"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E044",
@@ -1910,22 +1960,15 @@ ENGINE_CATALOG = [
 ]
 
 def engine_catalog() -> dict:
-    engines = [dict(item, capabilities=list(item["capabilities"]), gaps=list(item["gaps"]))
-               for item in ENGINE_CATALOG]
+    engines = [dict(item, capabilities=list(item.get("capabilities", [])),
+                    gaps=list(item.get("gaps", []))) for item in ENGINE_CATALOG]
     statuses = ("implemented", "partial", "planned")
-    counts = {status: sum(item["status"] == status for item in engines) for status in statuses}
+    counts = {status: sum(1 for item in engines if item["status"] == status)
+              for status in statuses}
     groups = sorted({item["group"] for item in engines})
-    group_counts = {group: sum(item["group"] == group for item in engines) for group in groups}
-    return {
-        "name": "QUANT NEXUS",
-        "catalog_version": "1.0.0",
-        "total": len(engines),
-        "counts": counts,
-        "group_counts": group_counts,
-        "engines": engines,
-        "priority": "early_opportunity_detection",
-        "trading_mode": "simulation",
-        "live_trading_enabled": False,
-        "execution_capability": "paper_only",
-        "disclaimer": "Catalogue entries are not all implemented. Only verified existing capabilities are marked implemented or partial; planned engines do not generate signals."
-    }
+    group_counts = {group: sum(1 for item in engines if item["group"] == group) for group in groups}
+    return {"name":"QUANT NEXUS","catalog_version":"1.1.0","total":len(engines),
+            "counts":counts,"group_counts":group_counts,"engines":engines,
+            "priority":"early_opportunity_detection","trading_mode":"simulation",
+            "live_trading_enabled":False,"execution_capability":"paper_only",
+            "disclaimer":"Partial entries use explicit proxies and still have listed gaps. Planned entries cannot generate market signals."}
