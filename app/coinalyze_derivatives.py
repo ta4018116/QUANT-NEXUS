@@ -133,8 +133,10 @@ async def get_coinalyze_derivatives_snapshot(client, symbol: str) -> dict:
         ]
         valid_updates = [stamp for stamp in updated if stamp is not None]
         now = int(datetime.now(timezone.utc).timestamp())
-        if not valid_updates or now - max(valid_updates) > 900 or max(valid_updates) > now + 60:
-            raise HTTPException(status_code=502, detail="Coinalyze derivatives snapshot is stale or has no valid update timestamp")
+        if len(valid_updates) != 2:
+            raise HTTPException(status_code=502, detail="Coinalyze OI and funding timestamps are both required")
+        if any(now - stamp > 900 or stamp > now + 60 for stamp in valid_updates):
+            raise HTTPException(status_code=502, detail="Coinalyze derivatives snapshot is stale or has an invalid update timestamp")
 
         # Long/short ratio is a historical series, not a true current account-position feed.
         # It is optional: failure must not discard a valid OI/funding snapshot.
