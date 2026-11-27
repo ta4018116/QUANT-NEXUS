@@ -27,6 +27,7 @@ from .engine_suite import run_engine_suite, early_opportunity_assessment, catalo
 from .engine_sources import engine_source_registry
 from .command_engine import COMMANDS, matches_command, evaluate_entry
 from .derivatives_engine import summarize_derivatives, normalize_liquidations
+from .okx_derivatives import get_okx_derivatives_snapshot
 from .advanced_engines import market_regime, market_structure, opportunity_assessment, learning_monitoring
 from .provider_feeds import (
     fetch_gdelt_news, fetch_cryptopanic_news, fetch_coinglass_liquidations,
@@ -259,10 +260,12 @@ async def get_derivatives_snapshot(symbol: str) -> dict:
     )
     current_oi, oi_history, funding_history, ratio_history = binance_calls
     if isinstance(current_oi, Exception) or isinstance(funding_history, Exception):
-        raise HTTPException(status_code=502, detail="Bybit and Binance derivatives feeds are unavailable")
+        logger.warning("Bybit and Binance derivatives unavailable for %s; trying OKX", symbol)
+        return await get_okx_derivatives_snapshot(okx_get, symbol)
     oi_value = safe_float(current_oi.get("openInterest")) if isinstance(current_oi, dict) else 0.0
     if oi_value <= 0:
-        raise HTTPException(status_code=502, detail="Binance returned invalid open interest")
+        logger.warning("Binance returned invalid open interest for %s; trying OKX", symbol)
+        return await get_okx_derivatives_snapshot(okx_get, symbol)
     oi_rows = oi_history if isinstance(oi_history, list) else []
     oi_values = [safe_float(x.get("sumOpenInterest")) for x in oi_rows if isinstance(x, dict)]
     oi_values = [x for x in oi_values if x > 0]
@@ -270,6 +273,9 @@ async def get_derivatives_snapshot(symbol: str) -> dict:
     funding_rows = funding_history if isinstance(funding_history, list) else []
     funding_rows = [x for x in funding_rows if isinstance(x, dict) and x.get("fundingRate") is not None]
     funding_rate = safe_float(funding_rows[-1].get("fundingRate")) if funding_rows else None
+    if funding_rate is None:
+        logger.warning("Binance returned no funding history for %s; trying OKX", symbol)
+        return await get_okx_derivatives_snapshot(okx_get, symbol)
     ratio_rows = ratio_history if isinstance(ratio_history, list) else []
     long_short_ratio = safe_float(ratio_rows[-1].get("longShortRatio")) if ratio_rows else None
     return {

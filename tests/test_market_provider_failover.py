@@ -137,3 +137,45 @@ def test_derivatives_snapshot_falls_back_when_bybit_returns_empty_data(monkeypat
     assert result["open_interest"] == 900
     assert result["open_interest_change_pct"] == 6.25
     assert result["long_short_ratio"] == 0.9
+
+
+
+def test_derivatives_snapshot_uses_okx_when_bybit_and_binance_are_unavailable(monkeypatch):
+    async def fake_okx(path, params):
+        assert params["instId"] == "BTC-USDT-SWAP"
+        if path == "/api/v5/public/open-interest":
+            return [{"instId": "BTC-USDT-SWAP", "oiUsd": "123456789"}]
+        if path == "/api/v5/public/funding-rate":
+            return [{"instId": "BTC-USDT-SWAP", "fundingRate": "0.0003"}]
+        raise AssertionError(path)
+
+    monkeypatch.setattr(main, "bybit_get", _fail_provider)
+    monkeypatch.setattr(main, "_binance_get", _fail_provider)
+    monkeypatch.setattr(main, "okx_get", fake_okx)
+
+    result = asyncio.run(main.get_derivatives_snapshot("BTCUSDT"))
+    assert result["provider"] == "OKX"
+    assert result["open_interest"] == 123456789
+    assert result["open_interest_unit"] == "USD"
+    assert result["funding_rate"] == 0.0003
+    assert result["long_short_ratio"] is None
+    assert result["liquidations"]["events"] == 0
+    assert "not inferred" in result["disclaimer"]
+
+
+def test_okx_derivatives_fallback_rejects_incomplete_payload(monkeypatch):
+    async def fake_okx(path, params):
+        if path == "/api/v5/public/open-interest":
+            return [{"instId": "BTC-USDT-SWAP", "oiUsd": "123"}]
+        return []
+
+    monkeypatch.setattr(main, "bybit_get", _fail_provider)
+    monkeypatch.setattr(main, "_binance_get", _fail_provider)
+    monkeypatch.setattr(main, "okx_get", fake_okx)
+
+    try:
+        asyncio.run(main.get_derivatives_snapshot("BTCUSDT"))
+    except HTTPException as exc:
+        assert exc.status_code == 502
+    else:
+        raise AssertionError("incomplete OKX data must not be marked healthy")
