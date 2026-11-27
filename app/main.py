@@ -661,6 +661,36 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
                                             context["derivatives"]["funding_rate"] is not None)
         except Exception as exc:
             logger.warning("Engine suite derivatives unavailable for %s: %s", symbol, type(exc).__name__)
+    # Populate independent 5m/1h/4h snapshots for timeframe-specific adapters.
+    frames = {}
+    frame_names = ("5m", "1h", "4h")
+    frame_results = await asyncio.gather(
+        *(get_market_klines(symbol, category, frame, 120) for frame in frame_names),
+        return_exceptions=True
+    )
+    for frame, frame_result in zip(frame_names, frame_results):
+        if isinstance(frame_result, Exception):
+            logger.warning("Engine suite timeframe %s unavailable for %s: %s", frame, symbol, type(frame_result).__name__)
+            continue
+        frame_rows, frame_provider = frame_result
+        try:
+            frame_analysis = analyze_klines(frame_rows, include_all_candles=True)
+            frame_candles = frame_analysis["candles"][:-1]
+            if frame_candles:
+                frames[frame] = {
+                    "timeframe": frame, "direction": frame_analysis["direction"],
+                    "score": frame_analysis["score"], "provider": frame_provider,
+                    "completed_bars": len(frame_candles),
+                }
+        except HTTPException:
+            continue
+    context["timeframes"] = frames
+    context["system_health"] = {
+        "api": "ok", "candles": "ok", "orderbook": "ok" if auxiliary["orderbook"] else "degraded",
+        "trade_flow": "ok" if auxiliary["trade_flow"] else "degraded",
+        "timeframes": "ok" if len(frames) >= 2 else "degraded",
+        "paper_ledger": "ok",
+    }
     selected = [x.strip().upper() for x in engine_ids.split(",") if x.strip()] if engine_ids else None
     suite = run_engine_suite(context, selected)
     early = early_opportunity_assessment(context)
