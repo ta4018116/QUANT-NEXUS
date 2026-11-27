@@ -936,36 +936,42 @@ ENGINE_CATALOG = [
     "name": "Options Analytics",
     "name_ar": "محرك Options Analytics",
     "group": "Derivatives Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تحليل سلسلة الخيارات وحساب Delta وGamma وVega عند توافر عقود وأسعار موثوقة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يوجد مزود خيارات حي موصول حالياً؛ الحسابات تحتاج بيانات العقد وعلامة الأصل"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E070",
     "name": "Implied Volatility",
     "name_ar": "محرك Implied Volatility",
     "group": "Derivatives Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "استخراج IV من بيانات المزود أو تقديرها عددياً من سعر منتصف العرض والطلب"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "Black-Scholes يفترض نموذجاً مبسطاً ولا يعكس ابتسامة التقلب أو القيود السوقية"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E071",
     "name": "Gamma Exposure",
     "name_ar": "محرك Gamma Exposure",
     "group": "Derivatives Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "حساب التعرض الإجمالي لغاما من Gamma وOI ومضاعف العقد والسعر"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يمكن تقدير صافي تمركز صناع السوق من OI وحده دون إشارة تمركز موثوقة"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E072",
@@ -2147,7 +2153,7 @@ def engine_catalog() -> dict:
               for status in statuses}
     groups = sorted({item["group"] for item in engines})
     group_counts = {group: sum(1 for item in engines if item["group"] == group) for group in groups}
-    return {"name":"QUANT NEXUS","catalog_version":"1.5.0","total":len(engines),
+    return {"name":"QUANT NEXUS","catalog_version":"1.6.0","total":len(engines),
             "counts":counts,"group_counts":group_counts,"engines":engines,
             "priority":"early_opportunity_detection","trading_mode":"simulation",
             "live_trading_enabled":False,"execution_capability":"paper_only",
