@@ -40,7 +40,11 @@ def test_engine_suite_receives_confirmation_risk_and_mark_context(monkeypatch):
 
     monkeypatch.setattr(main, "get_market_klines", fake_klines)
     monkeypatch.setattr(main, "get_orderbook", fake_book)
+    async def fake_enrichment(symbol, category, interval, candles):
+        return {}, {"derivatives":{"status":"unavailable"},"cross_market":{"status":"unavailable"}}
+
     monkeypatch.setattr(main, "get_recent_trades", fake_trades)
+    monkeypatch.setattr(main, "collect_engine_enrichment", fake_enrichment)
     monkeypatch.setattr(main, "run_engine_suite", capture_suite)
 
     response = TestClient(main.app).get(
