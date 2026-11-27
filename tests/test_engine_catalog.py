@@ -17,7 +17,7 @@ def test_engine_catalog_statuses_are_auditable_and_conservative():
     assert result["total"] == 156
     assert result["counts"]["implemented"] + result["counts"]["partial"] + result["counts"]["planned"] == 156
     assert result["counts"]["planned"] == 0
-    assert result["counts"] == {"implemented": 36, "partial": 120, "planned": 0}
+    assert result["counts"] == {"implemented": 43, "partial": 113, "planned": 0}
     assert all(item["evidence"] != "not_yet_implemented" for item in result["engines"]
                if item["status"] != "planned")
     assert all(item["capabilities"] for item in result["engines"]
@@ -77,3 +77,4 @@ def test_engine_suite_coverage_endpoint_returns_dynamic_not_adapter_counts(monke
     assert payload["counts"]["ACTIVE"]==2
     assert payload["adapter_coverage"]["callable_adapters"]==156
     assert payload["live_trading_enabled"] is False
+

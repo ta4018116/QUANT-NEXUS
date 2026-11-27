@@ -45,6 +45,8 @@ def test_noncrypto_market_groups_declare_free_daily_and_optional_twelve_data_sou
     assert "Stooq /q/d/l/ daily CSV" in by_id["E045"]["endpoints"]
     assert "Frankfurter /{start}..{end} daily reference rates" in by_id["E045"]["endpoints"]
     assert "Twelve_Data_key_optional_for_intraday" in by_id["E101"]["credential_model"]
+    assert by_id["E103"]["source_class"] == "paper_position_and_mark_data"
+    assert "explicit empty state" in " ".join(by_id["E103"]["required_inputs"])
     assert "Stooq public daily OHLCV (stocks, indices and supported commodities; no key)" not in by_id["E060"]["providers"]
 
 
@@ -55,3 +57,4 @@ def test_knowledge_memory_and_audit_log_are_not_overstated():
     assert "restart durability depends on a mounted persistent volume" in by_id["E138"]["limitations"]
     assert by_id["E151"]["source_class"] == "append_only_runtime_audit_events"
     assert "every paper-trade mutation and security administration action is not yet covered" in by_id["E151"]["limitations"]
+
