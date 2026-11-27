@@ -899,6 +899,429 @@ def _explain_model(ctx):
                   "feature attribution from standardized linear coefficients; correlational, not causal")
 
 
+
+
+def _trend_exhaustion(ctx):
+    rows,err=_base(ctx,35)
+    if err:return err
+    closes=[x["close"] for x in rows]
+    recent=(closes[-1]/closes[-6]-1)*100 if closes[-6] else 0
+    prior=(closes[-6]/closes[-11]-1)*100 if closes[-11] else 0
+    rsi=_rsi(closes)
+    slowing=abs(recent)<abs(prior)
+    stretched=(rsi is not None and (rsi>=72 or rsi<=28))
+    return _ready({"recent_5bar_return_pct":recent,"prior_5bar_return_pct":prior,
+                   "momentum_slowing":slowing,"rsi14":rsi,
+                   "exhaustion_candidate":bool(slowing and stretched)},
+                  "two adjacent five-bar returns and RSI extreme; candidate only")
+
+
+def _smc(ctx):
+    structure=_market_structure(ctx); sweep=_sweep(ctx); blocks=_order_block(ctx); gaps=_fvg(ctx)
+    return _ready({"structure":structure,"liquidity_sweep":sweep,
+                   "order_block_proxy":blocks,"fair_value_gaps":gaps},
+                  "transparent price-action components; no claim of identifying institutional orders")
+
+
+def _regime_detector(ctx):
+    rows,err=_base(ctx,60)
+    if err:return err
+    trend=_trend(ctx); comp=_compression(ctx); atr=_atr(rows); price=rows[-1]["close"]
+    atr_pct=atr/price*100 if atr and price else 0
+    compressed=comp.get("status")=="computed" and comp["value"]["compressed"]
+    direction=trend.get("value",{}).get("direction","RANGE")
+    regime="HIGH_VOLATILITY" if atr_pct>=2.0 else "LOW_VOLATILITY_RANGE" if compressed else "TRENDING" if direction in ("UP","DOWN") else "RANGE"
+    return _ready({"regime":regime,"trend":direction,"atr_pct":round(atr_pct,4),"compressed":compressed},
+                  "EMA trend, ATR percentage and rolling range compression; heuristic regime labels")
+
+
+def _derivative_divergence(ctx):
+    deriv=ctx.get("derivatives")
+    rows,err=_base(ctx,10)
+    if err:return err
+    if not isinstance(deriv,dict) or deriv.get("open_interest_change_pct") is None:
+        return _blocked("open-interest change and funding history required",["derivatives.open_interest_change_pct","derivatives.funding_rate"])
+    price_change=(rows[-1]["close"]/rows[-6]["close"]-1)*100 if rows[-6]["close"] else 0
+    oi_change=_num(deriv.get("open_interest_change_pct"))
+    divergence=(price_change>0 and oi_change<0) or (price_change<0 and oi_change>0)
+    return _ready({"price_change_5_pct":price_change,"open_interest_change_pct":oi_change,
+                   "divergence_candidate":divergence,"funding_rate":deriv.get("funding_rate")},
+                  "price-return versus provider-reported open-interest change")
+
+
+def _confidence(ctx):
+    evidence=ctx.get("evidence_scores")
+    if not isinstance(evidence,dict) or not evidence:return _blocked("independent evidence scores required",["evidence_scores"])
+    values=[_clamp(_num(v)) for v in evidence.values() if v is not None]
+    if not values:return _blocked("no valid evidence scores",["numeric evidence_scores"])
+    coverage=len(values)/max(1,len(evidence))
+    score=mean(values)
+    level="HIGH_CONFLUENCE" if score>=80 and coverage>=0.8 else "MODERATE_CONFLUENCE" if score>=60 else "LOW_CONFLUENCE"
+    return _ready({"confluence_score":round(score,2),"evidence_coverage_pct":round(coverage*100,2),
+                   "level":level,"is_probability":False},
+                  "mean of independent subsystem scores and evidence coverage; explicitly not probability")
+
+
+def _entry_precision(ctx):
+    rows,err=_base(ctx,30)
+    if err:return err
+    price=rows[-1]["close"]; atr=_atr(rows) or price*0.01
+    vwap_result=_vwap(ctx); sr=_support_resistance(ctx)
+    vwap=vwap_result.get("value",{}).get("vwap_50") if vwap_result.get("status")=="computed" else None
+    support=sr.get("value",{}).get("support_zone") if sr.get("status")=="computed" else None
+    resistance=sr.get("value",{}).get("resistance_zone") if sr.get("status")=="computed" else None
+    return _ready({"reference_price":price,"atr14":atr,"watch_band":[price-0.25*atr,price+0.25*atr],
+                   "distance_to_vwap_pct":round((price/vwap-1)*100,4) if vwap else None,
+                   "support_zone":support,"resistance_zone":resistance},
+                  "ATR watch band with contextual VWAP and rolling range levels; not an executable limit price")
+
+
+def _trade_quality(ctx):
+    plan=ctx.get("plan") or {}
+    entry=_num(plan.get("entry")); stop=_num(plan.get("stop")); target=_num(plan.get("target"))
+    evidence=ctx.get("evidence_scores") or {}
+    if entry<=0 or stop<=0 or target<=0:return _blocked("entry, stop and target are required",["plan.entry","plan.stop","plan.target"])
+    risk=abs(entry-stop); reward=abs(target-entry)
+    rr=reward/risk if risk else 0
+    score=mean([_clamp(_num(x)) for x in evidence.values()]) if evidence else None
+    return _ready({"risk_reward":round(rr,4),"confluence_score":round(score,2) if score is not None else None,
+                   "quality":"PASS_REVIEW" if rr>=1.5 and (score is None or score>=65) else "REJECT_OR_REVIEW"},
+                  "plan geometry plus supplied evidence scores; no win probability")
+
+
+def _false_breakout(ctx):
+    rows,err=_base(ctx,25)
+    if err:return err
+    prior=rows[-22:-2]; breakout=rows[-2]; latest=rows[-1]
+    if len(prior)<10:return _blocked("insufficient prior range",["at_least_10_prior_bars"])
+    hi=max(x["high"] for x in prior); lo=min(x["low"] for x in prior)
+    up=breakout["close"]>hi and latest["close"]<=hi
+    down=breakout["close"]<lo and latest["close"]>=lo
+    return _ready({"failed_upward_breakout":up,"failed_downward_breakout":down,
+                   "previous_close":breakout["close"],"latest_close":latest["close"],
+                   "prior_range":[lo,hi]},
+                  "two most recent completed candles against previous 20-bar range")
+
+
+def _conflict_resolver(ctx):
+    agents=ctx.get("agent_results")
+    if not isinstance(agents,list) or not agents:return _blocked("agent directions required",["agent_results"])
+    directions=[x.get("direction") for x in agents if isinstance(x,dict) and x.get("direction") in ("LONG","SHORT","NEUTRAL")]
+    if not directions:return _blocked("no recognized agent direction",["agent_results.*.direction"])
+    longs=directions.count("LONG"); shorts=directions.count("SHORT")
+    return _ready({"long_votes":longs,"short_votes":shorts,"neutral_votes":directions.count("NEUTRAL"),
+                   "conflict":longs>0 and shorts>0,
+                   "resolution":"LONG" if longs>shorts else "SHORT" if shorts>longs else "WAIT"},
+                  "transparent vote aggregation; disagreements reduce readiness")
+
+
+def _rank_opportunities(ctx):
+    items=ctx.get("opportunity_candidates")
+    if not isinstance(items,list) or not items:return _blocked("opportunity candidate list required",["opportunity_candidates"])
+    valid=[x for x in items if isinstance(x,dict) and x.get("score") is not None]
+    ranked=sorted([{"symbol":str(x.get("symbol","")),"score":_clamp(_num(x.get("score"))),
+                    "tier":x.get("tier")} for x in valid],key=lambda x:x["score"],reverse=True)
+    return _ready({"ranked":ranked,"count":len(ranked)},"descending sort of supplied, already-calculated candidate scores")
+
+
+def _entry_readiness(ctx):
+    confirmation=ctx.get("entry_confirmation")
+    risk=ctx.get("risk_approval")
+    if not isinstance(confirmation,dict) or not isinstance(risk,dict):
+        return _blocked("entry confirmation and risk approval required",["entry_confirmation","risk_approval"])
+    ready=confirmation.get("state")=="CONFIRMED" and risk.get("approved") is True
+    return _ready({"ready":ready,"entry_state":confirmation.get("state"),
+                   "risk_approved":risk.get("approved") is True,
+                   "decision":"PAPER_WATCH_READY" if ready else "WAIT"},
+                  "strict conjunction of completed-candle confirmation and risk approval")
+
+
+def _dynamic_risk(ctx):
+    account=ctx.get("account") or {}; plan=ctx.get("plan") or {}
+    equity=_num(account.get("equity")); entry=_num(plan.get("entry")); stop=_num(plan.get("stop"))
+    if equity<=0 or entry<=0 or stop<=0 or entry==stop:return _blocked("equity, entry and stop required",["account.equity","plan.entry","plan.stop"])
+    base=min(2.0,max(0.0,_num(ctx.get("risk_pct"),1.0)))
+    vol=_num(ctx.get("volatility_pct"),1.0); dd=_num(ctx.get("drawdown_pct"),0.0)
+    multiplier=1.0
+    if vol>3:multiplier*=0.5
+    elif vol>1.5:multiplier*=0.75
+    if dd>=5:multiplier*=0.5
+    elif dd>=2:multiplier*=0.75
+    effective=base*multiplier
+    return _ready({"base_risk_pct":base,"effective_risk_pct":round(effective,4),
+                   "risk_amount":equity*effective/100,"quantity":equity*effective/100/abs(entry-stop)},
+                  "rule-based volatility and drawdown scaling; capped at 2 percent")
+
+
+def _portfolio_risk(ctx):
+    positions=ctx.get("positions")
+    account=ctx.get("account") or {}
+    equity=_num(account.get("equity"))
+    if not isinstance(positions,list) or equity<=0:return _blocked("paper positions and equity required",["positions","account.equity"])
+    opened=[x for x in positions if isinstance(x,dict) and x.get("status")=="OPEN"]
+    exposure=sum(abs(_num(x.get("entry"))*_num(x.get("quantity"))) for x in opened)
+    return _ready({"gross_exposure":exposure,"equity":equity,"exposure_to_equity_pct":exposure/equity*100,
+                   "open_positions":len(opened)},"gross paper notional exposure divided by paper equity")
+
+
+def _max_drawdown(ctx):
+    trades=ctx.get("closed_trades")
+    if not isinstance(trades,list):return _blocked("closed paper trade history required",["closed_trades"])
+    equity=_num(ctx.get("starting_balance"),10000.0); peak=equity; max_dd=0.0
+    for trade in trades:
+        if not isinstance(trade,dict):continue
+        equity+=_num(trade.get("pnl"))
+        peak=max(peak,equity)
+        if peak>0:max_dd=max(max_dd,(peak-equity)/peak*100)
+    return _ready({"ending_equity":equity,"peak_equity":peak,"max_drawdown_pct":round(max_dd,4)},
+                  "chronological realized paper-trade PnL curve; open PnL excluded")
+
+
+def _correlation_risk(ctx):
+    correlations=ctx.get("correlations")
+    if not isinstance(correlations,list):return _blocked("pairwise portfolio correlations required",["correlations"])
+    high=[x for x in correlations if isinstance(x,dict) and abs(_num(x.get("correlation")))>=0.8]
+    return _ready({"high_correlation_pairs":high,"count":len(high)},
+                  "absolute Pearson correlation threshold of 0.8 on supplied aligned return series")
+
+
+def _leverage_risk(ctx):
+    plan=ctx.get("plan") or {}
+    side=str(plan.get("side","LONG")).upper()
+    entry=_num(plan.get("entry")); stop=_num(plan.get("stop")); leverage=_num(plan.get("leverage"),1)
+    mmr=min(0.1,max(0.0,_num(plan.get("maintenance_margin_rate"),0.005)))
+    if entry<=0 or stop<=0 or leverage<1 or side not in ("LONG","SHORT"):return _blocked("valid leveraged position plan required",["plan.entry","plan.stop","plan.leverage","plan.side"])
+    liquidation=entry*(1-1/leverage+mmr) if side=="LONG" else entry*(1+1/leverage-mmr)
+    stop_before_liquidation=stop>liquidation if side=="LONG" else stop<liquidation
+    return _ready({"estimated_liquidation_price":liquidation,"stop_before_liquidation":stop_before_liquidation,
+                   "leverage":leverage,"maintenance_margin_rate":mmr,
+                   "warning":"Isolated-margin approximation; actual exchange liquidation depends on maintenance tiers, fees, funding and account margin."},
+                  "simplified isolated-margin estimate only; must not replace exchange risk data")
+
+
+def _liquidation_protection(ctx):
+    risk=_leverage_risk(ctx)
+    if risk.get("status")!="computed":return risk
+    value=risk["value"]
+    return _ready({"protected":value["stop_before_liquidation"],
+                   "estimated_liquidation_price":value["estimated_liquidation_price"],
+                   "leverage":value["leverage"]},
+                  "checks planned stop is on safer side of approximate liquidation level")
+
+
+def _slippage_estimate(ctx):
+    book=ctx.get("orderbook") or {}; side=str(ctx.get("order_side","BUY")).upper(); qty=_num(ctx.get("quantity"))
+    levels=book.get("asks" if side=="BUY" else "bids") or []
+    if side not in ("BUY","SELL") or qty<=0 or not levels:return _blocked("side, quantity and matching orderbook depth required",["order_side","quantity","orderbook"])
+    remaining=qty; cost=0.0; filled=0.0
+    for level in levels:
+        if len(level)<2:continue
+        price=_num(level[0]); size=_num(level[1])
+        take=min(remaining,size)
+        if price>0 and take>0:cost+=take*price;filled+=take;remaining-=take
+        if remaining<=1e-12:break
+    if filled<=0:return _blocked("no executable depth",["positive_orderbook_levels"])
+    avg=cost/filled; best=_num(levels[0][0])
+    return _ready({"requested_quantity":qty,"filled_quantity":filled,"unfilled_quantity":max(0,remaining),
+                   "average_fill_estimate":avg,"best_price":best,
+                   "slippage_pct":abs(avg/best-1)*100 if best else None},
+                  "book-walk estimate from visible levels; excludes hidden liquidity and queue position")
+
+
+def _fee_calc(ctx):
+    notional=_num(ctx.get("notional")); rate=_num(ctx.get("fee_rate"))
+    if notional<=0 or rate<0:return _blocked("positive notional and nonnegative fee rate required",["notional","fee_rate"])
+    sides=max(1,min(2,int(_num(ctx.get("fee_sides"),2))))
+    return _ready({"notional":notional,"fee_rate_per_side":rate,"fee_sides":sides,
+                   "estimated_fee":notional*rate*sides},"fee arithmetic using supplied rate; exchange tier must be verified")
+
+
+def _volatility_stop(ctx):
+    rows,err=_base(ctx,20)
+    if err:return err
+    price=rows[-1]["close"]; atr=_atr(rows); multiplier=min(5.0,max(0.5,_num(ctx.get("atr_multiple"),1.5)))
+    side=str(ctx.get("side","LONG")).upper()
+    if not atr or side not in ("LONG","SHORT"):return _blocked("ATR and valid side required",["atr14","side"])
+    stop=price-multiplier*atr if side=="LONG" else price+multiplier*atr
+    return _ready({"reference_price":price,"atr14":atr,"atr_multiple":multiplier,"stop_reference":stop},
+                  "ATR-based volatility stop reference; not exchange order")
+
+
+def _breakeven(ctx):
+    entry=_num(ctx.get("entry")); rate=_num(ctx.get("fee_rate")); side=str(ctx.get("side","LONG")).upper()
+    if entry<=0 or rate<0 or side not in ("LONG","SHORT"):return _blocked("entry, fee rate and side required",["entry","fee_rate","side"])
+    cost=entry*(1+rate)/(1-rate) if side=="LONG" and rate<1 else entry
+    cost=entry*(1-rate)/(1+rate) if side=="SHORT" else cost
+    return _ready({"gross_fee_adjusted_breakeven":cost,"entry":entry,"side":side},
+                  "two-sided proportional fee break-even estimate; excludes funding and slippage")
+
+
+def _trailing_stop(ctx):
+    side=str(ctx.get("side","LONG")).upper()
+    high=_num(ctx.get("highest_price")); low=_num(ctx.get("lowest_price")); atr=_num(ctx.get("atr"))
+    multiple=min(5.0,max(0.5,_num(ctx.get("atr_multiple"),2.0)))
+    if side=="LONG" and high>0 and atr>0:stop=high-multiple*atr
+    elif side=="SHORT" and low>0 and atr>0:stop=low+multiple*atr
+    else:return _blocked("side, favorable extreme and ATR required",["side","highest_price_or_lowest_price","atr"])
+    return _ready({"trailing_stop_reference":stop,"side":side,"atr_multiple":multiple},
+                  "ATR trailing-stop reference; does not modify a position")
+
+
+def _daily_limit(ctx):
+    equity=_num((ctx.get("account") or {}).get("equity")); pnl=_num(ctx.get("daily_pnl"))
+    limit=min(10.0,max(0.1,_num(ctx.get("daily_loss_limit_pct"),3.0)))
+    if equity<=0:return _blocked("paper equity required",["account.equity"])
+    loss_pct=max(0,-pnl)/equity*100
+    return _ready({"daily_pnl":pnl,"daily_loss_pct":round(loss_pct,4),
+                   "limit_pct":limit,"limit_breached":loss_pct>=limit},
+                  "realized daily PnL against configured paper-equity loss limit")
+
+
+def _circuit_breaker(ctx):
+    daily=_daily_limit(ctx)
+    if daily.get("status")!="computed":return daily
+    health=ctx.get("system_health") or {}
+    unhealthy=[k for k,v in health.items() if str(v).lower() not in ("ok","healthy","up")]
+    stopped=daily["value"]["limit_breached"] or bool(unhealthy)
+    return _ready({"tripped":stopped,"daily_loss_limit_breached":daily["value"]["limit_breached"],
+                   "unhealthy_services":unhealthy},"read-only circuit-breaker state; execution remains paper-only")
+
+
+def _risk_approval(ctx):
+    checks=ctx.get("risk_checks")
+    if not isinstance(checks,dict) or not checks:return _blocked("explicit risk-check results required",["risk_checks"])
+    failed=[k for k,v in checks.items() if v is not True]
+    return _ready({"approved":not failed,"failed_checks":failed},
+                  "fail-closed aggregation; any missing or false check rejects approval")
+
+
+def _walk_forward(ctx):
+    values=ctx.get("strategy_returns")
+    if not isinstance(values,list) or len(values)<20:return _blocked("at least 20 ordered strategy returns required",["strategy_returns"])
+    cut=int(len(values)*0.6);train=[_num(x) for x in values[:cut]];test=[_num(x) for x in values[cut:]]
+    return _ready({"train_samples":len(train),"test_samples":len(test),
+                   "train_mean_return":mean(train),"test_mean_return":mean(test),
+                   "train_positive_rate":sum(x>0 for x in train)/len(train),
+                   "test_positive_rate":sum(x>0 for x in test)/len(test)},
+                  "chronological 60/40 single split; not a full rolling walk-forward grid")
+
+
+def _monte_carlo(ctx):
+    values=ctx.get("strategy_returns")
+    if not isinstance(values,list) or len(values)<10:return _blocked("at least 10 ordered trade returns required",["strategy_returns"])
+    rng=random.Random(27112026); sims=300; horizon=len(values); endings=[]
+    for _ in range(sims):
+        equity=1.0
+        for _ in range(horizon):equity*=1+_num(values[rng.randrange(horizon)])
+        endings.append(equity)
+    ordered=sorted(endings)
+    return _ready({"simulations":sims,"median_terminal_equity_multiple":ordered[sims//2],
+                   "p05_terminal_equity_multiple":ordered[int(sims*0.05)],
+                   "p95_terminal_equity_multiple":ordered[int(sims*0.95)],
+                   "fraction_below_start":sum(x<1 for x in endings)/sims},
+                  "bootstrap resampling of supplied historical returns; scenarios are not forecasts")
+
+
+def _overfit(ctx):
+    train=ctx.get("train_metrics");valid=ctx.get("validation_metrics")
+    if not isinstance(train,dict) or not isinstance(valid,dict):return _blocked("train and validation metrics required",["train_metrics","validation_metrics"])
+    key="accuracy"
+    if train.get(key) is None or valid.get(key) is None:return _blocked("accuracy metrics required",["train_metrics.accuracy","validation_metrics.accuracy"])
+    gap=_num(train[key])-_num(valid[key])
+    return _ready({"train_accuracy":_num(train[key]),"validation_accuracy":_num(valid[key]),
+                   "generalization_gap":gap,"overfit_warning":gap>0.1},
+                  "train-validation accuracy gap heuristic; threshold 10 percentage points")
+
+
+def _out_of_sample(ctx):
+    valid=ctx.get("validation_metrics")
+    if not isinstance(valid,dict):return _blocked("untouched validation metrics required",["validation_metrics"])
+    required=("trade_count","net_return","max_drawdown")
+    if any(valid.get(k) is None for k in required):return _blocked("validation metrics incomplete",list(required))
+    return _ready({k:valid[k] for k in required},"reporting on separately supplied untouched validation results")
+
+
+def _attribution(ctx):
+    trades=ctx.get("closed_trades")
+    if not isinstance(trades,list):return _blocked("closed trades with strategy labels required",["closed_trades"])
+    groups={}
+    for trade in trades:
+        if not isinstance(trade,dict):continue
+        key=str(trade.get("strategy") or trade.get("signal_source") or "UNATTRIBUTED")
+        groups[key]=groups.get(key,0)+_num(trade.get("pnl"))
+    return _ready({"net_pnl_by_strategy":groups},"sum realized paper PnL by recorded strategy/source label")
+
+
+def _strategy_compare(ctx):
+    items=ctx.get("strategy_results")
+    if not isinstance(items,list) or not items:return _blocked("strategy result set required",["strategy_results"])
+    clean=[{"name":str(x.get("name","unnamed")),"net_return":_num(x.get("net_return")),
+            "max_drawdown":_num(x.get("max_drawdown")),"trade_count":int(_num(x.get("trade_count")))}
+           for x in items if isinstance(x,dict)]
+    return _ready({"ranked":sorted(clean,key=lambda x:(x["net_return"],-x["max_drawdown"]),reverse=True)},
+                  "ranking of supplied backtest results; not live strategy selection")
+
+
+def _model_drift(ctx):
+    baseline=ctx.get("baseline_metrics");recent=ctx.get("recent_metrics")
+    if not isinstance(baseline,dict) or not isinstance(recent,dict):return _blocked("baseline and recent model metrics required",["baseline_metrics","recent_metrics"])
+    metrics=("accuracy","brier_score","loss")
+    drift={k:(_num(recent[k])-_num(baseline[k])) for k in metrics if baseline.get(k) is not None and recent.get(k) is not None}
+    if not drift:return _blocked("no shared model metric",["shared_accuracy_or_loss_metric"])
+    return _ready({"metric_deltas":drift,"drift_detected":any(abs(v)>0.1 for v in drift.values())},
+                  "simple absolute metric-shift threshold; monitor only")
+
+
+def _position_monitor(ctx):
+    positions=ctx.get("positions");prices=ctx.get("current_prices")
+    if not isinstance(positions,list) or not isinstance(prices,dict):return _blocked("paper positions and current marks required",["positions","current_prices"])
+    output=[]
+    for pos in positions:
+        if not isinstance(pos,dict) or pos.get("status")!="OPEN":continue
+        symbol=str(pos.get("symbol",""));mark=_num(prices.get(symbol))
+        entry=_num(pos.get("entry"));qty=_num(pos.get("quantity"))
+        if mark<=0 or entry<=0:continue
+        pnl=(mark-entry)*qty if str(pos.get("side")).upper()=="LONG" else (entry-mark)*qty
+        stop=_num(pos.get("stop_loss",pos.get("stopLoss")));target=_num(pos.get("take_profit",pos.get("takeProfit")))
+        output.append({"symbol":symbol,"mark":mark,"unrealized_gross_pnl":pnl,
+                       "stop_touched":bool(stop and ((mark<=stop) if pos.get("side")=="LONG" else (mark>=stop))),
+                       "target_touched":bool(target and ((mark>=target) if pos.get("side")=="LONG" else (mark<=target)))})
+    return _ready({"positions":output,"checked":len(output)},"read-only mark-to-market checks; no automatic order mutation")
+
+
+def _knowledge_memory(ctx):
+    events=ctx.get("opportunity_events")
+    if not isinstance(events,list):return _blocked("persisted opportunity event history required",["opportunity_events"])
+    counts={}
+    for event in events:
+        if isinstance(event,dict):
+            key=str(event.get("event_type","unknown"));counts[key]=counts.get(key,0)+1
+    return _ready({"event_count":len(events),"event_types":counts},
+                  "read-only aggregation of persisted opportunity event history")
+
+
+def _adaptive_router(ctx):
+    regime=_regime_detector(ctx)
+    if regime.get("status")!="computed":return regime
+    name=regime["value"]["regime"]
+    route="BREAKOUT_WATCH" if name=="LOW_VOLATILITY_RANGE" else "TREND_FOLLOW" if name=="TRENDING" else "RISK_REDUCTION"
+    return _ready({"market_regime":name,"research_route":route,"automatic_strategy_promotion":False},
+                  "rules-based research routing; does not execute or promote strategies")
+
+
+def _duplicate_signal_filter(ctx):
+    items=ctx.get("signals")
+    if not isinstance(items,list):return _blocked("signal list with stable identifiers required",["signals"])
+    seen=set();unique=[];duplicates=[]
+    for item in items:
+        if not isinstance(item,dict):continue
+        key=(item.get("symbol"),item.get("category"),item.get("direction"),item.get("signal_time"))
+        if key in seen:duplicates.append(key)
+        else:seen.add(key);unique.append(item)
+    return _ready({"unique_signals":unique,"duplicate_count":len(duplicates)},
+                  "deduplication by symbol/category/direction/signal_time; persistence still required")
+
+
 # Each catalogue engine is routable. Similar engines share audited mathematical primitives,
 # while model- and provider-dependent engines remain explicitly blocked when inputs are absent.
 _HANDLER_IDS = {
