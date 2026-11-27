@@ -661,6 +661,30 @@ def _ml_dataset(ctx, horizon: int = 3):
     return samples,None
 
 
+def _live_market_features(ctx):
+    """Build inference features from the latest available completed candle."""
+    rows,err=_base(ctx,60)
+    if err:return None,err
+    closes=[x["close"] for x in rows]
+    current=rows[-1]
+    vol_base=mean(x["volume"] for x in rows[-21:-1]) if len(rows)>=21 else 0
+    atr=_atr(rows[-30:])
+    rsi=_rsi(closes[-60:])
+    e20=_ema(closes[-50:],20);e50=_ema(closes[-60:],50)
+    span=current["high"]-current["low"]
+    return [
+        closes[-1]/closes[-2]-1 if closes[-2] else 0,
+        closes[-1]/closes[-4]-1 if closes[-4] else 0,
+        closes[-1]/closes[-6]-1 if closes[-6] else 0,
+        (current["close"]-current["open"])/current["close"],
+        (current["close"]-current["low"])/span if span else 0.5,
+        current["volume"]/vol_base if vol_base>0 else 1.0,
+        atr/current["close"] if atr else 0.0,
+        (rsi/100.0) if rsi is not None else 0.5,
+        ((e20/e50)-1) if e20 and e50 else 0.0,
+    ],None
+
+
 def _standardize(train, test):
     width=len(train[0][0])
     means=[mean(row[0][j] for row in train) for j in range(width)]
@@ -700,7 +724,8 @@ def _logistic_model(ctx):
     labels=[label for _,label in test]
     accuracy=sum((p>=0.5)==bool(y) for p,y in zip(probs,labels))/len(labels) if labels else None
     brier=mean((p-y)**2 for p,y in zip(probs,labels)) if labels else None
-    latest_features=dataset[-1][0]
+    latest_features,feature_error=_live_market_features(ctx)
+    if feature_error:return feature_error
     normalized=[(latest_features[j]-means[j])/scales[j] for j in range(width)]
     probability=_sigmoid(sum(w*x for w,x in zip(weights,normalized))+bias)
     names=["return_1","return_3","return_5","body_pct","close_location","volume_ratio","atr_pct","rsi_scaled","ema_gap"]
@@ -769,7 +794,8 @@ def _random_forest(ctx):
     predictions=[sum(_tree_predict(tree,features) for tree in trees)/len(trees) for features,_ in test]
     labels=[label for _,label in test]
     accuracy=sum((p>=0.5)==bool(y) for p,y in zip(predictions,labels))/len(labels) if labels else None
-    latest=dataset[-1][0]
+    latest,feature_error=_live_market_features(ctx)
+    if feature_error:return feature_error
     means=[mean(row[0][j] for row in dataset[:split]) for j in range(len(latest))]
     scales=[pstdev(row[0][j] for row in dataset[:split]) or 1.0 for j in range(len(latest))]
     normalized=[(latest[j]-means[j])/scales[j] for j in range(len(latest))]
@@ -1764,7 +1790,9 @@ def _deep_learning_mlp(ctx):
     labels=[y for _,y in test]
     accuracy=sum((p>=0.5)==bool(y) for p,y in zip(predictions,labels))/len(labels) if labels else None
     brier=mean((p-y)**2 for p,y in zip(predictions,labels)) if labels else None
-    latest=[(dataset[-1][0][j]-means[j])/scales[j] for j in range(inputs)]
+    live_features,feature_error=_live_market_features(ctx)
+    if feature_error:return feature_error
+    latest=[(live_features[j]-means[j])/scales[j] for j in range(inputs)]
     probability=forward(latest)[2]
     return _ready({"model":"two_hidden_layer_mlp","hidden_layers":[h1,h2],
                    "training_samples":len(train),"holdout_samples":len(test),
