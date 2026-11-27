@@ -370,3 +370,26 @@ def test_deep_learning_mlp_and_q_learning_use_time_ordered_holdouts():
     assert rl["value"]["training_transitions"] > rl["value"]["holdout_transitions"] > 0
     assert set(rl["value"]["holdout_action_counts"]) == {"LONG", "SHORT", "FLAT"}
     assert "Toy OHLCV simulator" in rl["value"]["warning"]
+
+
+def test_latest_completed_candle_features_are_used_for_live_model_inference():
+    from app.engine_suite import _live_market_features, _ml_dataset
+    rows = make_candles(190)
+    context = {"candles": rows}
+    live, error = _live_market_features(context)
+    dataset, dataset_error = _ml_dataset(context)
+    assert error is None and dataset_error is None
+    expected = rows[-1]["close"] / rows[-2]["close"] - 1
+    assert live[0] == pytest.approx(expected)
+    assert live[0] != pytest.approx(dataset[-1][0][0])
+
+
+def test_xgboost_style_classifier_runs_second_order_boosting_on_time_holdout():
+    from app.engine_suite import _xgboost_classifier
+    result = _xgboost_classifier({"candles": make_candles(190)})
+    assert result["status"] == "computed"
+    value = result["value"]
+    assert value["model"] == "xgboost_style_second_order_gradient_boosted_trees"
+    assert value["training_samples"] > value["holdout_samples"] > 0
+    assert 0 <= value["research_score_up"] <= 1
+    assert "not the upstream XGBoost library" in value["warning"]
