@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from math import exp, isfinite, sqrt
 import random
-from statistics import mean, median, pstdev
+from statistics import NormalDist, mean, median, pstdev
 from typing import Any
 
 from .engine_catalog import ENGINE_CATALOG
@@ -1425,6 +1425,100 @@ def _event_bus(ctx):
 # Each catalogue engine is routable. Similar engines share audited mathematical primitives,
 # while model- and provider-dependent engines remain explicitly blocked when inputs are absent.
 
+
+def _bs_price(spot, strike, years, rate, volatility, is_call):
+    if years<=0 or volatility<=0 or spot<=0 or strike<=0:return max(spot-strike,0) if is_call else max(strike-spot,0)
+    root=sqrt(years);d1=(__import__("math").log(spot/strike)+(rate+0.5*volatility*volatility)*years)/(volatility*root)
+    d2=d1-volatility*root
+    normal=NormalDist()
+    disc=exp(-rate*years)
+    if is_call:return spot*normal.cdf(d1)-strike*disc*normal.cdf(d2)
+    return strike*disc*normal.cdf(-d2)-spot*normal.cdf(-d1)
+
+
+def _implied_volatility(market_price,spot,strike,years,rate,is_call):
+    if market_price<=0 or years<=0 or spot<=0 or strike<=0:return None
+    intrinsic=max(spot-strike,0) if is_call else max(strike-spot,0)
+    if market_price<intrinsic:return None
+    low,high=0.0001,5.0
+    if _bs_price(spot,strike,years,rate,high,is_call)<market_price:return None
+    for _ in range(80):
+        mid=(low+high)/2
+        value=_bs_price(spot,strike,years,rate,mid,is_call)
+        if value>market_price:high=mid
+        else:low=mid
+    return (low+high)/2
+
+
+def _options_chain(ctx):
+    chain=ctx.get("options_chain")
+    spot=_num(ctx.get("underlying_price"))
+    if not isinstance(chain,list) or not chain:return None,_blocked("verified option chain snapshot required",["options_chain"])
+    if spot<=0:return None,_blocked("underlying mark required",["underlying_price"])
+    output=[];gross_gamma=0.0;signed_gamma=0.0;has_sign=True
+    for contract in chain:
+        if not isinstance(contract,dict):continue
+        strike=_num(contract.get("strike"));days=_num(contract.get("days_to_expiry"))
+        kind=str(contract.get("type","CALL")).upper()
+        if strike<=0 or days<=0 or kind not in ("CALL","PUT"):continue
+        years=days/365.0;rate=_num(contract.get("risk_free_rate"),0.0)
+        iv=_num(contract.get("implied_volatility"))
+        mid=_num(contract.get("mark_price"))
+        if mid<=0:
+            bid=_num(contract.get("bid"));ask=_num(contract.get("ask"))
+            mid=(bid+ask)/2 if bid>0 and ask>=bid else 0
+        if iv<=0 and mid>0:
+            estimate=_implied_volatility(mid,spot,strike,years,rate,kind=="CALL")
+            iv=estimate or 0
+        if iv<=0:continue
+        root=sqrt(years);d1=(__import__("math").log(spot/strike)+(rate+0.5*iv*iv)*years)/(iv*root)
+        pdf=exp(-0.5*d1*d1)/sqrt(2*__import__("math").pi)
+        delta=NormalDist().cdf(d1) if kind=="CALL" else NormalDist().cdf(d1)-1
+        gamma=pdf/(spot*iv*root)
+        vega=spot*pdf*root/100
+        oi=_num(contract.get("open_interest"));mult=_num(contract.get("contract_multiplier"),1.0)
+        exposure=gamma*oi*mult*spot*spot*0.01
+        dealer_sign=contract.get("dealer_position_sign")
+        if dealer_sign not in (-1,1):has_sign=False
+        else:signed_gamma+=exposure*dealer_sign
+        gross_gamma+=exposure
+        output.append({"symbol":contract.get("symbol"),"type":kind,"strike":strike,
+                       "days_to_expiry":days,"implied_volatility":iv,"delta":delta,
+                       "gamma":gamma,"vega_per_1vol_point":vega,
+                       "open_interest":oi,"gamma_exposure_per_1pct_move":exposure})
+    if not output:return None,_blocked("no valid option contracts with implied volatility",["valid_iv_or_bid_ask","strike","expiry","contract_type"])
+    return {"contracts":output,"count":len(output),"gross_gamma_exposure_per_1pct_move":gross_gamma,
+            "net_gamma_exposure_per_1pct_move":signed_gamma if has_sign else None,
+            "net_gamma_available":has_sign},None
+
+
+def _options_analytics(ctx):
+    summary,err=_options_chain(ctx)
+    if err:return err
+    return _ready(summary,"Black-Scholes greeks with supplied or bisection-derived implied volatility")
+
+
+def _implied_volatility_engine(ctx):
+    summary,err=_options_chain(ctx)
+    if err:return err
+    values=[x["implied_volatility"] for x in summary["contracts"]]
+    return _ready({"contract_count":len(values),"mean_iv":mean(values),
+                   "median_iv":median(values),"min_iv":min(values),"max_iv":max(values),
+                   "contracts":summary["contracts"]},
+                  "implied volatility supplied by provider or derived from bid/ask midpoint via Black-Scholes")
+
+
+def _gamma_exposure(ctx):
+    summary,err=_options_chain(ctx)
+    if err:return err
+    return _ready({"gross_gamma_exposure_per_1pct_move":summary["gross_gamma_exposure_per_1pct_move"],
+                   "net_gamma_exposure_per_1pct_move":summary["net_gamma_exposure_per_1pct_move"],
+                   "net_gamma_available":summary["net_gamma_available"],
+                   "contract_count":summary["count"],
+                   "warning":"Open interest alone does not identify dealer-side positioning; net GEX is omitted unless dealer_position_sign is supplied."},
+                  "Black-Scholes gamma times open interest, multiplier and underlying squared; 1 percent move scaling")
+
+
 def _liquidation_heatmap(ctx):
     events=ctx.get("liquidations")
     if not isinstance(events,list):return _blocked("normalized liquidation trades required",["liquidations"])
@@ -1729,6 +1823,9 @@ _HANDLER_IDS.update({
     "E049":_external,
     "E050":_external,
     "E063":_liquidation_heatmap,
+    "E069":_options_analytics,
+    "E070":_implied_volatility_engine,
+    "E071":_gamma_exposure,
     "E069":_external,
     "E070":_external,
     "E071":_external,
