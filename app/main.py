@@ -620,14 +620,17 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         get_orderbook(symbol, category), get_recent_trades(symbol, category),
         return_exceptions=True
     )
+    async with PAPER_LOCK:
+        paper_equity = PAPER_BALANCE
+        paper_positions = [dict(x) for x in PAPER_TRADES]
     context = {
         "symbol": symbol, "category": category, "interval": interval,
         "candles": completed, "closes": closes,
         "analysis": analysis, "regime": regime, "structure": structure,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "account": {"equity": PAPER_BALANCE},
-        "positions": [dict(x) for x in PAPER_TRADES],
-        "closed_trades": [dict(x) for x in PAPER_TRADES if x.get("status") == "CLOSED"],
+        "account": {"equity": paper_equity},
+        "positions": paper_positions,
+        "closed_trades": [x for x in paper_positions if x.get("status") == "CLOSED"],
     }
     auxiliary = {"orderbook": False, "trade_flow": False, "derivatives": False}
     if not isinstance(book_result, Exception):
