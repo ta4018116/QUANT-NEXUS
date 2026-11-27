@@ -1,3 +1,6 @@
+from fastapi.testclient import TestClient
+
+from app import main
 from app.engine_catalog import ENGINE_CATALOG, engine_catalog
 
 
@@ -32,3 +35,13 @@ def test_engine_catalog_covers_all_twelve_workstreams():
     result = engine_catalog()
     assert len(result["group_counts"]) == 12
     assert sum(result["group_counts"].values()) == 156
+
+
+def test_engine_catalog_api_exposes_all_engines_and_paper_only_mode():
+    response = TestClient(main.app).get("/api/engine-catalog")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 156
+    assert len(payload["engines"]) == 156
+    assert payload["live_trading_enabled"] is False
+    assert payload["execution_capability"] == "paper_only"
