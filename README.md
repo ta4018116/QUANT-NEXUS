@@ -104,3 +104,13 @@ scores are heuristic and are not calibrated win probabilities.
 - The central monitoring room displays live liquidation events, liquidated LONG/SHORT notional and a rolling recent-event list for the selected symbol.
 - The feed reports executed liquidation prints only; it is not a complete map of positions at risk. The stream is read-only and cannot place orders.
 - Live trading remains disabled; all portfolio and order workflows remain simulation-only.
+
+## 156-engine runtime catalogue and early opportunity evaluation
+- `GET /api/engine-catalog` returns the canonical 156-entry catalogue split across 12 workstreams. Each entry has an auditable `implemented`, `partial`, or `planned` status.
+- `GET /api/engine-suite/coverage` reports callable adapter coverage. A callable adapter is not a claim that every data feed, trained model, or production capability is present.
+- `GET /api/engine-suite/{symbol}?category=spot|linear&interval=15m` evaluates the engine suite against one validated market snapshot. The endpoint uses completed candles for signal calculations and obtains optional order-book, trade-flow and 5m/1h/4h context when available.
+- `GET /api/early-opportunity/{symbol}?category=spot|linear&interval=15m` returns the same evidence bundle with emphasis on pre-breakout compression, accumulation proxy, volume expansion, order-book imbalance, trade flow, structure and derivatives context.
+- Results include explicit missing-input states. News, options, cross-market feeds, model artifacts and full autonomous learning are not fabricated when unavailable.
+- The early-opportunity score is a heuristic research score, not a calibrated probability or a guaranteed signal. The entry zone and targets are watch references only; the endpoint never creates a paper order.
+- The runtime suite routes all 156 catalogue IDs. Engines requiring unavailable feeds or trained model artifacts return `blocked_missing_input` until their dependencies are integrated and validated.
+- Trading mode remains simulation; `live_trading_enabled` is false; no live-order endpoint or exchange trade credential is introduced.
