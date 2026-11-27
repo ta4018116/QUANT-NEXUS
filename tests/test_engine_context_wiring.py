@@ -68,18 +68,18 @@ def test_engine_suite_receives_confirmation_risk_and_mark_context(monkeypatch):
     assert isinstance(captured["strategy_returns"], list)
     
 def test_multi_market_engine_suite_uses_twelve_data_and_keeps_paper_only(monkeypatch):
-    async def fake_twelve(symbol, interval, limit):
+    async def fake_twelve(symbol, interval, limit, market=None):
         return _trend_rows(), {
-            "provider":"Twelve Data","timezone":"UTC","market":"Common Stock","exchange":"NASDAQ"
+            "provider":"Stooq","timezone":"UTC","market":"Common Stock","exchange":"NASDAQ","data_quality":"daily_ohlcv"
         }
 
     monkeypatch.setattr(main, "get_twelve_data_klines", fake_twelve)
     response = TestClient(main.app).get(
-        "/api/multi-market-engine-suite?market=stocks&symbol=AAPL&interval=15m"
+        "/api/multi-market-engine-suite?market=stocks&symbol=aapl.us&interval=1d"
     )
     assert response.status_code == 200
     payload = response.json()
-    assert payload["provider"]["provider"] == "Twelve Data"
+    assert payload["provider"]["provider"] == "Stooq"
     assert payload["market"] == "stocks"
     assert payload["completed_candles"] == 120
     assert payload["engine_suite"]["total_requested"] == 156
@@ -87,11 +87,11 @@ def test_multi_market_engine_suite_uses_twelve_data_and_keeps_paper_only(monkeyp
     assert payload["trading_mode"] == "simulation"
 
 
-def test_multi_market_engine_suite_fails_closed_without_twelve_data_key(monkeypatch):
+def test_multi_market_engine_suite_rejects_intraday_without_key(monkeypatch):
     monkeypatch.delenv("TWELVE_DATA_API_KEY", raising=False)
     response = TestClient(main.app).get(
         "/api/multi-market-engine-suite?market=forex&symbol=EUR%2FUSD"
     )
     assert response.status_code == 503
-    assert "TWELVE_DATA_API_KEY" in response.json()["detail"]
+    assert "daily only" in response.json()["detail"]
 

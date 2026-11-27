@@ -397,10 +397,18 @@ def engine_source_registry() -> dict:
             "AI Intelligence", "Opportunity Scoring", "Risk Management",
             "Backtesting & Learning", "Trade Management", "Multi-Agent Intelligence",
         }:
-            profile["providers"].append("Twelve Data (non-crypto market data; API key required)")
-            profile["endpoints"].append("Twelve Data /time_series (stocks, forex, indices and commodities)")
-            profile["inputs"].append("market-specific symbol mapping and Twelve Data OHLCV/quote freshness")
-            profile["credentials"] = str(profile["credentials"]) + "; TWELVE_DATA_API_KEY_required_for_noncrypto"
+            profile["providers"].extend([
+                "Stooq public daily OHLCV (stocks, indices and supported commodities; no key)",
+                "Frankfurter public daily FX reference rates (no key; close-only)",
+                "Twelve Data optional intraday provider (API key required)",
+            ])
+            profile["endpoints"].extend([
+                "Stooq /q/d/l/ daily CSV",
+                "Frankfurter /{start}..{end} daily reference rates",
+                "Twelve Data /time_series optional intraday OHLCV",
+            ])
+            profile["inputs"].append("explicit market symbol mapping, daily freshness and provider-specific data-quality label")
+            profile["credentials"] = str(profile["credentials"]) + "; public_daily_fallbacks_no_key; Twelve_Data_key_optional_for_intraday"
         rows.append({
             "engine_id": engine["id"],
             "name": engine["name"],
