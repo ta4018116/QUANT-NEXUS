@@ -35,6 +35,7 @@ from .provider_feeds import (
 from .model_lifecycle import train_direction_model, list_model_artifacts
 from .notification_delivery import deliver_notification
 from .ops_runtime import BackgroundSupervisor
+from .engine_event_store import EngineEventStore
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="QUANT NEXUS", version="1.0.0",
@@ -109,6 +110,7 @@ async def close_shared_http_client():
     HTTP_CLIENT = None
 PAPER_STORE = PaperStore()
 PAPER_BALANCE, PAPER_TRADES = PAPER_STORE.load()
+ENGINE_EVENT_STORE = EngineEventStore()
 PAPER_LOCK = asyncio.Lock()
 AUTO_ENTRY_LOCK = asyncio.Lock()
 LIQUIDATION_LOCK = asyncio.Lock()
@@ -1009,6 +1011,34 @@ async def engine_catalog_endpoint():
     """Return the auditable 156-engine catalogue and honest implementation states."""
     return engine_catalog()
 
+@app.get("/api/events/status")
+async def engine_event_status():
+    """Return event-log health and backlog counters without exposing secrets."""
+    return {
+        **ENGINE_EVENT_STORE.stats(),
+        "trading_mode": "simulation",
+        "live_trading_enabled": False,
+    }
+
+
+@app.get("/api/events/recent")
+async def recent_engine_events(
+    event_type: str | None = None,
+    symbol: str | None = None,
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Read recent persisted research, audit and replay events."""
+    return {
+        "events": ENGINE_EVENT_STORE.list_events(
+            event_type=event_type,
+            symbol=symbol.upper() if symbol else None,
+            limit=limit,
+        ),
+        "trading_mode": "simulation",
+        "live_trading_enabled": False,
+    }
+
+
 @app.get("/api/engine-sources")
 async def engine_sources_endpoint():
     """Return a per-engine evidence source contract and current provider configuration."""
@@ -1583,6 +1613,51 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         "websocket":"degraded",
     }
     early = early_opportunity_assessment(context)
+
+    # Persist compact, attributable research and audit events. No orders or
+    # private exchange endpoints are involved in this event path.
+    ENGINE_EVENT_STORE.publish(
+        "audit",
+        {
+            "action": "market_engine_suite",
+            "category": category,
+            "interval": interval,
+            "provider": provider,
+            "completed_candles": len(completed),
+            "engine_count": 156,
+            "trading_mode": "simulation",
+        },
+        symbol=symbol,
+        source="market_engine_suite",
+    )
+    if early.get("status") == "computed" and safe_float(early.get("score")) >= 65:
+        candle_time = completed[-1].get("time") if completed else None
+        ENGINE_EVENT_STORE.publish(
+            "opportunity",
+            {
+                "event_type": "opportunity",
+                "score": safe_float(early.get("score")),
+                "tier": early.get("tier"),
+                "interval": interval,
+                "candle_time": candle_time,
+                "reference_price": early.get("reference_price"),
+                "reasons": early.get("reasons", []),
+                "missing_confirmations": early.get("missing_confirmations", []),
+                "source_provider": provider,
+            },
+            symbol=symbol,
+            source="early_opportunity_assessment",
+            dedupe_key=f"opportunity:{symbol}:{interval}:{candle_time}:{early.get('tier')}",
+        )
+    context["opportunity_events"] = ENGINE_EVENT_STORE.list_events(
+        event_type="opportunity", symbol=symbol, limit=200
+    )
+    context["audit_events"] = ENGINE_EVENT_STORE.list_events(
+        event_type="audit", symbol=symbol, limit=200
+    )
+    context["replay_events"] = ENGINE_EVENT_STORE.list_events(symbol=symbol, limit=500)
+    context["event_bus"] = ENGINE_EVENT_STORE.stats()
+
     if early.get("status")=="computed" and early.get("score",0)>=65:
         context["notification_events"] = [{
             "type":"OPPORTUNITY",
