@@ -43,3 +43,12 @@ def test_noncrypto_market_groups_declare_twelve_data_source():
     assert "Twelve Data /time_series (stocks, forex, indices and commodities)" in by_id["E045"]["endpoints"]
     assert "TWELVE_DATA_API_KEY_required_for_noncrypto" in by_id["E101"]["credential_model"]
     assert "Twelve Data (non-crypto market data; API key required)" not in by_id["E060"]["providers"]
+
+
+def test_knowledge_memory_and_audit_log_are_not_overstated():
+    registry = engine_source_registry()
+    by_id = {item["engine_id"]: item for item in registry["engines"]}
+    assert by_id["E138"]["source_class"] == "opportunity_knowledge_history"
+    assert "does not yet load a durable opportunity_events history" in by_id["E138"]["limits"]
+    assert by_id["E151"]["source_class"] == "paper_trade_identifier_audit_proxy"
+    assert "does not capture a full tamper-evident audit trail" in by_id["E151"]["limits"]
