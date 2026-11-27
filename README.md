@@ -211,3 +211,16 @@ All changes preserve `LIVE_TRADING_ENABLED=False`. Public exchange feeds are rea
 - A unique dedupe key prevents the same symbol/interval/candle/tier opportunity from being stored twice.
 - `ENGINE_EVENT_STORAGE_DURABLE=true` is an operator declaration that the event database path is on persistent storage; it is not independently verified by the application.
 - The event log is not yet a distributed broker, full tick/order-book archive, tamper-evident audit system or independent worker queue.
+
+## No-key market-data fallbacks
+
+QUANT NEXUS can run selected non-crypto market research without paid API keys:
+
+- **Forex:** Frankfurter daily reference rates. These are daily closes, not executable quotes; OHLC is represented as close-only and volume is zero. Do not use this feed for intraday execution signals.
+- **Stocks, indices and supported commodities:** Stooq daily OHLCV where its symbol coverage permits. Use the provider's symbol format (for example, `aapl.us`); coverage is not universal.
+- **Crypto derivatives:** existing public Bybit, OKX and Binance endpoints remain the no-key source path where regionally reachable. Coinalyze and CoinGlass remain optional enrichments, not required for the public exchange feeds.
+- **News:** existing public RSS (Cointelegraph and CoinDesk) plus GDELT; CryptoPanic remains optional.
+
+When `TWELVE_DATA_API_KEY` is absent, `/api/multi-market-engine-suite` requires `interval=1d` and uses the free daily adapter. Intraday requests return an explicit unavailable response instead of fabricating intraday candles. The response includes the provider and data-quality limitations. With a valid Twelve Data key, the existing provider path remains available.
+
+No-key fallback endpoints are read-only. Live trading remains disabled; all trade management and signal outputs remain simulation/paper-only.
