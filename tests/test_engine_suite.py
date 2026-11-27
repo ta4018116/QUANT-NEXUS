@@ -102,6 +102,24 @@ def test_engine_fails_closed_when_inputs_are_missing():
     assert result["live_trading_enabled"] is False
 
 
+def test_market_ingestion_activates_only_with_provider_timestamp_and_fresh_source():
+    from app.engine_readiness import build_engine_readiness
+
+    context={"candles":make_candles(80),"symbol":"BTCUSDT","category":"spot","interval":"15m",
+             "provider":"OKX","source_timestamp":"2026-11-27T12:00:00+00:00",
+             "source_health":"healthy","market_snapshot":{
+                 "provider":"OKX","source_timestamp":"2026-11-27T12:00:00+00:00",
+                 "interval":"15m","frequency":"intraday","freshness_status":"fresh","age_seconds":10,
+             }}
+    suite=run_engine_suite(context,["E001"])
+    readiness=build_engine_readiness(suite,market_provider="OKX",
+        provider_health={"market_data":{"status":"ok"}},market_snapshot=context["market_snapshot"])
+    item=readiness["engines"][0]
+    assert item["status"]=="ACTIVE"
+    assert item["test_result"]["status"]=="passed"
+    assert item["source_evidence"]["market_snapshot_provider"]=="OKX"
+
+
 def test_engine_suite_api_uses_completed_candles_and_stays_paper_only(monkeypatch):
     async def fake_klines(symbol, category, interval, limit):
         # Provider rows are newest last in this test; the endpoint discards the last in-progress bar.
