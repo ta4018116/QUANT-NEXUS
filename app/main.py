@@ -65,6 +65,22 @@ def safe_float(value, default=0.0):
         return default
 
 
+def _heartbeat_age_seconds(timestamp: str | None, now: datetime | None = None) -> float | None:
+    """Return a real heartbeat age; never substitute process-running for a heartbeat."""
+    if not timestamp:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        current = now or datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        return max(0.0, (current - parsed).total_seconds())
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 OPS_INTERVAL_SECONDS = min(3600, max(60, int(os.getenv("OPS_INTERVAL_SECONDS", "300"))))
 OPS_RUNTIME = BackgroundSupervisor(OPS_INTERVAL_SECONDS)
 
@@ -1511,10 +1527,11 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         "path_configured":bool(os.getenv("PAPER_DB_PATH")),
     }
     context["websocket"] = {
-        "status":"ok",
+        "status":"degraded",
         "liquidation_capture":"in-memory only while a client is connected",
         "independent_connection_monitoring":False,
         "captured_events":len(context["liquidations"]),
+        "limitation":"No independent durable WebSocket worker or connection heartbeat is configured.",
     }
     context["scheduled_jobs"] = [{
         "name": "watchlist_market_monitor",
@@ -1538,8 +1555,9 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
     context["heartbeats"] = {
         "api": {"age_seconds": 0, "scope": "current_request"},
         "background_scheduler": {
-            "age_seconds": 0 if ops_status.get("status") == "running" else None,
+            "age_seconds": _heartbeat_age_seconds(ops_status.get("last_finished_at")),
             "last_finished_at": ops_status.get("last_finished_at"),
+            "task_running": ops_status.get("status") == "running",
             "scope": ops_status.get("scope"),
         },
     }
@@ -1562,7 +1580,7 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         "paper_ledger": "ok",
         "database":"ok" if context["database"]["persistent"] else "degraded",
         "cache":"ok",
-        "websocket":"ok",
+        "websocket":"degraded",
     }
     early = early_opportunity_assessment(context)
     if early.get("status")=="computed" and early.get("score",0)>=65:
