@@ -125,8 +125,8 @@ scores are heuristic and are not calibrated win probabilities.
 ## Additional research engines
 - A small two-hidden-layer MLP and tabular Q-learning simulator are included as research adapters with chronological holdouts. Neither is a persisted production model, and neither can authorize an order.
 - Options analytics calculate Black-Scholes Greeks and implied volatility only when a valid options chain and underlying mark are supplied. Net dealer gamma is omitted unless dealer-side positioning is explicitly supplied.
-- The remaining intentionally blocked sequence-model engines are LSTM and Transformer until trained weights, validation artifacts and runtime resources are provided. The XGBoost-style adapter is a pure-Python research implementation, not the upstream XGBoost library.
+- LSTM and Transformer now have deterministic research adapters: a fixed-gate recurrent feature extractor and a single-head self-attention feature extractor, each with a trained logistic readout and purged chronological holdout. They are intentionally marked partial because their recurrent/attention projection weights are not end-to-end trained or persisted. The XGBoost-style adapter is a pure-Python research implementation, not the upstream XGBoost library.
 
 - The statistical ML adapters score the latest completed candle for live inference; chronological training and holdout partitions are separate, and all model outputs remain research-only.
 - A pure-Python second-order gradient-boosted tree engine is included as an XGBoost-style research implementation. It is not the upstream XGBoost package.
-- The only catalog entries still marked planned are LSTM and Transformer. Their trained weights/runtime artifacts are not present, so the system returns an explicit missing-model result instead of inventing outputs.
+- No catalogue entries are left in the planned state. All 156 IDs have callable runtime adapters. Two sequence-model adapters are research-grade partial implementations with explicit architectural limits; all other partial engines still require the feed or service inputs named in their catalogue gaps.
