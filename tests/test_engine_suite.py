@@ -232,3 +232,40 @@ def test_position_monitor_and_trade_attribution_are_read_only():
         {"strategy":"breakout","pnl":10},{"strategy":"breakout","pnl":-2}
     ]})
     assert attr["value"]["net_pnl_by_strategy"]["breakout"] == 8
+
+
+def test_signal_expiry_target_and_autonomous_research_are_fail_closed():
+    from app.engine_suite import _signal_expiration, _take_profit, _autonomous_research
+    expiry = _signal_expiration({
+        "signal_created_at": "2026-11-27T08:00:00+00:00",
+        "now_utc": "2026-11-27T08:20:00+00:00",
+        "max_age_seconds": 900
+    })
+    assert expiry["status"] == "computed"
+    assert expiry["value"]["expired"] is True
+    targets = _take_profit({"plan":{"entry":100,"stop":95,"side":"LONG"},
+                             "reward_risk_targets":[1.5,2.0,3.0]})
+    assert targets["value"]["target_references"] == [107.5,110.0,115.0]
+    research = _autonomous_research({"strategy_candidates":[{
+        "name":"test-strategy","train_return":0.20,"validation_return":0.06,
+        "validation_drawdown":9,"validation_trades":45
+    }]})
+    assert research["status"] == "computed"
+    assert research["value"]["candidates"][0]["research_gate_passed"] is True
+    assert research["value"]["candidates"][0]["promotion"] == "MANUAL_REVIEW_REQUIRED"
+
+
+def test_operations_adapters_report_explicit_read_only_state():
+    from app.engine_suite import _event_bus, _data_replay, _watchdog, _audit_log
+    bus = _event_bus({"event_bus":{"published":12,"consumed":9}})
+    assert bus["value"]["backlog"] == 3
+    replay = _data_replay({"replay_events":[
+        {"timestamp":"2026-11-27T10:02:00Z","type":"b"},
+        {"timestamp":"2026-11-27T10:01:00Z","type":"a"}
+    ]})
+    assert replay["value"]["ordered_events"][0]["type"] == "a"
+    watchdog = _watchdog({"heartbeats":{"scanner":{"age_seconds":90}},
+                          "heartbeat_max_age_seconds":60})
+    assert watchdog["value"]["watchdog_alert"] is True
+    audit = _audit_log({"audit_events":[{"event_id":"x"},{"event_id":"x"}]})
+    assert audit["value"]["duplicate_event_ids"] == 1
