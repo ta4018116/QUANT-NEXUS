@@ -588,24 +588,28 @@ ENGINE_CATALOG = [
     "name": "AI Market Analyst",
     "name_ar": "محرك AI Market Analyst",
     "group": "AI Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تركيب تحليلي حتمي لاتجاه السوق والانضغاط والحجم والتجميع"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "محلل تفسيري قائم على قواعد وليس نموذجاً لغوياً توليدياً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E045",
     "name": "Machine Learning",
     "name_ar": "محرك Machine Learning",
     "group": "AI Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "انحدار لوجستي منظم بميزات OHLCV مع فصل زمني 80/20"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "نموذج بحثي صغير لا يملك معايرة مستقلة أو تحققاً مستقبلياً كافياً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E046",
@@ -672,36 +676,42 @@ ENGINE_CATALOG = [
     "name": "Random Forest Classifier",
     "name_ar": "محرك Random Forest Classifier",
     "group": "AI Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "غابة عشوائية نقية من 21 شجرة ضحلة مع عينة اختبار زمنية"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "غابة بحثية محدودة العمق ولا تعتمد مكتبة ML إنتاجية أو معايرة احتمالات"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E052",
     "name": "Anomaly Detection AI",
     "name_ar": "محرك Anomaly Detection AI",
     "group": "AI Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "كشف شذوذ z-score للعائد والحجم ومدى الشمعة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "النافذة قصيرة وحدود الشذوذ إرشادية"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E053",
     "name": "Clustering",
     "name_ar": "محرك Clustering",
     "group": "AI Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تجميع K-means بثلاث مجموعات لميزات العائد والتقلب والحجم"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "التجميع وصفي ويتأثر بالفترة والتهيئة ولا يتنبأ بالاتجاه"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E054",
@@ -720,60 +730,70 @@ ENGINE_CATALOG = [
     "name": "Predictive Analytics",
     "name_ar": "محرك Predictive Analytics",
     "group": "AI Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "توقع مرجعي من متوسط العوائد التاريخية والانحراف"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "إسقاط خطي بسيط وليس توقعاً معايراً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E056",
     "name": "Probability Engine",
     "name_ar": "محرك Probability Engine",
     "group": "AI Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "قياس التكرار التاريخي للاتجاه الصاعد على أفق ثلاث شمعات"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "معدل أساسي غير مشروط وليس احتمالاً خاصاً بالفرصة الحالية"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E057",
     "name": "Ensemble AI",
     "name_ar": "محرك Ensemble AI",
     "group": "AI Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تجميع مخرجات الانحدار اللوجستي والغابة والاتجاه"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "دمج بحثي غير موزون وغير معاير"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E058",
     "name": "Adaptive Learning",
     "name_ar": "محرك Adaptive Learning",
     "group": "AI Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "إعادة تدريب بحثي زمني عند طلب التقييم على نافذة البيانات المقدمة"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "لا يحفظ نموذجاً دائماً ولا يرقّي استراتيجية تلقائياً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E059",
     "name": "Explainable AI",
     "name_ar": "محرك Explainable AI",
     "group": "AI Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "تفسير مساهمات ميزات الانحدار اللوجستي المعيارية"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "المساهمات ارتباطية وليست تفسيراً سببياً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E060",
@@ -1967,7 +1987,7 @@ def engine_catalog() -> dict:
               for status in statuses}
     groups = sorted({item["group"] for item in engines})
     group_counts = {group: sum(1 for item in engines if item["group"] == group) for group in groups}
-    return {"name":"QUANT NEXUS","catalog_version":"1.1.0","total":len(engines),
+    return {"name":"QUANT NEXUS","catalog_version":"1.2.0","total":len(engines),
             "counts":counts,"group_counts":group_counts,"engines":engines,
             "priority":"early_opportunity_detection","trading_mode":"simulation",
             "live_trading_enabled":False,"execution_capability":"paper_only",
