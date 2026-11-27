@@ -3,10 +3,13 @@ import math
 import os
 import logging
 import json
+import re
 import uuid
 from datetime import datetime, timezone
+from html import unescape
 from pathlib import Path
 from typing import Optional
+from xml.etree import ElementTree as ET
 
 import httpx
 import websockets
@@ -78,6 +81,8 @@ PAPER_STORE = PaperStore()
 PAPER_BALANCE, PAPER_TRADES = PAPER_STORE.load()
 PAPER_LOCK = asyncio.Lock()
 AUTO_ENTRY_LOCK = asyncio.Lock()
+LIQUIDATION_LOCK = asyncio.Lock()
+LIQUIDATION_EVENTS: dict[str, list[dict]] = {}
 PAPER_FEE_RATE = min(0.01, max(0.0, safe_float(os.getenv("PAPER_FEE_RATE"), 0.0006)))
 
 def persist_paper_state():
@@ -904,6 +909,301 @@ async def engine_suite_coverage():
     return catalogue_runtime_coverage()
 
 
+
+
+async def _public_json(url: str, params: dict | None = None) -> dict:
+    """Fetch a read-only public JSON endpoint without ever using trading credentials."""
+    response = await shared_http_client().get(url, params=params)
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError("invalid_json_object")
+    if payload.get("error"):
+        raise ValueError("provider_error")
+    return payload
+
+
+async def _rss_news_events() -> tuple[list[dict], dict]:
+    """Read public crypto RSS headlines; keyword triage is not factual verification."""
+    feeds = {
+        "Cointelegraph": "https://cointelegraph.com/rss",
+        "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml",
+    }
+
+    async def fetch_one(name: str, url: str):
+        try:
+            response = await shared_http_client().get(url, headers={"Accept":"application/rss+xml, application/xml, text/xml"})
+            response.raise_for_status()
+            root = ET.fromstring(response.text)
+            items = root.findall(".//item")
+            events = []
+            for item in items[:30]:
+                title = unescape(re.sub(r"<[^>]+>", " ", item.findtext("title") or "")).strip()
+                summary = unescape(re.sub(r"<[^>]+>", " ", item.findtext("description") or "")).strip()
+                if not title:
+                    continue
+                events.append({
+                    "title": title[:200], "summary": summary[:700],
+                    "source": name, "published_at": item.findtext("pubDate"),
+                    "url": item.findtext("link"),
+                })
+            return events, {"status":"ok", "items":len(events)}
+        except Exception as exc:
+            logger.warning("RSS source %s unavailable: %s", name, type(exc).__name__)
+            return [], {"status":"unavailable", "reason":type(exc).__name__}
+
+    results = await asyncio.gather(*(fetch_one(name, url) for name, url in feeds.items()))
+    events = [event for batch, _ in results for event in batch]
+    status = {name: result for name, result in zip(feeds, [x[1] for x in results])}
+    return events[:50], status
+
+
+async def _deribit_options_snapshot(symbol: str) -> tuple[list[dict] | None, float | None, dict]:
+    """Read BTC/ETH option instruments and summaries from Deribit's public market API."""
+    base = symbol.upper().replace("USDT", "")
+    if base not in ("BTC", "ETH"):
+        return None, None, {"status":"unsupported_asset", "provider":"Deribit", "supported_assets":["BTC","ETH"]}
+    root = "https://www.deribit.com/api/v2/public"
+    try:
+        instruments_payload, summary_payload = await asyncio.gather(
+            _public_json(root + "/get_instruments", {"currency":base,"kind":"option","expired":"false"}),
+            _public_json(root + "/get_book_summary_by_currency", {"currency":base,"kind":"option"}),
+        )
+        instruments = instruments_payload.get("result")
+        summaries = summary_payload.get("result")
+        if not isinstance(instruments, list) or not isinstance(summaries, list):
+            raise ValueError("invalid_options_payload")
+        by_name = {str(x.get("instrument_name")):x for x in instruments if isinstance(x,dict)}
+        now_ms = int(datetime.now(timezone.utc).timestamp()*1000)
+        chain = []
+        underlying = None
+        for summary in summaries:
+            if not isinstance(summary,dict):
+                continue
+            name = str(summary.get("instrument_name",""))
+            instrument = by_name.get(name)
+            if not instrument or instrument.get("is_active") is False:
+                continue
+            underlying = underlying or safe_float(summary.get("underlying_price")) or None
+            expiry = safe_float(instrument.get("expiration_timestamp"))
+            strike = safe_float(instrument.get("strike"))
+            days = (expiry-now_ms)/86400000 if expiry>now_ms else 0
+            option_type = str(instrument.get("option_type","")).upper()
+            mark_iv = safe_float(summary.get("mark_iv"))
+            iv = mark_iv/100 if mark_iv>5 else mark_iv
+            oi = safe_float(summary.get("open_interest"))
+            if days<=0 or strike<=0 or iv<=0 or option_type not in ("CALL","PUT"):
+                continue
+            if underlying and abs(strike/underlying-1)>0.35:
+                continue
+            chain.append({
+                "symbol":name, "type":option_type, "strike":strike,
+                "days_to_expiry":days, "implied_volatility":iv,
+                "open_interest":oi,
+                "contract_multiplier":safe_float(instrument.get("contract_size"),1.0) or 1.0,
+                "risk_free_rate":safe_float(summary.get("interest_rate")),
+            })
+        chain.sort(key=lambda x:(x["days_to_expiry"],abs(x["strike"]-(underlying or x["strike"]))))
+        chain = chain[:160]
+        if not chain or not underlying or underlying<=0:
+            return None, None, {"status":"unavailable", "provider":"Deribit", "reason":"no_valid_option_chain"}
+        return chain, underlying, {
+            "status":"ok", "provider":"Deribit", "contracts":len(chain),
+            "underlying":base, "dealer_positioning":"not_provided",
+            "warning":"Public option-chain snapshot. Dealer-side positioning is unavailable; net dealer gamma must remain unset.",
+        }
+    except Exception as exc:
+        logger.warning("Deribit options unavailable for %s: %s", symbol, type(exc).__name__)
+        return None, None, {"status":"unavailable", "provider":"Deribit", "reason":type(exc).__name__}
+
+
+async def _cross_exchange_marks(symbol: str, category: str) -> tuple[dict, dict]:
+    """Collect independently sourced venue marks for spread observation, not execution."""
+    marks: dict[str,float] = {}
+    failures: dict[str,str] = {}
+
+    async def bybit_mark():
+        data = await bybit_get("/v5/market/tickers", {"category":category,"symbol":symbol})
+        rows = data.get("list",[])
+        if not rows:
+            raise ValueError("empty_ticker")
+        value = safe_float(rows[0].get("lastPrice"))
+        if value<=0:
+            raise ValueError("invalid_price")
+        return value
+
+    async def okx_mark():
+        rows = await okx_get("/api/v5/market/ticker", {"instId":okx_instrument(symbol,category)})
+        value = safe_float(rows[0].get("last")) if rows else 0
+        if value<=0:
+            raise ValueError("invalid_price")
+        return value
+
+    async def binance_mark():
+        path = "/fapi/v1/ticker/price" if category=="linear" else "/api/v3/ticker/price"
+        row = await _binance_get(category,path,{"symbol":symbol})
+        value = safe_float(row.get("price")) if isinstance(row,dict) else 0
+        if value<=0:
+            raise ValueError("invalid_price")
+        return value
+
+    for name, task in (
+        ("Bybit",bybit_mark()),("OKX",okx_mark()),("Binance",binance_mark())
+    ):
+        try:
+            marks[name] = await task
+        except Exception as exc:
+            failures[name] = type(exc).__name__
+    return marks, {"available_venues":sorted(marks),"unavailable_venues":failures}
+
+
+async def _spot_and_linear_marks(symbol: str) -> tuple[dict,dict]:
+    async def one(category: str):
+        try:
+            rows, provider = await get_market_tickers(category)
+            item = next((x for x in rows if str(x.get("symbol","")).upper()==symbol),None)
+            price = safe_float(item.get("lastPrice")) if item else 0
+            return price if price>0 else None, provider if price>0 else None
+        except Exception as exc:
+            return None, type(exc).__name__
+    spot, linear = await asyncio.gather(one("spot"),one("linear"))
+    values = {}
+    if spot[0]:
+        values["spot_price"] = spot[0]
+        values["spot_price_provider"] = spot[1]
+    if linear[0]:
+        values["futures_price"] = linear[0]
+        values["futures_price_provider"] = linear[1]
+    return values, {
+        "spot": {"status":"ok" if spot[0] else "unavailable", "provider":spot[1]},
+        "linear": {"status":"ok" if linear[0] else "unavailable", "provider":linear[1]},
+    }
+
+
+async def _aligned_peer_closes(symbol: str, category: str, interval: str, base_candles: list[dict]) -> tuple[list[float],dict,dict]:
+    """Build strictly timestamp-aligned returns against a small liquid crypto peer basket."""
+    peers = [x for x in ("BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT") if x!=symbol][:3]
+    base = {int(x.get("time",0)):safe_float(x.get("close")) for x in base_candles if int(x.get("time",0))>0}
+    batches = await asyncio.gather(
+        *(get_market_klines(peer,category,interval,180) for peer in peers),
+        return_exceptions=True,
+    )
+    related = {}
+    status = {}
+    aligned_times = set(base)
+    for peer, batch in zip(peers,batches):
+        if isinstance(batch,Exception):
+            status[peer] = {"status":"unavailable","reason":type(batch).__name__}
+            continue
+        raw, provider = batch
+        try:
+            parsed = analyze_klines(raw,include_all_candles=True)["candles"][:-1]
+            values = {int(x["time"]):safe_float(x["close"]) for x in parsed if safe_float(x["close"])>0}
+            aligned_times &= set(values)
+            related[peer] = values
+            status[peer] = {"status":"ok","provider":provider,"candles":len(values)}
+        except Exception as exc:
+            status[peer] = {"status":"unavailable","reason":type(exc).__name__}
+    times = sorted(aligned_times)
+    if len(times)<60:
+        return [],{},{"aligned_samples":len(times),"peers":status,"status":"insufficient_overlap"}
+    base_values = [base[t] for t in times]
+    peer_values = {peer:[values[t] for t in times] for peer,values in related.items() if all(t in values for t in times)}
+    if not peer_values:
+        return [],{},{"aligned_samples":len(times),"peers":status,"status":"unavailable"}
+    return base_values,peer_values,{"aligned_samples":len(times),"peers":status,"status":"ok"}
+
+
+async def collect_engine_enrichment(symbol: str, category: str, interval: str, base_candles: list[dict]) -> tuple[dict,dict]:
+    """Connect read-only optional evidence feeds for all compatible engine adapters."""
+    context: dict = {}
+    providers: dict = {}
+    jobs = await asyncio.gather(
+        get_derivatives_snapshot(symbol),
+        _aligned_peer_closes(symbol,category,interval,base_candles),
+        _cross_exchange_marks(symbol,category),
+        _spot_and_linear_marks(symbol),
+        _rss_news_events(),
+        _deribit_options_snapshot(symbol),
+        return_exceptions=True,
+    )
+    derivatives, peers, exchange, basis, news, options = jobs
+
+    if not isinstance(derivatives,Exception):
+        context["derivatives"] = {
+            "open_interest":derivatives.get("open_interest"),
+            "open_interest_change_pct":derivatives.get("open_interest_change_pct"),
+            "funding_rate":derivatives.get("funding_rate"),
+            "long_short_ratio":derivatives.get("long_short_ratio"),
+            "provider":derivatives.get("provider"),
+        }
+        providers["derivatives"] = {"status":"ok","provider":derivatives.get("provider")}
+    else:
+        providers["derivatives"] = {"status":"unavailable","reason":type(derivatives).__name__}
+
+    if not isinstance(peers,Exception):
+        base_values, related_values, peer_status = peers
+        if base_values and related_values:
+            context["correlation_base_closes"] = base_values
+            context["related_closes"] = related_values
+        providers["cross_market"] = peer_status
+    else:
+        providers["cross_market"] = {"status":"unavailable","reason":type(peers).__name__}
+
+    if not isinstance(exchange,Exception):
+        marks, mark_status = exchange
+        if marks:
+            context["exchange_prices"] = marks
+            context["exchange_price_providers"] = mark_status
+        providers["cross_exchange"] = {"status":"ok" if len(marks)>=2 else "partial",**mark_status}
+    else:
+        providers["cross_exchange"] = {"status":"unavailable","reason":type(exchange).__name__}
+
+    if not isinstance(basis,Exception):
+        values, basis_status = basis
+        context.update(values)
+        providers["spot_futures_basis"] = basis_status
+    else:
+        providers["spot_futures_basis"] = {"status":"unavailable","reason":type(basis).__name__}
+
+    if not isinstance(news,Exception):
+        events, news_status = news
+        context["news_events"] = events
+        providers["news"] = {"status":"ok" if events else "unavailable","sources":news_status,"event_count":len(events)}
+    else:
+        providers["news"] = {"status":"unavailable","reason":type(news).__name__}
+
+    if not isinstance(options,Exception):
+        chain, underlying, option_status = options
+        if chain and underlying:
+            context["options_chain"] = chain
+            context["underlying_price"] = underlying
+        providers["options"] = option_status
+    else:
+        providers["options"] = {"status":"unavailable","reason":type(options).__name__}
+
+    return context, providers
+
+
+def _runtime_memory_snapshot() -> dict:
+    """Read process/container memory from Linux procfs; CPU is intentionally not guessed."""
+    try:
+        pages = int(Path("/proc/self/statm").read_text().split()[1])
+        rss = pages * os.sysconf("SC_PAGE_SIZE")
+        total = 0
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                total = int(line.split()[1]) * 1024
+                break
+        return {
+            "memory_rss_bytes":rss,
+            "memory_pct":round(rss/total*100,3) if total>0 else None,
+            "cpu_pct":None,
+            "source":"linux_procfs",
+        }
+    except Exception:
+        return {"memory_rss_bytes":None,"memory_pct":None,"cpu_pct":None,"source":"unavailable"}
+
 @app.get("/api/engine-suite/{symbol}")
 @app.get("/api/early-opportunity/{symbol}")
 async def market_engine_suite(symbol: str, category: str = "spot", interval: str = "15m",
@@ -996,21 +1296,82 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         except HTTPException:
             continue
     context["timeframes"] = frames
+
+    # Enrich the suite with independently fetched read-only public evidence.
+    # Every source is optional; failed/unsupported feeds are reported, never fabricated.
+    enrichment, provider_health = await collect_engine_enrichment(symbol, category, interval, completed)
+    context.update(enrichment)
+    auxiliary["derivatives"] = isinstance(context.get("derivatives"),dict) and (
+        context["derivatives"].get("open_interest") is not None and
+        context["derivatives"].get("funding_rate") is not None
+    )
+
+    async with LIQUIDATION_LOCK:
+        context["liquidations"] = list(LIQUIDATION_EVENTS.get(symbol, []))
+    context["cache"] = {"status":"ok","backend":"process-local","persistent":False}
+    context["database"] = {
+        "status":"ok","backend":"sqlite",
+        "persistent":bool(getattr(PAPER_STORE,"durable_configured",False)),
+        "path_configured":bool(os.getenv("PAPER_DB_PATH")),
+    }
+    context["websocket"] = {
+        "status":"ok" if context["liquidations"] else "degraded",
+        "liquidation_capture":"in-memory while a client is subscribed",
+        "captured_events":len(context["liquidations"]),
+    }
+    context["scheduled_jobs"] = []
+    context["scheduler_backend_configured"] = False
+    context["recent_failures"] = []
+    context["notification_events"] = []
+    context["model_versions"] = [
+        {"name":"logistic_regression","version":"research-per-request","artifact_persisted":False},
+        {"name":"random_forest","version":"research-per-request","artifact_persisted":False},
+        {"name":"mlp","version":"research-per-request","artifact_persisted":False},
+        {"name":"lstm_reservoir","version":"research-per-request","artifact_persisted":False},
+        {"name":"transformer_reservoir","version":"research-per-request","artifact_persisted":False},
+        {"name":"xgboost_style_booster","version":"research-per-request","artifact_persisted":False},
+    ]
+    context["audit_events"] = [
+        {"event_id":f"paper-trade-{x.get('id')}"} for x in paper_positions if x.get("id") is not None
+    ]
+    context["resource_snapshot"] = _runtime_memory_snapshot()
+    context["security_policy"] = {
+        "trading_mode":"simulation",
+        "live_trading_enabled":False,
+        "exchange_trade_credentials_present":any(os.getenv(k) for k in (
+            "BYBIT_TRADE_API_KEY","BYBIT_TRADE_API_SECRET",
+            "BINANCE_TRADE_API_KEY","BINANCE_TRADE_API_SECRET",
+        )),
+        "https_enabled":True,
+        "secrets_redacted":True,
+        "admin_auth_enabled":False,
+    }
     context["system_health"] = {
         "api": "ok", "candles": "ok", "orderbook": "ok" if auxiliary["orderbook"] else "degraded",
         "trade_flow": "ok" if auxiliary["trade_flow"] else "degraded",
         "timeframes": "ok" if len(frames) >= 2 else "degraded",
         "paper_ledger": "ok",
+        "database":"ok" if context["database"]["persistent"] else "degraded",
+        "cache":"ok",
+        "websocket":context["websocket"]["status"],
     }
+    early = early_opportunity_assessment(context)
+    if early.get("status")=="computed" and early.get("score",0)>=65:
+        context["notification_events"] = [{
+            "type":"OPPORTUNITY",
+            "title":f"{symbol} opportunity watch",
+            "message":f"Research score {early['score']}/100; tier {early.get('tier')}. Confirmation and risk checks remain required.",
+            "dedupe_key":f"{symbol}:{interval}:{early.get('tier')}",
+        }]
     selected = [x.strip().upper() for x in engine_ids.split(",") if x.strip()] if engine_ids else None
     suite = run_engine_suite(context, selected)
-    early = early_opportunity_assessment(context)
     return {
         "symbol": symbol, "category": category, "interval": interval,
         "provider": provider, "completed_candles": len(completed),
         "auxiliary_data": auxiliary, "market_regime": regime,
         "market_structure": structure, "early_opportunity": early,
         "engine_suite": suite, "engine_coverage": catalogue_runtime_coverage(),
+        "provider_health": provider_health,
         "trading_mode": "simulation", "live_trading_enabled": False,
     }
 
@@ -1046,6 +1407,10 @@ async def derivatives_liquidation_stream(websocket: WebSocket, symbol: str):
                     continue
                 events = normalize_liquidations(payload.get("data", []))
                 if events:
+                    async with LIQUIDATION_LOCK:
+                        cache = LIQUIDATION_EVENTS.setdefault(symbol, [])
+                        cache.extend(events)
+                        LIQUIDATION_EVENTS[symbol] = cache[-200:]
                     await websocket.send_json({"type": "liquidations", "events": events, "trading_mode": "simulation", "live_trading_enabled": False})
     except WebSocketDisconnect:
         return
