@@ -26,7 +26,7 @@ from .engine_catalog import engine_catalog
 from .engine_suite import run_engine_suite, early_opportunity_assessment, catalogue_runtime_coverage
 from .engine_sources import engine_source_registry
 from .command_engine import COMMANDS, matches_command, evaluate_entry
-from .derivatives_engine import summarize_derivatives, normalize_liquidations
+from .derivatives_engine import summarize_derivatives, normalize_liquidations, normalize_binance_liquidation
 from .okx_derivatives import get_okx_derivatives_snapshot
 from .coinalyze_derivatives import get_coinalyze_derivatives_snapshot
 from .advanced_engines import market_regime, market_structure, opportunity_assessment, learning_monitoring
@@ -1930,56 +1930,81 @@ async def derivatives(symbol: str):
 
 @app.websocket("/ws/derivatives/{symbol}/liquidations")
 async def derivatives_liquidation_stream(websocket: WebSocket, symbol: str):
-    """Proxy Bybit's public all-liquidation stream for one USDT linear symbol."""
+    """Proxy public liquidation prints: Bybit first, Binance USD-M as keyless fallback."""
     symbol = symbol.upper()
     if not symbol.endswith("USDT") or not symbol.replace("USDT", "").isalnum():
         await websocket.close(code=1008, reason="Only USDT linear symbols are supported")
         return
     await websocket.accept()
-    try:
-        async with websockets.connect(BYBIT_LINEAR_WS, ping_interval=20, ping_timeout=20, open_timeout=8) as upstream:
-            await upstream.send(json.dumps({"op": "subscribe", "args": [f"allLiquidation.{symbol}"]}))
-            await websocket.send_json({"type": "status", "status": "connected", "provider": "Bybit", "feed": "allLiquidation", "symbol": symbol, "trading_mode": "simulation", "live_trading_enabled": False})
-            async for raw in upstream:
-                try:
-                    payload = json.loads(raw)
-                except (TypeError, ValueError):
-                    continue
-                if payload.get("topic") != f"allLiquidation.{symbol}":
-                    continue
-                events = normalize_liquidations(payload.get("data", []))
-                if events:
-                    async with LIQUIDATION_LOCK:
-                        cache = LIQUIDATION_EVENTS.setdefault(symbol, [])
-                        cache.extend(events)
-                        LIQUIDATION_EVENTS[symbol] = cache[-200:]
-                    # Persist normalized public liquidation prints to the append-only
-                    # event log. Storage durability still depends on a mounted volume.
-                    for event in events:
-                        dedupe_key = ":".join(str(event.get(key, "")) for key in (
-                            "symbol", "timestamp_ms", "side", "size", "bankruptcy_price"
-                        ))
-                        try:
-                            await asyncio.to_thread(
-                                ENGINE_EVENT_STORE.publish,
-                                "liquidation",
-                                event,
-                                symbol=symbol,
-                                source="bybit_allLiquidation_websocket",
-                                dedupe_key=dedupe_key,
-                            )
-                        except Exception:
-                            logger.exception("Could not persist liquidation event for %s", symbol)
-                    await websocket.send_json({"type": "liquidations", "events": events, "trading_mode": "simulation", "live_trading_enabled": False})
-    except WebSocketDisconnect:
-        return
-    except Exception as exc:
-        logger.warning("Bybit liquidation stream ended for %s: %s", symbol, exc)
+
+    async def publish_events(events: list[dict], provider: str):
+        if not events:
+            return
+        async with LIQUIDATION_LOCK:
+            cache = LIQUIDATION_EVENTS.setdefault(symbol, [])
+            cache.extend(events)
+            LIQUIDATION_EVENTS[symbol] = cache[-200:]
+        for event in events:
+            dedupe_key = ":".join(str(event.get(key, "")) for key in (
+                "symbol", "timestamp_ms", "side", "size", "bankruptcy_price"
+            ))
+            try:
+                await asyncio.to_thread(
+                    ENGINE_EVENT_STORE.publish, "liquidation", event,
+                    symbol=symbol, source=f"{provider.lower()}_public_liquidation_websocket",
+                    dedupe_key=dedupe_key,
+                )
+            except Exception:
+                logger.exception("Could not persist liquidation event for %s", symbol)
+        await websocket.send_json({
+            "type": "liquidations", "events": events,
+            "trading_mode": "simulation", "live_trading_enabled": False,
+        })
+
+    providers = [
+        ("Bybit", BYBIT_LINEAR_WS, f"allLiquidation.{symbol}", "bybit"),
+        ("Binance", f"wss://fstream.binance.com/market/ws/{symbol.lower()}@forceOrder", None, "binance"),
+    ]
+    last_error = "upstream_unavailable"
+    for provider, url, topic, kind in providers:
         try:
-            await websocket.send_json({"type": "status", "status": "disconnected", "provider": "Bybit", "reason": "upstream_unavailable", "live_trading_enabled": False})
-            await websocket.close(code=1011)
-        except Exception:
-            pass
+            async with websockets.connect(url, ping_interval=20, ping_timeout=20, open_timeout=8) as upstream:
+                if topic:
+                    await upstream.send(json.dumps({"op": "subscribe", "args": [topic]}))
+                await websocket.send_json({
+                    "type": "status", "status": "connected", "provider": provider,
+                    "feed": "allLiquidation" if kind == "bybit" else "forceOrder",
+                    "symbol": symbol, "fallback": kind == "binance",
+                    "trading_mode": "simulation", "live_trading_enabled": False,
+                })
+                async for raw in upstream:
+                    try:
+                        payload = json.loads(raw)
+                    except (TypeError, ValueError):
+                        continue
+                    if kind == "bybit":
+                        if payload.get("topic") != topic:
+                            continue
+                        events = normalize_liquidations(payload.get("data", []))
+                    else:
+                        events = normalize_binance_liquidation(payload)
+                    await publish_events(events, provider)
+                last_error = "upstream_stream_ended"
+        except WebSocketDisconnect:
+            return
+        except Exception as exc:
+            last_error = type(exc).__name__
+            logger.warning("%s liquidation stream unavailable for %s: %s", provider, symbol, last_error)
+            continue
+    try:
+        await websocket.send_json({
+            "type": "status", "status": "disconnected",
+            "provider": "Bybit+Binance", "reason": last_error,
+            "live_trading_enabled": False,
+        })
+        await websocket.close(code=1011)
+    except Exception:
+        pass
 
 
 @app.get("/api/strategies")
