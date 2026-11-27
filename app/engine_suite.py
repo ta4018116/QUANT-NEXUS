@@ -1930,6 +1930,168 @@ def _xgboost_classifier(ctx):
                   "regularized logistic-loss gradient boosting with second-order gain and chronological holdout")
 
 
+
+
+def _sequence_training_data(ctx, sequence_length: int = 12):
+    dataset,err=_ml_dataset(ctx)
+    if err:return None,err
+    samples=[]
+    for end in range(sequence_length-1,len(dataset)):
+        sequence=[row[0] for row in dataset[end-sequence_length+1:end+1]]
+        samples.append((sequence,dataset[end][1]))
+    split=max(40,int(len(samples)*0.8))
+    train_end=max(30,split-3)
+    train_raw=samples[:train_end]
+    test_raw=samples[split:]
+    if len(train_raw)<30 or len(test_raw)<5:
+        return None,_blocked("insufficient purged sequence samples",["minimum_30_training_sequences","minimum_5_holdout_sequences"])
+    width=len(train_raw[0][0][0])
+    flattened=[vector for sequence,_ in train_raw for vector in sequence]
+    means=[mean(vector[j] for vector in flattened) for j in range(width)]
+    scales=[pstdev(vector[j] for vector in flattened) or 1.0 for j in range(width)]
+    normalize=lambda seq:[[ (v[j]-means[j])/scales[j] for j in range(width)] for v in seq]
+    train=[(normalize(seq),label) for seq,label in train_raw]
+    test=[(normalize(seq),label) for seq,label in test_raw]
+    rows=_candles(ctx)
+    if len(rows)<sequence_length+59:
+        return None,_blocked("insufficient latest sequence context",["latest_completed_candle_window"])
+    live=[]
+    for end in range(len(rows)-sequence_length,len(rows)):
+        features,feature_error=_live_market_features({"candles":rows[:end+1]})
+        if feature_error:return None,feature_error
+        live.append([(features[j]-means[j])/scales[j] for j in range(width)])
+    return {
+        "train":train,"test":test,"live":live,
+        "train_count":len(train),"holdout_count":len(test),
+        "sequence_length":sequence_length,"feature_count":width
+    },None
+
+
+def _fit_sequence_readout(train_embeddings,train_labels,test_embeddings,test_labels,live_embedding):
+    if not train_embeddings or not test_embeddings:
+        return _blocked("sequence encoder produced empty embeddings",["valid_sequence_embeddings"])
+    width=len(train_embeddings[0])
+    means=[mean(row[j] for row in train_embeddings) for j in range(width)]
+    scales=[pstdev(row[j] for row in train_embeddings) or 1.0 for j in range(width)]
+    train=[([(row[j]-means[j])/scales[j] for j in range(width)],label)
+           for row,label in zip(train_embeddings,train_labels)]
+    test=[([(row[j]-means[j])/scales[j] for j in range(width)],label)
+          for row,label in zip(test_embeddings,test_labels)]
+    live=[(live_embedding[j]-means[j])/scales[j] for j in range(width)]
+    weights=[0.0]*width;bias=0.0;learning_rate=0.045;l2=0.02
+    for _ in range(180):
+        gradients=[0.0]*width;bias_gradient=0.0
+        for features,label in train:
+            probability=_sigmoid(sum(w*x for w,x in zip(weights,features))+bias)
+            error=probability-label
+            for j,value in enumerate(features):gradients[j]+=error*value
+            bias_gradient+=error
+        n=len(train)
+        weights=[weights[j]-learning_rate*(gradients[j]/n+l2*weights[j]) for j in range(width)]
+        bias-=learning_rate*bias_gradient/n
+    holdout_probabilities=[_sigmoid(sum(w*x for w,x in zip(weights,features))+bias)
+                            for features,_ in test]
+    labels=[label for _,label in test]
+    accuracy=sum((p>=0.5)==bool(y) for p,y in zip(holdout_probabilities,labels))/len(labels)
+    brier=mean((p-y)**2 for p,y in zip(holdout_probabilities,labels))
+    live_probability=_sigmoid(sum(w*x for w,x in zip(weights,live))+bias)
+    return {
+        "research_score_up":round(live_probability,5),
+        "chronological_holdout_accuracy_pct":round(accuracy*100,2),
+        "holdout_brier_score":round(brier,5),
+    }
+
+
+def _lstm_encode(sequence, weights, biases, hidden_size: int = 8):
+    hidden=[0.0]*hidden_size
+    cell=[0.0]*hidden_size
+    for vector in sequence:
+        combined=hidden+vector
+        gates=[biases[j]+sum(combined[k]*weights[k][j] for k in range(len(combined)))
+               for j in range(hidden_size*4)]
+        input_gate=[_sigmoid(x) for x in gates[0:hidden_size]]
+        forget_gate=[_sigmoid(x) for x in gates[hidden_size:hidden_size*2]]
+        output_gate=[_sigmoid(x) for x in gates[hidden_size*2:hidden_size*3]]
+        candidate=[__import__("math").tanh(x) for x in gates[hidden_size*3:hidden_size*4]]
+        cell=[forget_gate[j]*cell[j]+input_gate[j]*candidate[j] for j in range(hidden_size)]
+        hidden=[output_gate[j]*__import__("math").tanh(cell[j]) for j in range(hidden_size)]
+    return hidden
+
+
+def _lstm_forecast(ctx):
+    data,err=_sequence_training_data(ctx)
+    if err:return err
+    input_size=data["feature_count"];hidden_size=8
+    rng=random.Random(27112026)
+    weights=[[rng.gauss(0,0.12) for _ in range(hidden_size*4)]
+             for _ in range(input_size+hidden_size)]
+    biases=[0.0]*(hidden_size*4)
+    for j in range(hidden_size,hidden_size*2):biases[j]=1.0
+    train_embeddings=[_lstm_encode(seq,weights,biases,hidden_size) for seq,_ in data["train"]]
+    test_embeddings=[_lstm_encode(seq,weights,biases,hidden_size) for seq,_ in data["test"]]
+    live_embedding=_lstm_encode(data["live"],weights,biases,hidden_size)
+    result=_fit_sequence_readout(train_embeddings,[y for _,y in data["train"]],
+                                 test_embeddings,[y for _,y in data["test"]],live_embedding)
+    if result.get("status")=="blocked_missing_input":return result
+    return _ready({"model":"lstm_reservoir_with_trained_logistic_readout",
+                   "hidden_size":hidden_size,"sequence_length":data["sequence_length"],
+                   "training_sequences":data["train_count"],"holdout_sequences":data["holdout_count"],
+                   **result,
+                   "warning":"LSTM gate weights are deterministic fixed reservoir features; only the output readout is trained on this request. This is a research baseline, not a fully backprop-trained persistent LSTM."},
+                  "single-layer LSTM feature extractor with deterministic recurrent gates and trained readout; chronological purged holdout")
+
+
+def _transformer_encode(sequence, query_weights, key_weights, value_weights, hidden_size: int = 8):
+    projected=[]
+    length=len(sequence)
+    for index,vector in enumerate(sequence):
+        positioned=[]
+        for j,value in enumerate(vector):
+            scale=10000.0**(2*(j//2)/max(1,len(vector)))
+            angle=(index+1)/scale
+            positional=__import__("math").sin(angle) if j%2==0 else __import__("math").cos(angle)
+            positioned.append(value+positional*0.05)
+        query=[sum(positioned[k]*query_weights[k][j] for k in range(len(positioned))) for j in range(hidden_size)]
+        key=[sum(positioned[k]*key_weights[k][j] for k in range(len(positioned))) for j in range(hidden_size)]
+        value=[sum(positioned[k]*value_weights[k][j] for k in range(len(positioned))) for j in range(hidden_size)]
+        projected.append((query,key,value))
+    last_query=projected[-1][0]
+    scores=[sum(last_query[j]*item[1][j] for j in range(hidden_size))/sqrt(hidden_size)
+            for item in projected]
+    peak=max(scores)
+    exps=[exp(max(-35.0,min(35.0,value-peak))) for value in scores]
+    total=sum(exps) or 1.0
+    attention=[value/total for value in exps]
+    context=[sum(attention[i]*projected[i][2][j] for i in range(length))
+             for j in range(hidden_size)]
+    last_value=projected[-1][2]
+    return [__import__("math").tanh(context[j]+last_value[j]) for j in range(hidden_size)]
+
+
+def _transformer_forecast(ctx):
+    data,err=_sequence_training_data(ctx)
+    if err:return err
+    input_size=data["feature_count"];hidden_size=8
+    rng=random.Random(27112027)
+    scale=1.0/sqrt(input_size)
+    query_weights=[[rng.gauss(0,scale*0.35) for _ in range(hidden_size)] for _ in range(input_size)]
+    key_weights=[[rng.gauss(0,scale*0.35) for _ in range(hidden_size)] for _ in range(input_size)]
+    value_weights=[[rng.gauss(0,scale*0.35) for _ in range(hidden_size)] for _ in range(input_size)]
+    encode=lambda seq:_transformer_encode(seq,query_weights,key_weights,value_weights,hidden_size)
+    train_embeddings=[encode(seq) for seq,_ in data["train"]]
+    test_embeddings=[encode(seq) for seq,_ in data["test"]]
+    live_embedding=encode(data["live"])
+    result=_fit_sequence_readout(train_embeddings,[y for _,y in data["train"]],
+                                 test_embeddings,[y for _,y in data["test"]],live_embedding)
+    if result.get("status")=="blocked_missing_input":return result
+    return _ready({"model":"single_head_self_attention_with_trained_logistic_readout",
+                   "hidden_size":hidden_size,"sequence_length":data["sequence_length"],
+                   "training_sequences":data["train_count"],"holdout_sequences":data["holdout_count"],
+                   **result,
+                   "warning":"Query/key/value projections are deterministic fixed research features; only the output readout is trained. This is not a fully end-to-end trained Transformer or a persistent model."},
+                  "single-head scaled dot-product self-attention feature extractor with positional encoding and trained readout; chronological purged holdout")
+
+
 _HANDLER_IDS = {
     "E005":_base, "E006":_base, "E008":_external,
     "E009":_trend, "E011":_support_resistance, "E012":_accumulation,
@@ -2018,6 +2180,8 @@ def _news_events(ctx):
 
 _HANDLER_IDS.update({
     "E007":_news_events,
+    "E047":_lstm_forecast,
+    "E048":_transformer_forecast,
     "E046":_deep_learning_mlp,
     "E049":_rl_agent,
     "E050":_xgboost_classifier,
