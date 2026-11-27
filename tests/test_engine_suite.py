@@ -165,3 +165,70 @@ def test_anomaly_detection_and_clustering_return_bounded_market_evidence():
     assert set(anomaly["value"]["z_scores"]) == {"return_pct", "volume", "range_pct"}
     assert clusters["status"] == "computed"
     assert sum(clusters["value"]["cluster_sizes"]) == 100
+
+
+def test_smart_money_regime_and_exhaustion_adapters_are_explainable():
+    context = {"candles": make_candles(120)}
+    from app.engine_suite import _smc, _regime_detector, _trend_exhaustion
+    assert _smc(context)["status"] == "computed"
+    assert _regime_detector(context)["status"] == "computed"
+    assert _trend_exhaustion(context)["status"] == "computed"
+
+
+def test_risk_controls_fail_closed_and_bound_exposure():
+    from app.engine_suite import _leverage_risk, _risk_approval, _dynamic_risk
+    leverage = _leverage_risk({"plan": {
+        "side": "LONG", "entry": 100, "stop": 95, "leverage": 3,
+        "maintenance_margin_rate": 0.005
+    }})
+    assert leverage["status"] == "computed"
+    assert leverage["value"]["estimated_liquidation_price"] < 100
+    assert _risk_approval({"risk_checks": {"stop_valid": True, "daily_limit": False}})["value"]["approved"] is False
+    dynamic = _dynamic_risk({
+        "account": {"equity": 10000}, "plan": {"entry": 100, "stop": 95},
+        "risk_pct": 1.0, "volatility_pct": 4.0, "drawdown_pct": 0
+    })
+    assert dynamic["status"] == "computed"
+    assert dynamic["value"]["effective_risk_pct"] == 0.5
+
+
+def test_slippage_fee_and_monte_carlo_adapters_use_supplied_inputs():
+    from app.engine_suite import _slippage_estimate, _fee_calc, _monte_carlo
+    slip = _slippage_estimate({
+        "order_side": "BUY", "quantity": 3,
+        "orderbook": {"asks": [[100, 2], [101, 3]]}
+    })
+    assert slip["status"] == "computed"
+    assert slip["value"]["filled_quantity"] == 3
+    fees = _fee_calc({"notional": 1000, "fee_rate": 0.001, "fee_sides": 2})
+    assert fees["value"]["estimated_fee"] == 2
+    mc = _monte_carlo({"strategy_returns": [0.01, -0.005, 0.02, -0.01] * 8})
+    assert mc["status"] == "computed"
+    assert mc["value"]["simulations"] == 300
+
+
+def test_walk_forward_and_max_drawdown_use_chronological_trade_data():
+    from app.engine_suite import _walk_forward, _max_drawdown
+    wf = _walk_forward({"strategy_returns": [0.01, -0.005] * 15})
+    assert wf["status"] == "computed"
+    dd = _max_drawdown({
+        "starting_balance": 10000,
+        "closed_trades": [{"pnl": 100}, {"pnl": -250}, {"pnl": 50}]
+    })
+    assert dd["status"] == "computed"
+    assert dd["value"]["max_drawdown_pct"] > 0
+
+
+def test_position_monitor_and_trade_attribution_are_read_only():
+    from app.engine_suite import _position_monitor, _attribution
+    monitored = _position_monitor({
+        "positions": [{"status":"OPEN","symbol":"BTCUSDT","side":"LONG","entry":100,
+                       "quantity":2,"stop_loss":95,"take_profit":110}],
+        "current_prices": {"BTCUSDT": 111}
+    })
+    assert monitored["status"] == "computed"
+    assert monitored["value"]["positions"][0]["target_touched"] is True
+    attr = _attribution({"closed_trades":[
+        {"strategy":"breakout","pnl":10},{"strategy":"breakout","pnl":-2}
+    ]})
+    assert attr["value"]["net_pnl_by_strategy"]["breakout"] == 8
