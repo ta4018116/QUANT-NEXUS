@@ -190,18 +190,20 @@ async def get_derivatives_snapshot(symbol: str) -> dict:
         summary = summarize_derivatives(
             oi_result.get("list", []), funding_result.get("list", [])
         )
-        ratio_rows = ratio_result.get("list", []) if isinstance(ratio_result, dict) else []
-        ratio = None
-        if ratio_rows:
-            buy_ratio = safe_float(ratio_rows[0].get("buyRatio"))
-            sell_ratio = safe_float(ratio_rows[0].get("sellRatio"))
-            ratio = buy_ratio / sell_ratio if sell_ratio > 0 else None
-        return {
-            **summary, "long_short_ratio": ratio, "provider": "Bybit",
-            "data_quality": "provider_snapshot",
-        }
-
-    logger.warning("Bybit derivatives unavailable for %s; falling back to Binance", symbol)
+        if summary.get("open_interest") is not None and summary.get("funding_rate") is not None:
+            ratio_rows = ratio_result.get("list", []) if isinstance(ratio_result, dict) else []
+            ratio = None
+            if ratio_rows:
+                buy_ratio = safe_float(ratio_rows[0].get("buyRatio"))
+                sell_ratio = safe_float(ratio_rows[0].get("sellRatio"))
+                ratio = buy_ratio / sell_ratio if sell_ratio > 0 else None
+            return {
+                **summary, "long_short_ratio": ratio, "provider": "Bybit",
+                "data_quality": "provider_snapshot",
+            }
+        logger.warning("Bybit derivatives returned incomplete data for %s; falling back to Binance", symbol)
+    else:
+        logger.warning("Bybit derivatives unavailable for %s; falling back to Binance", symbol)
     binance_calls = await asyncio.gather(
         _binance_get("linear", "/fapi/v1/openInterest", {"symbol": symbol}),
         _binance_get("linear", "/futures/data/openInterestHist", {
@@ -934,6 +936,69 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
     async with PAPER_LOCK:
         paper_equity = PAPER_BALANCE
         paper_positions = [dict(x) for x in PAPER_TRADES]
+    # Use the same completed-candle entry gate as the monitoring room. The
+    # analysis object still contains the provider's last (possibly forming) bar
+    # here; evaluate_entry deliberately discards it before confirmation.
+    entry_confirmation = evaluate_entry(analysis)
+    analysis["candles"] = completed
+
+    closed_trades = [x for x in paper_positions if x.get("status") == "CLOSED"]
+    today_utc = datetime.now(timezone.utc).date().isoformat()
+    daily_pnl = sum(
+        safe_float(x.get("pnl")) for x in closed_trades
+        if str(x.get("closedAt", "")).startswith(today_utc)
+    )
+    daily_loss_limit_pct = min(10.0, max(
+        0.1, safe_float(os.getenv("PAPER_DAILY_LOSS_LIMIT_PCT"), 3.0)
+    ))
+    volatility_ranges = []
+    previous_close = completed[0]["close"]
+    for candle in completed[1:]:
+        volatility_ranges.append(max(
+            candle["high"] - candle["low"],
+            abs(candle["high"] - previous_close),
+            abs(candle["low"] - previous_close),
+        ))
+        previous_close = candle["close"]
+    atr14 = sum(volatility_ranges[-14:]) / min(14, len(volatility_ranges)) if volatility_ranges else 0.0
+    last_completed_price = completed[-1]["close"]
+    volatility_pct = atr14 / last_completed_price * 100 if last_completed_price > 0 else 0.0
+
+    direction = str(analysis.get("direction", "NEUTRAL")).upper()
+    entry = safe_float(analysis.get("entry"))
+    stop = safe_float(analysis.get("stopLoss"))
+    plan = {}
+    if (
+        direction in ("LONG", "SHORT") and entry > 0 and stop > 0 and entry != stop
+        and not (category == "spot" and direction == "SHORT")
+    ):
+        plan = {"side": direction, "entry": entry, "stop": stop}
+    daily_loss_breached = (
+        paper_equity > 0 and max(0.0, -daily_pnl) / paper_equity * 100 >= daily_loss_limit_pct
+    )
+    risk_checks = {
+        "paper_equity_positive": paper_equity > 0,
+        "fresh_completed_candle_confirmation": entry_confirmation.get("confirmed") is True,
+        "valid_entry_and_stop_plan": bool(plan),
+        "daily_loss_limit_not_breached": not daily_loss_breached,
+        "visible_orderbook_available": False,
+        "recent_trade_flow_available": False,
+        "spot_direction_supported": not (category == "spot" and direction == "SHORT"),
+        "live_trading_disabled": LIVE_TRADING_ENABLED is False,
+    }
+    risk_approval = {
+        "approved": all(risk_checks.values()),
+        "failed_checks": [key for key, passed in risk_checks.items() if not passed],
+    }
+    strategy_returns = []
+    for trade in closed_trades:
+        pnl = safe_float(trade.get("pnl"), float("nan"))
+        denominator = safe_float(trade.get("margin")) or (
+            safe_float(trade.get("entry")) * safe_float(trade.get("quantity"))
+        )
+        if math.isfinite(pnl) and denominator > 0:
+            strategy_returns.append(pnl / denominator)
+
     context = {
         "symbol": symbol, "category": category, "interval": interval,
         "candles": completed, "closes": closes,
@@ -941,19 +1006,32 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "account": {"equity": paper_equity},
         "positions": paper_positions,
-        "closed_trades": [x for x in paper_positions if x.get("status") == "CLOSED"],
+        "closed_trades": closed_trades,
+        "current_prices": {symbol: last_completed_price},
+        "plan": plan,
+        "risk_pct": 1.0,
+        "volatility_pct": volatility_pct,
+        "daily_pnl": daily_pnl,
+        "daily_loss_limit_pct": daily_loss_limit_pct,
+        "strategy_returns": strategy_returns,
+        "entry_confirmation": entry_confirmation,
+        "risk_checks": risk_checks,
+        "risk_approval": risk_approval,
+        "reward_risk_targets": [1.5, 2.0, 3.0],
     }
     auxiliary = {"orderbook": False, "trade_flow": False, "derivatives": False}
     if not isinstance(book_result, Exception):
         bids, asks, book_provider = book_result
         context["orderbook"] = {"bids": bids, "asks": asks}
         auxiliary["orderbook"] = True
+        risk_checks["visible_orderbook_available"] = True
     else:
         logger.warning("Engine suite orderbook unavailable for %s: %s", symbol, type(book_result).__name__)
     if not isinstance(trade_result, Exception):
         trades, trade_provider = trade_result
         context["trades"] = trades
         auxiliary["trade_flow"] = True
+        risk_checks["recent_trade_flow_available"] = True
     else:
         logger.warning("Engine suite trade flow unavailable for %s: %s", symbol, type(trade_result).__name__)
     if category == "linear":
@@ -996,6 +1074,10 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         except HTTPException:
             continue
     context["timeframes"] = frames
+    context["risk_approval"] = {
+        "approved": all(risk_checks.values()),
+        "failed_checks": [key for key, passed in risk_checks.items() if not passed],
+    }
     context["system_health"] = {
         "api": "ok", "candles": "ok", "orderbook": "ok" if auxiliary["orderbook"] else "degraded",
         "trade_flow": "ok" if auxiliary["trade_flow"] else "degraded",

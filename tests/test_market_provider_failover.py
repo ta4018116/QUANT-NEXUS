@@ -109,3 +109,31 @@ def test_derivatives_snapshot_rejects_non_usdt_symbols():
         assert exc.status_code == 400
     else:
         raise AssertionError("non-USDT derivatives symbol should be rejected")
+
+
+def test_derivatives_snapshot_falls_back_when_bybit_returns_empty_data(monkeypatch):
+    async def fake_bybit(path, params):
+        return {"list": []}
+
+    async def fake_binance(category, path, params):
+        if path == "/fapi/v1/openInterest":
+            return {"symbol": "BTCUSDT", "openInterest": "900"}
+        if path == "/futures/data/openInterestHist":
+            return [
+                {"sumOpenInterest": "800", "timestamp": 1},
+                {"sumOpenInterest": "850", "timestamp": 2},
+            ]
+        if path == "/fapi/v1/fundingRate":
+            return [{"fundingRate": "-0.0001", "fundingTime": 2}]
+        if path == "/futures/data/globalLongShortAccountRatio":
+            return [{"longShortRatio": "0.9", "timestamp": 2}]
+        raise AssertionError(path)
+
+    monkeypatch.setattr(main, "bybit_get", fake_bybit)
+    monkeypatch.setattr(main, "_binance_get", fake_binance)
+
+    result = asyncio.run(main.get_derivatives_snapshot("BTCUSDT"))
+    assert result["provider"] == "Binance USD-M Futures"
+    assert result["open_interest"] == 900
+    assert result["open_interest_change_pct"] == 6.25
+    assert result["long_short_ratio"] == 0.9
