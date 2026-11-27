@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from app import main
 
 
-def _fail_provider(*args, **kwargs):
+async def _fail_provider(*args, **kwargs):
     raise HTTPException(status_code=502, detail="provider unavailable")
 
 
