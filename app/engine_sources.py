@@ -381,6 +381,16 @@ def engine_source_registry() -> dict:
         if profile is None:
             missing.append(engine["id"])
             continue
+        profile = {key: list(value) if isinstance(value, list) else value for key, value in profile.items()}
+        if engine["group"] in {
+            "Market Intelligence", "Technical Analysis", "Multi-Timeframe",
+            "AI Intelligence", "Opportunity Scoring", "Risk Management",
+            "Backtesting & Learning", "Trade Management", "Multi-Agent Intelligence",
+        }:
+            profile["providers"].append("Twelve Data (non-crypto market data; API key required)")
+            profile["endpoints"].append("Twelve Data /time_series (stocks, forex, indices and commodities)")
+            profile["inputs"].append("market-specific symbol mapping and Twelve Data OHLCV/quote freshness")
+            profile["credentials"] = str(profile["credentials"]) + "; TWELVE_DATA_API_KEY_required_for_noncrypto"
         rows.append({
             "engine_id": engine["id"],
             "name": engine["name"],
