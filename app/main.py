@@ -26,6 +26,7 @@ from .engine_registry import engine_registry
 from .engine_catalog import engine_catalog
 from .engine_suite import run_engine_suite, early_opportunity_assessment, catalogue_runtime_coverage
 from .engine_sources import engine_source_registry
+from .engine_readiness import build_engine_readiness
 from .command_engine import COMMANDS, matches_command, evaluate_entry
 from .derivatives_engine import summarize_derivatives, normalize_liquidations, normalize_binance_liquidation
 from .okx_derivatives import get_okx_derivatives_snapshot
@@ -1701,7 +1702,9 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         "provider": provider, "completed_candles": len(completed),
         "auxiliary_data": auxiliary, "market_regime": regime,
         "market_structure": structure, "early_opportunity": early,
-        "engine_suite": suite, "engine_coverage": catalogue_runtime_coverage(),
+        "engine_suite": suite, "engine_readiness": build_engine_readiness(
+            suite, market_provider=provider, provider_health=provider_health
+        ), "engine_coverage": catalogue_runtime_coverage(),
         "provider_health": provider_health,
         "notification_delivery": notification_delivery,
         "background_runtime": OPS_RUNTIME.status(),
