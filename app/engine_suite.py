@@ -1853,6 +1853,83 @@ def _rl_agent(ctx):
                   "chronological Q-learning training on earlier simulated OHLCV transitions and frozen-policy holdout")
 
 
+
+def _fit_second_order_tree(features,gradients,hessians,indices,depth=2,l2=1.0,
+                           min_child_weight=2.0,gamma=0.05):
+    total_g=sum(gradients[i] for i in indices)
+    total_h=sum(hessians[i] for i in indices)
+    leaf=-total_g/(total_h+l2) if total_h+l2 else 0.0
+    if depth<=0 or len(indices)<12 or total_h<2*min_child_weight:
+        return {"leaf":leaf}
+    width=len(features[0]);best=None
+    for feature in range(width):
+        ordered=sorted(features[i][feature] for i in indices)
+        candidates=[]
+        for q in (0.15,0.3,0.45,0.55,0.7,0.85):
+            threshold=ordered[min(len(ordered)-1,int(q*(len(ordered)-1)))]
+            if not candidates or threshold!=candidates[-1]:candidates.append(threshold)
+        for threshold in candidates:
+            left=[i for i in indices if features[i][feature]<=threshold]
+            right=[i for i in indices if features[i][feature]>threshold]
+            if len(left)<4 or len(right)<4:continue
+            gl=sum(gradients[i] for i in left);hl=sum(hessians[i] for i in left)
+            gr=total_g-gl;hr=total_h-hl
+            if hl<min_child_weight or hr<min_child_weight:continue
+            gain=0.5*(gl*gl/(hl+l2)+gr*gr/(hr+l2)-total_g*total_g/(total_h+l2))-gamma
+            if best is None or gain>best[0]:best=(gain,feature,threshold,left,right)
+    if best is None or best[0]<=0:return {"leaf":leaf}
+    _,feature,threshold,left,right=best
+    return {"feature":feature,"threshold":threshold,
+            "left":_fit_second_order_tree(features,gradients,hessians,left,depth-1,l2,min_child_weight,gamma),
+            "right":_fit_second_order_tree(features,gradients,hessians,right,depth-1,l2,min_child_weight,gamma)}
+
+
+def _boost_tree_predict(tree,features):
+    node=tree
+    while "leaf" not in node:
+        node=node["left"] if features[node["feature"]]<=node["threshold"] else node["right"]
+    return node["leaf"]
+
+
+def _xgboost_classifier(ctx):
+    dataset,err=_ml_dataset(ctx)
+    if err:return err
+    split=max(40,int(len(dataset)*0.8))
+    train_raw,test_raw=dataset[:split],dataset[split:]
+    train,test,means,scales=_standardize(train_raw,test_raw)
+    features=[x[0] for x in train];labels=[x[1] for x in train]
+    positive=sum(labels)/len(labels)
+    base=max(-3.0,min(3.0,__import__("math").log(max(1e-5,positive)/max(1e-5,1-positive))))
+    train_logits=[base]*len(train);trees=[];learning_rate=0.08;rounds=28
+    for _ in range(rounds):
+        probabilities=[_sigmoid(x) for x in train_logits]
+        gradients=[p-y for p,y in zip(probabilities,labels)]
+        hessians=[max(1e-5,p*(1-p)) for p in probabilities]
+        tree=_fit_second_order_tree(features,gradients,hessians,list(range(len(train))),depth=2)
+        trees.append(tree)
+        for i,row in enumerate(features):
+            train_logits[i]+=learning_rate*_boost_tree_predict(tree,row)
+    def predict_probability(row):
+        logit=base+sum(learning_rate*_boost_tree_predict(tree,row) for tree in trees)
+        return _sigmoid(logit)
+    probabilities=[predict_probability(row[0]) for row in test]
+    holdout_labels=[row[1] for row in test]
+    accuracy=sum((p>=0.5)==bool(y) for p,y in zip(probabilities,holdout_labels))/len(holdout_labels) if holdout_labels else None
+    brier=mean((p-y)**2 for p,y in zip(probabilities,holdout_labels)) if holdout_labels else None
+    live,live_error=_live_market_features(ctx)
+    if live_error:return live_error
+    normalized=[(live[j]-means[j])/scales[j] for j in range(len(live))]
+    research_score=predict_probability(normalized)
+    return _ready({"model":"xgboost_style_second_order_gradient_boosted_trees",
+                   "boosting_rounds":rounds,"max_tree_depth":2,"training_samples":len(train),
+                   "holdout_samples":len(test),
+                   "chronological_holdout_accuracy_pct":round(accuracy*100,2) if accuracy is not None else None,
+                   "holdout_brier_score":round(brier,5) if brier is not None else None,
+                   "research_score_up":round(research_score,5),
+                   "warning":"Pure-Python XGBoost-style second-order tree booster, not the upstream XGBoost library; research-only and uncalibrated."},
+                  "regularized logistic-loss gradient boosting with second-order gain and chronological holdout")
+
+
 _HANDLER_IDS = {
     "E005":_base, "E006":_base, "E008":_external,
     "E009":_trend, "E011":_support_resistance, "E012":_accumulation,
@@ -1943,6 +2020,7 @@ _HANDLER_IDS.update({
     "E007":_news_events,
     "E046":_deep_learning_mlp,
     "E049":_rl_agent,
+    "E050":_xgboost_classifier,
     "E008":_cross_market_correlation,
     "E014":_order_block,
     "E046":_external,
