@@ -126,3 +126,7 @@ scores are heuristic and are not calibrated win probabilities.
 - A small two-hidden-layer MLP and tabular Q-learning simulator are included as research adapters with chronological holdouts. Neither is a persisted production model, and neither can authorize an order.
 - Options analytics calculate Black-Scholes Greeks and implied volatility only when a valid options chain and underlying mark are supplied. Net dealer gamma is omitted unless dealer-side positioning is explicitly supplied.
 - The remaining intentionally blocked model engines are LSTM, Transformer and XGBoost until model architecture/dependencies, training data, validation artifacts and runtime resources are provided.
+
+- The statistical ML adapters score the latest completed candle for live inference; chronological training and holdout partitions are separate, and all model outputs remain research-only.
+- A pure-Python second-order gradient-boosted tree engine is included as an XGBoost-style research implementation. It is not the upstream XGBoost package.
+- The only catalog entries still marked planned are LSTM and Transformer. Their trained weights/runtime artifacts are not present, so the system returns an explicit missing-model result instead of inventing outputs.
