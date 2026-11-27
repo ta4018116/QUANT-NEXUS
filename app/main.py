@@ -135,17 +135,129 @@ def okx_instrument(symbol: str, category: str) -> str:
         return base[:-4] + "-USDT"
     raise HTTPException(status_code=400, detail="Only USDT spot pairs are supported")
 
-async def get_market_tickers(category: str):
+
+async def _binance_get(category: str, path: str, params: dict):
+    """Read public Binance market data; this client never signs or submits orders."""
+    if category == "linear":
+        bases = ("https://fapi.binance.com",)
+    elif category == "spot":
+        # Binance documents this market-data-only host as a no-API-key endpoint.
+        bases = ("https://data-api.binance.vision", "https://api.binance.com")
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported Binance market category")
+    last_error = None
+    for base in bases:
+        try:
+            response = await shared_http_client().get(base + path, params=params)
+            response.raise_for_status()
+            payload = response.json()
+            if isinstance(payload, dict) and isinstance(payload.get("code"), int) and payload["code"] < 0:
+                raise HTTPException(status_code=502, detail="Binance returned a market-data error")
+            return payload
+        except httpx.TimeoutException as exc:
+            last_error = HTTPException(status_code=504, detail="Binance market-data request timed out")
+        except httpx.HTTPStatusError as exc:
+            last_error = HTTPException(status_code=502, detail=f"Binance returned HTTP {exc.response.status_code}")
+        except (httpx.RequestError, ValueError) as exc:
+            last_error = HTTPException(status_code=502, detail="Binance connection or response error")
+        except HTTPException as exc:
+            last_error = exc
+    if last_error:
+        raise last_error
+    raise HTTPException(status_code=502, detail="Binance market data unavailable")
+
+
+async def get_derivatives_snapshot(symbol: str) -> dict:
+    """Return verified public OI/funding/long-short data with Bybit then Binance failover."""
+    symbol = symbol.upper()
+    if not symbol.endswith("USDT") or not symbol.replace("USDT", "").isalnum():
+        raise HTTPException(status_code=400, detail="Only USDT linear symbols are supported")
+
+    bybit_calls = await asyncio.gather(
+        bybit_get("/v5/market/open-interest", {
+            "category": "linear", "symbol": symbol, "intervalTime": "5min", "limit": 50
+        }),
+        bybit_get("/v5/market/funding/history", {
+            "category": "linear", "symbol": symbol, "limit": 20
+        }),
+        bybit_get("/v5/market/account-ratio", {
+            "category": "linear", "symbol": symbol, "period": "5min", "limit": 1
+        }),
+        return_exceptions=True,
+    )
+    oi_result, funding_result, ratio_result = bybit_calls
+    if not isinstance(oi_result, Exception) and not isinstance(funding_result, Exception):
+        summary = summarize_derivatives(
+            oi_result.get("list", []), funding_result.get("list", [])
+        )
+        ratio_rows = ratio_result.get("list", []) if isinstance(ratio_result, dict) else []
+        ratio = None
+        if ratio_rows:
+            buy_ratio = safe_float(ratio_rows[0].get("buyRatio"))
+            sell_ratio = safe_float(ratio_rows[0].get("sellRatio"))
+            ratio = buy_ratio / sell_ratio if sell_ratio > 0 else None
+        return {
+            **summary, "long_short_ratio": ratio, "provider": "Bybit",
+            "data_quality": "provider_snapshot",
+        }
+
+    logger.warning("Bybit derivatives unavailable for %s; falling back to Binance", symbol)
+    binance_calls = await asyncio.gather(
+        _binance_get("linear", "/fapi/v1/openInterest", {"symbol": symbol}),
+        _binance_get("linear", "/futures/data/openInterestHist", {
+            "symbol": symbol, "period": "5m", "limit": 30
+        }),
+        _binance_get("linear", "/fapi/v1/fundingRate", {"symbol": symbol, "limit": 10}),
+        _binance_get("linear", "/futures/data/globalLongShortAccountRatio", {
+            "symbol": symbol, "period": "5m", "limit": 1
+        }),
+        return_exceptions=True,
+    )
+    current_oi, oi_history, funding_history, ratio_history = binance_calls
+    if isinstance(current_oi, Exception) or isinstance(funding_history, Exception):
+        raise HTTPException(status_code=502, detail="Bybit and Binance derivatives feeds are unavailable")
+    oi_value = safe_float(current_oi.get("openInterest")) if isinstance(current_oi, dict) else 0.0
+    if oi_value <= 0:
+        raise HTTPException(status_code=502, detail="Binance returned invalid open interest")
+    oi_rows = oi_history if isinstance(oi_history, list) else []
+    oi_values = [safe_float(x.get("sumOpenInterest")) for x in oi_rows if isinstance(x, dict)]
+    oi_values = [x for x in oi_values if x > 0]
+    oi_change = ((oi_values[-1] / oi_values[0]) - 1.0) * 100 if len(oi_values) >= 2 else None
+    funding_rows = funding_history if isinstance(funding_history, list) else []
+    funding_rows = [x for x in funding_rows if isinstance(x, dict) and x.get("fundingRate") is not None]
+    funding_rate = safe_float(funding_rows[-1].get("fundingRate")) if funding_rows else None
+    ratio_rows = ratio_history if isinstance(ratio_history, list) else []
+    long_short_ratio = safe_float(ratio_rows[-1].get("longShortRatio")) if ratio_rows else None
+    return {
+        "open_interest": oi_value,
+        "open_interest_change_pct": round(oi_change, 4) if oi_change is not None else None,
+        "funding_rate": funding_rate,
+        "funding_bias": "UNKNOWN" if funding_rate is None else (
+            "LONG_CROWDED" if funding_rate >= 0.001 else
+            "SHORT_CROWDED" if funding_rate <= -0.001 else "BALANCED"
+        ),
+        "long_short_ratio": long_short_ratio,
+        "samples": {"open_interest": len(oi_values), "funding": len(funding_rows)},
+        "provider": "Binance USD-M Futures",
+        "data_quality": "provider_snapshot",
+        "liquidations": {"events": 0, "provider": None},
+        "disclaimer": "OI/funding/ratio are public aggregate metrics; liquidation positioning and account-level exposure are not inferred.",
+    }
+
+
+async def get_market_tickersasync def get_market_tickers(category: str):
     try:
-        result = await bybit_get("/v5/market/tickers", {"category":category})
+        result = await bybit_get("/v5/market/tickers", {"category": category})
         items = result.get("list", [])
-        if not isinstance(items, list):
-            raise HTTPException(status_code=502, detail="Bybit ticker list is invalid")
+        if not isinstance(items, list) or not items:
+            raise HTTPException(status_code=502, detail="Bybit ticker list is empty or invalid")
         return items, "Bybit"
     except HTTPException as bybit_error:
         logger.warning("Bybit ticker request failed (%s); falling back to OKX", bybit_error.detail)
+
+    try:
         inst_type = "SWAP" if category == "linear" else "SPOT"
-        items = await okx_get("/api/v5/market/tickers", {"instType":inst_type})
+        items = await okx_get("/api/v5/market/tickers", {"instType": inst_type})
         normalized = []
         for x in items:
             inst_id = str(x.get("instId", ""))
@@ -156,33 +268,81 @@ async def get_market_tickers(category: str):
             symbol = inst_id.replace("-", "").replace("SWAP", "")
             last = safe_float(x.get("last"))
             open24 = safe_float(x.get("open24h"))
-            change = ((last/open24)-1)*100 if open24 > 0 else 0
+            change = ((last / open24) - 1) * 100 if open24 > 0 else 0
             quote_volume = safe_float(x.get("volCcy24h")) * last
-            normalized.append({"symbol":symbol,"lastPrice":last,"price24hPcnt":change/100,
-                "highPrice24h":safe_float(x.get("high24h")),"lowPrice24h":safe_float(x.get("low24h")),
-                "turnover24h":quote_volume,"volume24h":safe_float(x.get("vol24h"))})
-        return normalized, "OKX"
+            normalized.append({
+                "symbol": symbol, "lastPrice": last, "price24hPcnt": change / 100,
+                "highPrice24h": safe_float(x.get("high24h")),
+                "lowPrice24h": safe_float(x.get("low24h")),
+                "turnover24h": quote_volume, "volume24h": safe_float(x.get("vol24h")),
+            })
+        if normalized:
+            return normalized, "OKX"
+    except HTTPException as okx_error:
+        logger.warning("OKX ticker request failed (%s); falling back to Binance", okx_error.detail)
 
-async def get_market_klines(symbol: str, category: str, interval: str, limit: int):
+    path = "/fapi/v1/ticker/24hr" if category == "linear" else "/api/v3/ticker/24hr"
+    items = await _binance_get(category, path, {})
+    if not isinstance(items, list):
+        raise HTTPException(status_code=502, detail="Binance ticker response is invalid")
+    normalized = []
+    for item in items:
+        symbol = str(item.get("symbol", "")).upper()
+        if not symbol.endswith("USDT") or not symbol[:-4].isalnum():
+            continue
+        last = safe_float(item.get("lastPrice"))
+        open_price = safe_float(item.get("openPrice"))
+        if last <= 0:
+            continue
+        change_pct = safe_float(item.get("priceChangePercent"))
+        normalized.append({
+            "symbol": symbol, "lastPrice": last, "price24hPcnt": change_pct / 100,
+            "highPrice24h": safe_float(item.get("highPrice")),
+            "lowPrice24h": safe_float(item.get("lowPrice")),
+            "turnover24h": safe_float(item.get("quoteVolume")),
+            "volume24h": safe_float(item.get("volume")),
+        })
+    if not normalized:
+        raise HTTPException(status_code=502, detail="No USDT ticker rows from configured market providers")
+    return normalized, "Binance"
+
+
+async def get_market_klinesasync def get_market_klines(symbol: str, category: str, interval: str, limit: int):
     try:
-        result = await bybit_get("/v5/market/kline", {"category":category,"symbol":symbol.upper(),
-            "interval":INTERVALS[interval],"limit":max(60,min(limit,1000))})
+        result = await bybit_get("/v5/market/kline", {
+            "category": category, "symbol": symbol.upper(),
+            "interval": INTERVALS[interval], "limit": max(60, min(limit, 1000))
+        })
         rows = result.get("list", [])
         if not isinstance(rows, list) or len(rows) < 20:
             raise HTTPException(status_code=502, detail="Bybit returned insufficient candles")
         return rows, "Bybit"
     except HTTPException as bybit_error:
         logger.warning("Bybit candles failed for %s (%s); falling back to OKX", symbol, bybit_error.detail)
-        bars = {"1m":"1m","3m":"3m","5m":"5m","15m":"15m","30m":"30m",
-                "1h":"1H","2h":"2H","4h":"4H","1d":"1D","1w":"1W"}
+
+    bars = {"1m":"1m","3m":"3m","5m":"5m","15m":"15m","30m":"30m",
+            "1h":"1H","2h":"2H","4h":"4H","1d":"1D","1w":"1W"}
+    try:
         rows = await okx_get("/api/v5/market/candles", {
-            "instId":okx_instrument(symbol, category),"bar":bars[interval],
-            "limit":str(max(60,min(limit,300)))})
+            "instId": okx_instrument(symbol, category), "bar": bars[interval],
+            "limit": str(max(60, min(limit, 300)))
+        })
         if len(rows) < 20:
             raise HTTPException(status_code=502, detail="OKX returned insufficient candles")
-        return [[row[0],row[1],row[2],row[3],row[4],row[5]] for row in rows], "OKX"
+        return [[row[0], row[1], row[2], row[3], row[4], row[5]] for row in rows], "OKX"
+    except HTTPException as okx_error:
+        logger.warning("OKX candles failed for %s (%s); falling back to Binance", symbol, okx_error.detail)
 
-def ema(values, period):
+    path = "/fapi/v1/klines" if category == "linear" else "/api/v3/klines"
+    rows = await _binance_get(category, path, {
+        "symbol": symbol.upper(), "interval": interval, "limit": max(60, min(limit, 1000))
+    })
+    if not isinstance(rows, list) or len(rows) < 20:
+        raise HTTPException(status_code=502, detail="Binance returned insufficient candles")
+    return rows, "Binance"
+
+
+def ema(def ema(values, period):
     if len(values) < period:
         return None
     alpha = 2 / (period + 1)
@@ -868,26 +1028,15 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
 
 @app.get("/api/derivatives/{symbol}")
 async def derivatives(symbol: str):
-    """Read-only Bybit linear open-interest and funding context."""
-    symbol = symbol.upper()
-    if not symbol.endswith("USDT") or not symbol.replace("USDT", "").isalnum():
-        raise HTTPException(status_code=400, detail="Only USDT linear symbols are supported")
-    oi_result, funding_result = await asyncio.gather(
-        bybit_get("/v5/market/open-interest", {
-            "category": "linear", "symbol": symbol, "intervalTime": "5min", "limit": 50
-        }),
-        bybit_get("/v5/market/funding/history", {
-            "category": "linear", "symbol": symbol, "limit": 20
-        })
-    )
-    summary = summarize_derivatives(
-        oi_result.get("list", []), funding_result.get("list", [])
-    )
-    return {"symbol": symbol, "provider": "Bybit", **summary,
-            "trading_mode": "simulation", "live_trading_enabled": False}
+    """Read-only public OI, funding and long/short context with provider failover."""
+    snapshot = await get_derivatives_snapshot(symbol)
+    return {
+        "symbol": symbol.upper(), **snapshot,
+        "trading_mode": "simulation", "live_trading_enabled": False,
+    }
 
 
-@app.websocket("/ws/derivatives/{symbol}/liquidations")
+@app.websocket("/ws/derivatives@app.websocket("/ws/derivatives/{symbol}/liquidations")
 async def derivatives_liquidation_stream(websocket: WebSocket, symbol: str):
     """Proxy Bybit's public all-liquidation stream for one USDT linear symbol."""
     symbol = symbol.upper()
@@ -974,17 +1123,34 @@ async def position_size(request: PositionSizeRequest):
 
 async def get_orderbook(symbol: str, category: str):
     try:
-        result = await bybit_get("/v5/market/orderbook", {"category": category, "symbol": symbol.upper(), "limit": 50})
-        return result.get("b", []), result.get("a", []), "Bybit"
+        result = await bybit_get("/v5/market/orderbook", {
+            "category": category, "symbol": symbol.upper(), "limit": 50
+        })
+        bids, asks = result.get("b", []), result.get("a", [])
+        if bids and asks:
+            return bids, asks, "Bybit"
+        raise HTTPException(status_code=502, detail="Bybit orderbook is empty")
     except HTTPException as bybit_error:
         logger.warning("Bybit orderbook unavailable for %s: %s", symbol, bybit_error.detail)
-        data = await okx_get("/api/v5/market/books", {"instId": okx_instrument(symbol, category), "sz": "50"})
-        if not data:
-            raise HTTPException(status_code=502, detail="No orderbook data from configured providers")
-        return data[0].get("bids", []), data[0].get("asks", []), "OKX"
+
+    try:
+        data = await okx_get("/api/v5/market/books", {
+            "instId": okx_instrument(symbol, category), "sz": "50"
+        })
+        if data and data[0].get("bids") and data[0].get("asks"):
+            return data[0]["bids"], data[0]["asks"], "OKX"
+        raise HTTPException(status_code=502, detail="OKX orderbook is empty")
+    except HTTPException as okx_error:
+        logger.warning("OKX orderbook unavailable for %s: %s", symbol, okx_error.detail)
+
+    path = "/fapi/v1/depth" if category == "linear" else "/api/v3/depth"
+    data = await _binance_get(category, path, {"symbol": symbol.upper(), "limit": 50})
+    if not isinstance(data, dict) or not data.get("bids") or not data.get("asks"):
+        raise HTTPException(status_code=502, detail="Binance orderbook is empty or invalid")
+    return data["bids"], data["asks"], "Binance"
 
 
-@app.get("/api/liquidity/{symbol}")
+@app.get("/api/liquidity@app.get("/api/liquidity/{symbol}")
 async def liquidity(symbol: str, category: str = "spot"):
     if category not in ("spot", "linear"):
         raise HTTPException(status_code=400, detail="Invalid category")
@@ -1011,22 +1177,49 @@ async def liquidity(symbol: str, category: str = "spot"):
 
 async def get_recent_trades(symbol: str, category: str):
     try:
-        result = await bybit_get("/v5/market/recent-trade", {"category": category, "symbol": symbol.upper(), "limit": 100})
+        result = await bybit_get("/v5/market/recent-trade", {
+            "category": category, "symbol": symbol.upper(), "limit": 100
+        })
         rows = result.get("list", [])
-        normalized = [{"price": safe_float(x.get("price")), "size": safe_float(x.get("size")),
-                       "side": str(x.get("side", "")).upper(), "time": safe_float(x.get("time"))}
-                      for x in rows if isinstance(x, dict)]
-        return normalized, "Bybit"
+        normalized = [{
+            "price": safe_float(x.get("price")), "size": safe_float(x.get("size")),
+            "side": str(x.get("side", "")).upper(), "time": safe_float(x.get("time"))
+        } for x in rows if isinstance(x, dict)]
+        if normalized:
+            return normalized, "Bybit"
+        raise HTTPException(status_code=502, detail="Bybit recent trades are empty")
     except HTTPException as bybit_error:
         logger.warning("Bybit recent trades unavailable for %s: %s", symbol, bybit_error.detail)
-        rows = await okx_get("/api/v5/market/trades", {"instId": okx_instrument(symbol, category), "limit": "100"})
-        normalized = [{"price": safe_float(x.get("px")), "size": safe_float(x.get("sz")),
-                       "side": str(x.get("side", "")).upper(), "time": safe_float(x.get("ts"))}
-                      for x in rows if isinstance(x, dict)]
-        return normalized, "OKX"
+
+    try:
+        rows = await okx_get("/api/v5/market/trades", {
+            "instId": okx_instrument(symbol, category), "limit": "100"
+        })
+        normalized = [{
+            "price": safe_float(x.get("px")), "size": safe_float(x.get("sz")),
+            "side": str(x.get("side", "")).upper(), "time": safe_float(x.get("ts"))
+        } for x in rows if isinstance(x, dict)]
+        if normalized:
+            return normalized, "OKX"
+        raise HTTPException(status_code=502, detail="OKX recent trades are empty")
+    except HTTPException as okx_error:
+        logger.warning("OKX recent trades unavailable for %s: %s", symbol, okx_error.detail)
+
+    path = "/fapi/v1/trades" if category == "linear" else "/api/v3/trades"
+    rows = await _binance_get(category, path, {"symbol": symbol.upper(), "limit": 100})
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=502, detail="Binance recent-trades response is invalid")
+    normalized = [{
+        "price": safe_float(x.get("price")), "size": safe_float(x.get("qty")),
+        "side": "SELL" if x.get("isBuyerMaker") is True else "BUY",
+        "time": safe_float(x.get("time")),
+    } for x in rows if isinstance(x, dict)]
+    if not normalized:
+        raise HTTPException(status_code=502, detail="No recent trades from configured market providers")
+    return normalized, "Binance"
 
 
-@app.get("/api/flow/{symbol}")
+@app.get("/api/flow@app.get("/api/flow/{symbol}")
 async def market_flow(symbol: str, category: str = "spot"):
     if category not in ("spot", "linear"):
         raise HTTPException(status_code=400, detail="Invalid category")
