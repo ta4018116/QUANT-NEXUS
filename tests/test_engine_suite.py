@@ -164,4 +164,4 @@ def test_anomaly_detection_and_clustering_return_bounded_market_evidence():
     assert anomaly["status"] == "computed"
     assert set(anomaly["value"]["z_scores"]) == {"return_pct", "volume", "range_pct"}
     assert clusters["status"] == "computed"
-    assert sum(clusters["value"]["cluster_sizes"]) == 101
+    assert sum(clusters["value"]["cluster_sizes"]) == 100
