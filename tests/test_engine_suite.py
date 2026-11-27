@@ -6,6 +6,10 @@ from app.engine_suite import (
     early_opportunity_assessment,
     run_engine,
     run_engine_suite,
+    _logistic_model,
+    _random_forest,
+    _anomaly_detection,
+    _clustering,
 )
 
 
@@ -130,3 +134,34 @@ def test_engine_suite_rejects_unsupported_symbol_and_market():
     client = TestClient(main.app)
     assert client.get("/api/engine-suite/BTCUSD").status_code == 400
     assert client.get("/api/engine-suite/BTCUSDT?category=unknown").status_code == 400
+
+
+def test_logistic_model_uses_chronological_holdout_and_reports_research_metrics():
+    context = {"candles": make_candles(190)}
+    result = _logistic_model(context)
+    assert result["status"] == "computed"
+    value = result["value"]
+    assert value["training_samples"] > value["holdout_samples"] > 0
+    assert 0 <= value["research_probability_up"] <= 1
+    assert 0 <= value["chronological_holdout_accuracy_pct"] <= 100
+    assert 0 <= value["holdout_brier_score"] <= 1
+    assert "not independently calibrated" in value["warning"]
+
+
+def test_random_forest_runs_deterministically_on_historical_candles():
+    context = {"candles": make_candles(190)}
+    first = _random_forest(context)
+    second = _random_forest(context)
+    assert first["status"] == "computed"
+    assert first["value"]["research_vote_fraction_up"] == second["value"]["research_vote_fraction_up"]
+    assert 0 <= first["value"]["research_vote_fraction_up"] <= 1
+
+
+def test_anomaly_detection_and_clustering_return_bounded_market_evidence():
+    context = {"candles": make_candles(120)}
+    anomaly = _anomaly_detection(context)
+    clusters = _clustering(context)
+    assert anomaly["status"] == "computed"
+    assert set(anomaly["value"]["z_scores"]) == {"return_pct", "volume", "range_pct"}
+    assert clusters["status"] == "computed"
+    assert sum(clusters["value"]["cluster_sizes"]) == 101
