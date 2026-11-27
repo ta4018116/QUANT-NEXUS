@@ -148,3 +148,45 @@ The catalogue still labels approximations and research-only models as partial; c
 - The statistical ML adapters score the latest completed candle for live inference; chronological training and holdout partitions are separate, and all model outputs remain research-only.
 - A pure-Python second-order gradient-boosted tree engine is included as an XGBoost-style research implementation. It is not the upstream XGBoost package.
 - No catalogue entries are left in the planned state. All 156 IDs have callable runtime adapters. Two sequence-model adapters are research-grade partial implementations with explicit architectural limits; all other partial engines still require the feed or service inputs named in their catalogue gaps.
+
+
+## Provider, model and operations activation (read-only research)
+
+The provider bridge added in `app/provider_feeds.py` uses:
+- Bybit, Binance and OKX public endpoints for crypto candles, tickers, order books, trades and supported linear-derivative snapshots. Access is region-dependent; every provider failure must remain visible in `provider_health`.
+- Deribit public BTC/ETH options instruments and book summaries for option-chain analytics. The feed does not disclose dealer-side position signs, so the system must not manufacture net dealer gamma.
+- Cointelegraph/CoinDesk RSS plus GDELT DOC 2.0 symbol-filtered article discovery. GDELT and RSS headlines are unverified source material, not fact-checked events. GDELT is rate-limited and cached for five minutes.
+- Optional CryptoPanic news, requiring `CRYPTOPANIC_API_TOKEN`.
+- Optional CoinGlass one-hour cross-exchange liquidation totals, requiring `COINGLASS_API_KEY`. The Exchange List endpoint returns aggregate USD totals; these totals are not individual liquidation price levels and are never passed off as a price heatmap. The individual Liquidation Orders endpoint requires CoinGlass Standard or higher and is not enabled as a free feed.
+- Twelve Data for FX, stocks, indices and commodities, requiring `TWELVE_DATA_API_KEY`.
+
+### Operations API and environment
+
+- `GET /api/provider-health`: reports configured provider families and missing credentials without returning secret values.
+- `GET /api/ops/status`: in-process scheduler status, job counters and configured transports.
+- `GET /api/models/registry`: lists persisted JSON research-model artifacts.
+- `POST /api/models/train/{symbol}?category=spot&interval=15m&limit=500`: trains a logistic research model on completed OHLCV. This route requires the `X-Admin-Token` header matching `MODEL_ADMIN_TOKEN`.
+- `GET /health`: includes the background supervisor state.
+
+Optional server-side environment variables (never put these in frontend code):
+- `TWELVE_DATA_API_KEY`
+- `COINGLASS_API_KEY`
+- `CRYPTOPANIC_API_TOKEN`
+- `MODEL_ADMIN_TOKEN` (required to enable protected model training)
+- `MODEL_REGISTRY_PATH` (defaults to `data/models`)
+- `MODEL_REGISTRY_DURABLE=true` only when that path is actually on a persistent mounted disk
+- `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, or `ALERT_WEBHOOK_URL`
+- `ALERT_DEDUPE_TTL_SECONDS` (defaults to 900)
+- `OPS_BACKGROUND_ENABLED=true|false` (defaults to true)
+- `OPS_INTERVAL_SECONDS` (defaults to 300; bounded to 60-3600)
+- `OPS_WATCHLIST` (defaults to `BTCUSDT,ETHUSDT,SOLUSDT`, maximum 10 valid USDT symbols)
+
+The background scheduler and notification deduplication currently operate inside one web process. They are not a durable distributed worker or a persistent message queue. Hosting platforms that sleep free instances, restart containers or run multiple replicas need an independently deployed worker and persistent database/disk for reliable continuous monitoring. This change does not change the Render plan or claim that a persistent volume has been provisioned.
+
+### Model lifecycle and acceptance criteria
+
+The new persisted logistic candidate uses nine documented OHLCV features, a three-bar label horizon, chronological training/calibration/final-test partitions with purged boundaries, Platt-style calibration, Brier score against a base-rate baseline, log-loss, accuracy and ROC-AUC. Promotion stays `MANUAL_REVIEW_REQUIRED`; passing a research threshold never enables orders.
+
+The random-forest, MLP, LSTM-reservoir, Transformer-reservoir and XGBoost-style adapters remain research implementations; fixed reservoir weights or per-request fitting are not represented as fully trained persisted production models. Model outputs are not investment advice and do not authorize a trade.
+
+All changes preserve `LIVE_TRADING_ENABLED=False`. Public exchange feeds are read-only, no private exchange trade credential is required or added, and all order/position workflows remain simulation-only.
