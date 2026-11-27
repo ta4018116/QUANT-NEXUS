@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .paper_store import PaperStore
+from .free_market_data import fetch_free_daily
 from .quant_engine import ema_crossover_backtest, enrich_analysis
 from .engine_registry import engine_registry
 from .engine_catalog import engine_catalog
@@ -1710,11 +1711,21 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
 
 
 
-async def get_twelve_data_klines(symbol: str, interval: str, limit: int = 300) -> tuple[list[list],dict]:
-    """Fetch OHLCV from Twelve Data using a server-side environment key only."""
+async def get_twelve_data_klines(symbol: str, interval: str, limit: int = 300, market: str | None = None) -> tuple[list[list],dict]:
+    """Prefer Twelve Data when configured; otherwise use explicitly-limited no-key daily feeds."""
     api_key = os.getenv("TWELVE_DATA_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=503, detail="Twelve Data provider is not configured; add TWELVE_DATA_API_KEY in the Render environment")
+        if market not in TWELVE_DATA_MARKETS:
+            raise HTTPException(status_code=400, detail="A valid market is required for free-provider fallback")
+        if interval not in ("1d", "1w"):
+            raise HTTPException(status_code=503, detail="No-key fallback is daily only; use interval=1d or 1w. Intraday signals are disabled.")
+        try:
+            rows, info = await fetch_free_daily(shared_http_client(), market, symbol, limit)
+            return rows, info
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=502, detail=f"Free {market} provider returned HTTP {exc.response.status_code}") from exc
+        except (httpx.RequestError, ValueError) as exc:
+            raise HTTPException(status_code=503, detail=f"Free {market} provider unavailable or symbol unsupported: {type(exc).__name__}") from exc
     if interval not in TWELVE_DATA_INTERVALS:
         raise HTTPException(status_code=400, detail="Unsupported Twelve Data interval")
     clean_symbol = str(symbol).strip().upper()
@@ -1723,12 +1734,8 @@ async def get_twelve_data_klines(symbol: str, interval: str, limit: int = 300) -
     try:
         response = await shared_http_client().get(
             "https://api.twelvedata.com/time_series",
-            params={
-                "symbol":clean_symbol,
-                "interval":TWELVE_DATA_INTERVALS[interval],
-                "outputsize":max(60,min(int(limit),500)),
-                "format":"JSON",
-            },
+            params={"symbol":clean_symbol,"interval":TWELVE_DATA_INTERVALS[interval],
+                    "outputsize":max(60,min(int(limit),500)),"format":"JSON"},
             headers={"Authorization":f"apikey {api_key}"},
         )
         response.raise_for_status()
@@ -1756,22 +1763,21 @@ async def get_twelve_data_klines(symbol: str, interval: str, limit: int = 300) -
     for item in values:
         if not isinstance(item,dict):
             continue
-        raw_time=str(item.get("datetime",""))
         try:
-            parsed=datetime.fromisoformat(raw_time)
+            parsed=datetime.fromisoformat(str(item.get("datetime","")))
             if parsed.tzinfo is None:
                 parsed=parsed.replace(tzinfo=market_tz)
-            stamp=int(parsed.timestamp()*1000)
-            rows.append([
-                str(stamp),str(item.get("open")),str(item.get("high")),
-                str(item.get("low")),str(item.get("close")),str(item.get("volume") or 0),
-            ])
+            rows.append([str(int(parsed.timestamp()*1000)),str(item.get("open")),
+                         str(item.get("high")),str(item.get("low")),str(item.get("close")),
+                         str(item.get("volume") or 0)])
         except (TypeError,ValueError,OverflowError):
             continue
     if len(rows)<60:
         raise HTTPException(status_code=502,detail="Twelve Data returned invalid candle timestamps")
-    return rows,{"provider":"Twelve Data","timezone":str(tz_name),"market":(payload.get("meta") or {}).get("type"),
-                 "exchange":(payload.get("meta") or {}).get("exchange")}
+    return rows,{"provider":"Twelve Data","timezone":str(tz_name),
+                 "market":(payload.get("meta") or {}).get("type"),
+                 "exchange":(payload.get("meta") or {}).get("exchange"),
+                 "data_quality":"provider_ohlcv","auth_required":True}
 
 
 @app.get("/api/multi-market-engine-suite")
@@ -1786,7 +1792,7 @@ async def multi_market_engine_suite(
     market=market.lower().strip()
     if market not in TWELVE_DATA_MARKETS:
         raise HTTPException(status_code=400,detail="Market must be forex, stocks, indices or commodities")
-    rows, provider_info=await get_twelve_data_klines(symbol,interval,limit)
+    rows, provider_info=await get_twelve_data_klines(symbol,interval,limit,market)
     analysis=analyze_klines(rows,include_all_candles=True)
     completed=analysis["candles"][:-1]
     if len(completed)<60:
@@ -1826,7 +1832,7 @@ async def multi_market_engine_suite(
         "live_trading_disabled":LIVE_TRADING_ENABLED is False,
     }
     timeframe_jobs=await asyncio.gather(
-        *(get_twelve_data_klines(symbol,frame,min(limit,180)) for frame in ("5m","1h","4h")),
+        *(get_twelve_data_klines(symbol,frame,min(limit,180),market) for frame in ("5m","1h","4h")),
         return_exceptions=True,
     )
     frames={}
@@ -1910,7 +1916,7 @@ async def multi_market_engine_suite(
         "provider":provider_info,"completed_candles":len(completed),
         "early_opportunity":early,"engine_suite":suite,
         "engine_coverage":catalogue_runtime_coverage(),
-        "provider_health":{"twelve_data":{"status":"ok",**provider_info},
+        "provider_health":{"market_data":{"status":"ok","configured_provider":provider_info.get("provider"),**provider_info},
                            "news":news_sources},
         "notification_delivery":notification_delivery,
         "background_runtime":OPS_RUNTIME.status(),
