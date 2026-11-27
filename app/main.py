@@ -1717,8 +1717,8 @@ async def get_twelve_data_klines(symbol: str, interval: str, limit: int = 300, m
     if not api_key:
         if market not in TWELVE_DATA_MARKETS:
             raise HTTPException(status_code=400, detail="A valid market is required for free-provider fallback")
-        if interval not in ("1d", "1w"):
-            raise HTTPException(status_code=503, detail="No-key fallback is daily only; use interval=1d or 1w. Intraday signals are disabled.")
+        if interval != "1d":
+            raise HTTPException(status_code=503, detail="No-key fallback is daily only; use interval=1d. Intraday signals are disabled.")
         try:
             rows, info = await fetch_free_daily(shared_http_client(), market, symbol, limit)
             return rows, info
