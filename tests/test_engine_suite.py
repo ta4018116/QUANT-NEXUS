@@ -135,6 +135,9 @@ def test_engine_suite_api_uses_completed_candles_and_stays_paper_only(monkeypatc
     assert payload["provider"] == "TEST"
     assert payload["completed_candles"] == 120
     assert payload["engine_suite"]["total_requested"] == 156
+    ingestion = next(item for item in payload["engine_suite"]["results"] if item["engine_id"] == "E001")
+    assert ingestion["runtime"]["status"] == "computed"
+    assert ingestion["runtime"]["value"]["provider"] == "TEST"
     assert payload["engine_readiness"]["total"] == 156
     assert sum(payload["engine_readiness"]["counts"][key] for key in ("implemented", "partial", "planned")) == 156
     assert all("test_result" in item and "source_evidence" in item for item in payload["engine_readiness"]["engines"])
