@@ -114,3 +114,15 @@ scores are heuristic and are not calibrated win probabilities.
 - The early-opportunity score is a heuristic research score, not a calibrated probability or a guaranteed signal. The entry zone and targets are watch references only; the endpoint never creates a paper order.
 - The runtime suite routes all 156 catalogue IDs. Engines requiring unavailable feeds or trained model artifacts return `blocked_missing_input` until their dependencies are integrated and validated.
 - Trading mode remains simulation; `live_trading_enabled` is false; no live-order endpoint or exchange trade credential is introduced.
+
+## Market-wide early opportunity scan
+- `GET /api/early-opportunity-scan?category=spot&interval=15m&depth=AUTO&max_candidates=256&deep_limit=24`
+- Stage 1 checks up to the selected 32/64/128/256/AUTO universe using completed OHLCV candles and a cheap early-setup score.
+- Stage 2 deep-checks only the highest-ranked candidates with order-book depth and recent trade prints; linear futures also request funding and open-interest context when available.
+- A missing provider result is recorded as a missing confirmation rather than silently treated as positive evidence.
+- The endpoint never creates paper or live orders. It returns research watch-ranks and the exact scan/deep-scan counts.
+
+## Additional research engines
+- A small two-hidden-layer MLP and tabular Q-learning simulator are included as research adapters with chronological holdouts. Neither is a persisted production model, and neither can authorize an order.
+- Options analytics calculate Black-Scholes Greeks and implied volatility only when a valid options chain and underlying mark are supplied. Net dealer gamma is omitted unless dealer-side positioning is explicitly supplied.
+- The remaining intentionally blocked model engines are LSTM, Transformer and XGBoost until model architecture/dependencies, training data, validation artifacts and runtime resources are provided.
