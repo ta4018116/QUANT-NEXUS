@@ -123,7 +123,11 @@ def test_engine_suite_api_uses_completed_candles_and_stays_paper_only(monkeypatc
 
     monkeypatch.setattr(main, "get_market_klines", fake_klines)
     monkeypatch.setattr(main, "get_orderbook", fake_book)
+    async def fake_enrichment(symbol, category, interval, candles):
+        return {}, {"derivatives":{"status":"unavailable"},"cross_market":{"status":"unavailable"}}
+
     monkeypatch.setattr(main, "get_recent_trades", fake_trades)
+    monkeypatch.setattr(main, "collect_engine_enrichment", fake_enrichment)
 
     response = TestClient(main.app).get("/api/early-opportunity/BTCUSDT?category=spot&interval=15m")
     assert response.status_code == 200
@@ -410,3 +414,67 @@ def test_lstm_and_transformer_sequence_research_adapters_run_chronological_holdo
         assert 0 <= value["chronological_holdout_accuracy_pct"] <= 100
         assert 0 <= value["holdout_brier_score"] <= 1
         assert "only" in value["warning"]
+
+def test_engine_specific_handlers_run_instead_of_generic_fallbacks():
+    from app.engine_suite import _arbitrage
+
+    candles = make_candles(190)
+    quality = run_engine("E006", {"candles": candles})
+    assert quality["runtime"]["status"] == "computed"
+    assert quality["runtime"]["value"]["quality_passed"] is True
+
+    lstm = run_engine("E047", {"candles": candles})
+    assert lstm["runtime"]["status"] == "computed"
+    assert lstm["runtime"]["value"]["model"].startswith("lstm_")
+
+    spot = run_engine("E042", {"category":"spot","candles":candles})
+    futures = run_engine("E041", {"category":"spot","candles":candles})
+    assert spot["runtime"]["status"] == "computed"
+    assert futures["runtime"]["status"] == "blocked_missing_input"
+
+
+def test_cross_market_correlation_uses_aligned_base_series():
+    from app.engine_suite import _cross_market_correlation
+
+    base = [100 + i for i in range(100)]
+    related = [200 + 2*i for i in range(100)]
+    result = _cross_market_correlation({
+        "closes":[999,998,997],
+        "correlation_base_closes":base,
+        "related_closes":{"ETHUSDT":related},
+    })
+    assert result["status"] == "computed"
+    assert result["value"]["ETHUSDT"]["samples"] == 99
+    assert result["value"]["ETHUSDT"]["correlation"] == pytest.approx(1.0)
+
+
+def test_arbitrage_does_not_claim_net_edge_without_verified_execution_costs():
+    from app.engine_suite import _arbitrage
+
+    result = _arbitrage({"exchange_prices":{"Bybit":100.0,"OKX":101.0}})
+    assert result["status"] == "computed"
+    assert result["value"]["gross_spread_pct"] == pytest.approx(1.0)
+    assert result["value"]["estimated_net_spread_pct"] is None
+    assert result["value"]["positive_after_costs"] is None
+    assert result["value"]["execution_permitted"] is False
+
+    verified = _arbitrage({
+        "exchange_prices":{"Bybit":100.0,"OKX":101.0},
+        "execution_costs_verified":True,
+        "round_trip_fee_pct":0.1,
+        "round_trip_slippage_pct":0.05,
+    })
+    assert verified["value"]["estimated_net_spread_pct"] == pytest.approx(0.85)
+
+
+def test_agent_consensus_can_build_transparent_rule_agents_from_market_inputs():
+    from app.engine_suite import _agents
+
+    candles = make_candles(120)
+    result = _agents({
+        "candles":candles,
+        "orderbook":{"bids":[[110,100]],"asks":[[110.1,10]]},
+    })
+    assert result["status"] == "computed"
+    assert result["value"]["agents"] >= 2
+    assert result["value"]["independence"].startswith("shared snapshot")
