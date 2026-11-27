@@ -1744,6 +1744,9 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
     selected = [x.strip().upper() for x in engine_ids.split(",") if x.strip()] if engine_ids else None
     market_snapshot = _market_snapshot_evidence(completed, interval, provider)
     context["market_snapshot"] = market_snapshot
+    context["provider"] = provider
+    context["source_timestamp"] = market_snapshot["source_timestamp"]
+    context["source_health"] = "healthy" if market_snapshot["freshness_status"] == "fresh" else "stale"
     provider_health["market_data"] = {
         "status":"ok" if market_snapshot["freshness_status"] == "fresh" else "stale",
         "provider":provider, "interval":market_snapshot["interval"],
