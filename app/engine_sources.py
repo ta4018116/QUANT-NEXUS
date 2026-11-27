@@ -241,6 +241,22 @@ _ENGINE_OVERRIDES = {
         "credentials": "public_option_market_data; optional paid options data",
         "limits": "Open interest alone does not reveal dealer-side sign. Net dealer gamma must remain unavailable unless signed positioning is sourced.",
     },
+    "E138": {
+        "source_class": "opportunity_knowledge_history",
+        "providers": ["Internal persisted opportunity event history (durable store required)"],
+        "endpoints": ["Internal opportunity_events collection or database table when provisioned"],
+        "inputs": ["timestamped opportunity event", "symbol", "event type", "outcome/label", "source provenance"],
+        "credentials": "internal_database_access",
+        "limits": "The current market request does not yet load a durable opportunity_events history; this engine remains blocked until that history is supplied.",
+    },
+    "E151": {
+        "source_class": "paper_trade_identifier_audit_proxy",
+        "providers": ["Internal PaperStore trade identifiers only; separate audit-event store not provisioned"],
+        "endpoints": ["Internal PAPER_TRADES identifiers supplied to the engine context"],
+        "inputs": ["stable trade/event ID", "action type", "timestamp", "actor/service", "append-only event record"],
+        "credentials": "restricted_internal_paper_store_access",
+        "limits": "Current context derives identifiers from paper trades; it does not capture a full tamper-evident audit trail. The adapter checks supplied IDs for duplicates only.",
+    },
     "E141": {
         "source_class": "process_local_scheduler",
         "providers": ["Python asyncio process supervisor"],
