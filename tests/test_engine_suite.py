@@ -319,10 +319,12 @@ def test_security_news_liquidation_and_scheduler_adapters_are_fail_closed():
     assert scheduler["value"]["scheduler_backend_configured"] is False
 
 
-def test_news_and_external_models_are_never_fabricated():
+def test_news_feed_stays_blocked_but_sequence_models_run_from_supplied_candles():
     from app.engine_suite import _news_events
+    context = {"candles": make_candles(190)}
     assert _news_events({})["status"] == "blocked_missing_input"
-    assert run_engine("E047", {"candles":make_candles(180)})["runtime"]["status"] == "blocked_missing_input"
+    assert run_engine("E047", context)["runtime"]["status"] == "computed"
+    assert run_engine("E048", context)["runtime"]["status"] == "computed"
 
 
 def test_options_greeks_and_implied_volatility_are_numerically_consistent():
