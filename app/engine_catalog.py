@@ -638,24 +638,28 @@ ENGINE_CATALOG = [
     "name": "LSTM Forecast",
     "name_ar": "محرك LSTM Forecast",
     "group": "AI Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "مستخرج تسلسلي LSTM ببوابات متكررة ثابتة مع رأس تصنيف لوجستي مدرّب زمنياً"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "الأوزان المتكررة ثابتة وحتمية والرأس فقط يُدرّب لكل طلب؛ ليس نموذج LSTM كاملاً مدرّباً عبر BPTT أو نموذجاً محفوظاً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E048",
     "name": "Transformer Forecast",
     "name_ar": "محرك Transformer Forecast",
     "group": "AI Intelligence",
-    "status": "planned",
-    "capabilities": [],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "status": "partial",
+    "capabilities": [
+      "مستخرج تسلسلي Transformer أحادي الرأس بترميز موضعي وإسقاطات Q/K/V ثابتة مع رأس تصنيف مدرّب"
     ],
-    "evidence": "not_yet_implemented"
+    "gaps": [
+      "إسقاطات الانتباه ثابتة والرأس فقط يُدرّب لكل طلب؛ ليس Transformer كاملاً مدرّباً طرفاً لطرف أو نموذجاً محفوظاً"
+    ],
+    "evidence": "partial_engine_runtime_adapter"
   },
   {
     "id": "E049",
@@ -2159,7 +2163,7 @@ def engine_catalog() -> dict:
               for status in statuses}
     groups = sorted({item["group"] for item in engines})
     group_counts = {group: sum(1 for item in engines if item["group"] == group) for group in groups}
-    return {"name":"QUANT NEXUS","catalog_version":"1.8.0","total":len(engines),
+    return {"name":"QUANT NEXUS","catalog_version":"1.9.0","total":len(engines),
             "counts":counts,"group_counts":group_counts,"engines":engines,
             "priority":"early_opportunity_detection","trading_mode":"simulation",
             "live_trading_enabled":False,"execution_capability":"paper_only",
