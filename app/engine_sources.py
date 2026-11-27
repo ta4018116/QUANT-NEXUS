@@ -171,6 +171,54 @@ _PROFILES = {
 }
 
 _ENGINE_OVERRIDES = {
+    "E001": {
+        "source_class": "live_market_snapshot_ingestion",
+        "providers": ["Bybit public V5", "OKX public V5", "Binance public market data"],
+        "endpoints": ["Bybit /v5/market/kline", "OKX /api/v5/market/candles", "Binance /api/v3/klines or /fapi/v1/klines"],
+        "inputs": ["provider identity", "symbol and market category", "interval", "at least 30 valid candles", "source health and fetch timestamp"],
+        "credentials": "public_read_only",
+        "limits": "The engine validates the supplied provider snapshot; actual provider reachability and freshness must be proven by the request's provider health and timestamps.",
+    },
+    "E002": {
+        "source_class": "live_orderbook_depth",
+        "providers": ["Bybit public V5", "OKX public V5", "Binance public market data"],
+        "endpoints": ["Bybit /v5/market/orderbook", "OKX /api/v5/market/books", "Binance /api/v3/depth or /fapi/v1/depth"],
+        "inputs": ["timestamped bid and ask levels", "positive price and quantity", "uncrossed best bid/ask"],
+        "credentials": "public_read_only",
+        "limits": "Displayed depth can be cancelled or spoofed and is not a guarantee of executable liquidity.",
+    },
+    "E003": {
+        "source_class": "orderbook_liquidity_metrics",
+        "providers": ["Bybit public V5", "OKX public V5", "Binance public market data"],
+        "endpoints": ["Bybit /v5/market/orderbook", "OKX /api/v5/market/books", "Binance /api/v3/depth or /fapi/v1/depth"],
+        "inputs": ["both sides of book", "best bid and ask", "top-20 price-size levels", "snapshot timestamp"],
+        "credentials": "public_read_only",
+        "limits": "Spread and depth are snapshot estimates; they do not include hidden liquidity or queue priority.",
+    },
+    "E004": {
+        "source_class": "ohlcv_realized_volatility",
+        "providers": ["Bybit public V5", "OKX public V5", "Binance public market data"],
+        "endpoints": ["Bybit /v5/market/kline", "OKX /api/v5/market/candles", "Binance /api/v3/klines or /fapi/v1/klines"],
+        "inputs": ["at least 20 valid completed candles", "OHLC range integrity", "explicit interval"],
+        "credentials": "public_read_only",
+        "limits": "ATR and realized return volatility are historical measures, not forecasts or guaranteed future risk bounds.",
+    },
+    "E005": {
+        "source_class": "normalized_ohlcv",
+        "providers": ["Bybit public V5", "OKX public V5", "Binance public market data", "Stooq daily CSV", "Frankfurter daily FX reference rates"],
+        "endpoints": ["Exchange kline/candle endpoints", "Stooq /q/d/l/ daily CSV", "Frankfurter /{start}..{end}"],
+        "inputs": ["numeric finite OHLCV", "positive prices", "nonnegative volume", "UTC timestamps", "unique candle timestamps"],
+        "credentials": "public_read_only; free_daily_fallbacks_no_key",
+        "limits": "Frankfurter FX is close-only with zero volume and must not be represented as executable OHLCV.",
+    },
+    "E006": {
+        "source_class": "ohlcv_data_quality_validation",
+        "providers": ["Bybit public V5", "OKX public V5", "Binance public market data", "Stooq and Frankfurter daily fallbacks"],
+        "endpoints": ["Exchange kline/candle endpoints", "Stooq /q/d/l/ daily CSV", "Frankfurter daily reference-rate API"],
+        "inputs": ["raw rows before filtering", "timestamps", "OHLC bounds", "finite values", "duplicate and gap checks"],
+        "credentials": "public_read_only",
+        "limits": "Quality checks cannot detect every upstream correction or missing trade; source-specific session calendars are required for complete gap analysis.",
+    },
     "E007": {
         "source_class": "news_and_event_discovery",
         "providers": ["GDELT DOC 2.0", "Cointelegraph RSS", "CoinDesk RSS", "CryptoPanic optional"],
