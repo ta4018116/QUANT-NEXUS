@@ -443,7 +443,7 @@ def test_responsive_card_dashboard_exposes_real_pages_opportunities_and_engine_r
     assert 'data-open-page="intelligence"' in html
     assert "function openPage(key)" in html
     assert "function renderOpportunityCards(items)" in html
-    assert "api('/api/engines')" in html
+    assert "api('/api/engine-catalog')" in html
     assert "أسلوب الدخول" in html
     assert "وقف الخسارة" in html
     assert "الهدف الأول" in html
@@ -452,6 +452,9 @@ def test_responsive_card_dashboard_exposes_real_pages_opportunities_and_engine_r
     assert html.count("<script>") == 1
     assert html.count("</script>") == 1
     assert client.get("/api/engines").json()["live_trading_enabled"] is False
+    catalog = client.get("/api/engine-catalog").json()
+    assert catalog["total"] == 156
+    assert catalog["live_trading_enabled"] is False
 
 
 
