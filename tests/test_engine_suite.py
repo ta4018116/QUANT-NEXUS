@@ -1,0 +1,395 @@
+import pytest
+from fastapi.testclient import TestClient
+
+from app import main
+from app.engine_suite import (
+    catalogue_runtime_coverage,
+    early_opportunity_assessment,
+    run_engine,
+    run_engine_suite,
+    _logistic_model,
+    _random_forest,
+    _anomaly_detection,
+    _clustering,
+)
+
+
+def make_candles(count=120):
+    rows = []
+    for i in range(count):
+        close = 100 + i * 0.08 + (i % 5) * 0.025
+        open_price = close - 0.025
+        rows.append({
+            "time": i * 60,
+            "open": open_price,
+            "high": close + 0.16,
+            "low": open_price - 0.14,
+            "close": close,
+            "volume": 1000 + i * 3,
+        })
+    return rows
+
+
+def test_all_156_engine_ids_have_runtime_adapters():
+    coverage = catalogue_runtime_coverage()
+    assert coverage["catalogue_engines"] == 156
+    assert coverage["routed_adapters"] == 156
+    assert coverage["callable_adapter_coverage_pct"] == 100
+    assert coverage["active_runtime_adapters"] == 154
+    assert coverage["external_or_model_blocked_ids"] == ["E047", "E048"]
+    assert coverage["catalogue_status_counts"]["planned"] == 2
+    assert coverage["unrouted_adapters"] == []
+    assert coverage["live_trading_enabled"] is False
+
+
+def test_engine_suite_returns_one_auditable_result_per_catalogue_engine():
+    context = {
+        "symbol": "BTCUSDT",
+        "category": "spot",
+        "interval": "15m",
+        "candles": make_candles(),
+        "closes": [x["close"] for x in make_candles()],
+        "orderbook": {"bids": [[100, 12], [99.9, 10]], "asks": [[100.1, 4], [100.2, 5]]},
+        "trades": [
+            {"price": 100, "size": 4, "side": "BUY"},
+            {"price": 100, "size": 1, "side": "SELL"},
+        ],
+        "regime": {"status": "ok", "trend": "UPTREND"},
+        "structure": {"status": "ok", "break_of_structure": "NONE"},
+        "account": {"equity": 10000},
+        "positions": [],
+        "closed_trades": [],
+    }
+    result = run_engine_suite(context)
+    assert result["total_requested"] == 156
+    assert len(result["results"]) == 156
+    assert all(item["engine_id"] for item in result["results"])
+    assert all(item["live_trading_enabled"] is False for item in result["results"])
+    assert any(item["runtime"]["status"] == "computed" for item in result["results"])
+    assert any(item["runtime"]["status"] == "blocked_missing_input" for item in result["results"])
+
+
+def test_early_opportunity_assessment_is_bounded_and_explainable():
+    rows = make_candles()
+    context = {
+        "symbol": "BTCUSDT",
+        "category": "spot",
+        "interval": "15m",
+        "candles": rows,
+        "orderbook": {"bids": [[100, 100]], "asks": [[100.1, 20]]},
+        "trades": [
+            {"price": 100, "size": 10, "side": "BUY"},
+            {"price": 100, "size": 2, "side": "SELL"},
+        ],
+        "regime": {"status": "ok", "trend": "UPTREND"},
+        "structure": {"status": "ok", "break_of_structure": "NONE"},
+    }
+    result = early_opportunity_assessment(context)
+    assert result["status"] == "computed"
+    assert 0 <= result["score"] <= 100
+    assert result["max_score"] == 100
+    assert result["tier"] in {
+        "GOLD_EARLY", "GREEN_WATCH", "SILVER_EARLY", "NO_SETUP", "BREAKOUT_CONFIRMED"
+    }
+    assert isinstance(result["reasons"], list)
+    assert result["live_trading_enabled"] is False
+
+
+def test_engine_fails_closed_when_inputs_are_missing():
+    result = run_engine("E047", {"candles": make_candles()})
+    assert result["runtime"]["status"] == "blocked_missing_input"
+    assert result["live_trading_enabled"] is False
+
+
+def test_engine_suite_api_uses_completed_candles_and_stays_paper_only(monkeypatch):
+    async def fake_klines(symbol, category, interval, limit):
+        # Provider rows are newest last in this test; the endpoint discards the last in-progress bar.
+        rows = []
+        for i, candle in enumerate(make_candles(121)):
+            rows.append([
+                str(candle["time"] * 1000), str(candle["open"]), str(candle["high"]),
+                str(candle["low"]), str(candle["close"]), str(candle["volume"])
+            ])
+        return rows, "TEST"
+
+    async def fake_book(symbol, category):
+        return [[100, 100]], [[100.1, 20]], "TEST"
+
+    async def fake_trades(symbol, category):
+        return [
+            {"price": 100, "size": 10, "side": "BUY", "time": 1},
+            {"price": 100, "size": 2, "side": "SELL", "time": 2},
+        ], "TEST"
+
+    monkeypatch.setattr(main, "get_market_klines", fake_klines)
+    monkeypatch.setattr(main, "get_orderbook", fake_book)
+    monkeypatch.setattr(main, "get_recent_trades", fake_trades)
+
+    response = TestClient(main.app).get("/api/early-opportunity/BTCUSDT?category=spot&interval=15m")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "TEST"
+    assert payload["completed_candles"] == 120
+    assert payload["engine_suite"]["total_requested"] == 156
+    assert payload["early_opportunity"]["live_trading_enabled"] is False
+    assert payload["live_trading_enabled"] is False
+
+
+def test_engine_suite_rejects_unsupported_symbol_and_market():
+    client = TestClient(main.app)
+    assert client.get("/api/engine-suite/BTCUSD").status_code == 400
+    assert client.get("/api/engine-suite/BTCUSDT?category=unknown").status_code == 400
+
+
+def test_logistic_model_uses_chronological_holdout_and_reports_research_metrics():
+    context = {"candles": make_candles(190)}
+    result = _logistic_model(context)
+    assert result["status"] == "computed"
+    value = result["value"]
+    assert value["training_samples"] > value["holdout_samples"] > 0
+    assert 0 <= value["research_probability_up"] <= 1
+    assert 0 <= value["chronological_holdout_accuracy_pct"] <= 100
+    assert 0 <= value["holdout_brier_score"] <= 1
+    assert "not independently calibrated" in value["warning"]
+
+
+def test_random_forest_runs_deterministically_on_historical_candles():
+    context = {"candles": make_candles(190)}
+    first = _random_forest(context)
+    second = _random_forest(context)
+    assert first["status"] == "computed"
+    assert first["value"]["research_vote_fraction_up"] == second["value"]["research_vote_fraction_up"]
+    assert 0 <= first["value"]["research_vote_fraction_up"] <= 1
+
+
+def test_anomaly_detection_and_clustering_return_bounded_market_evidence():
+    context = {"candles": make_candles(120)}
+    anomaly = _anomaly_detection(context)
+    clusters = _clustering(context)
+    assert anomaly["status"] == "computed"
+    assert set(anomaly["value"]["z_scores"]) == {"return_pct", "volume", "range_pct"}
+    assert clusters["status"] == "computed"
+    assert sum(clusters["value"]["cluster_sizes"]) == 100
+
+
+def test_smart_money_regime_and_exhaustion_adapters_are_explainable():
+    context = {"candles": make_candles(120)}
+    from app.engine_suite import _smc, _regime_detector, _trend_exhaustion
+    assert _smc(context)["status"] == "computed"
+    assert _regime_detector(context)["status"] == "computed"
+    assert _trend_exhaustion(context)["status"] == "computed"
+
+
+def test_risk_controls_fail_closed_and_bound_exposure():
+    from app.engine_suite import _leverage_risk, _risk_approval, _dynamic_risk
+    leverage = _leverage_risk({"plan": {
+        "side": "LONG", "entry": 100, "stop": 95, "leverage": 3,
+        "maintenance_margin_rate": 0.005
+    }})
+    assert leverage["status"] == "computed"
+    assert leverage["value"]["estimated_liquidation_price"] < 100
+    assert _risk_approval({"risk_checks": {"stop_valid": True, "daily_limit": False}})["value"]["approved"] is False
+    dynamic = _dynamic_risk({
+        "account": {"equity": 10000}, "plan": {"entry": 100, "stop": 95},
+        "risk_pct": 1.0, "volatility_pct": 4.0, "drawdown_pct": 0
+    })
+    assert dynamic["status"] == "computed"
+    assert dynamic["value"]["effective_risk_pct"] == 0.5
+
+
+def test_slippage_fee_and_monte_carlo_adapters_use_supplied_inputs():
+    from app.engine_suite import _slippage_estimate, _fee_calc, _monte_carlo
+    slip = _slippage_estimate({
+        "order_side": "BUY", "quantity": 3,
+        "orderbook": {"asks": [[100, 2], [101, 3]]}
+    })
+    assert slip["status"] == "computed"
+    assert slip["value"]["filled_quantity"] == 3
+    fees = _fee_calc({"notional": 1000, "fee_rate": 0.001, "fee_sides": 2})
+    assert fees["value"]["estimated_fee"] == 2
+    mc = _monte_carlo({"strategy_returns": [0.01, -0.005, 0.02, -0.01] * 8})
+    assert mc["status"] == "computed"
+    assert mc["value"]["simulations"] == 300
+
+
+def test_walk_forward_and_max_drawdown_use_chronological_trade_data():
+    from app.engine_suite import _walk_forward, _max_drawdown
+    wf = _walk_forward({"strategy_returns": [0.01, -0.005] * 15})
+    assert wf["status"] == "computed"
+    dd = _max_drawdown({
+        "starting_balance": 10000,
+        "closed_trades": [{"pnl": 100}, {"pnl": -250}, {"pnl": 50}]
+    })
+    assert dd["status"] == "computed"
+    assert dd["value"]["max_drawdown_pct"] > 0
+
+
+def test_position_monitor_and_trade_attribution_are_read_only():
+    from app.engine_suite import _position_monitor, _attribution
+    monitored = _position_monitor({
+        "positions": [{"status":"OPEN","symbol":"BTCUSDT","side":"LONG","entry":100,
+                       "quantity":2,"stop_loss":95,"take_profit":110}],
+        "current_prices": {"BTCUSDT": 111}
+    })
+    assert monitored["status"] == "computed"
+    assert monitored["value"]["positions"][0]["target_touched"] is True
+    attr = _attribution({"closed_trades":[
+        {"strategy":"breakout","pnl":10},{"strategy":"breakout","pnl":-2}
+    ]})
+    assert attr["value"]["net_pnl_by_strategy"]["breakout"] == 8
+
+
+def test_signal_expiry_target_and_autonomous_research_are_fail_closed():
+    from app.engine_suite import _signal_expiration, _take_profit, _autonomous_research
+    expiry = _signal_expiration({
+        "signal_created_at": "2026-11-27T08:00:00+00:00",
+        "now_utc": "2026-11-27T08:20:00+00:00",
+        "max_age_seconds": 900
+    })
+    assert expiry["status"] == "computed"
+    assert expiry["value"]["expired"] is True
+    targets = _take_profit({"plan":{"entry":100,"stop":95,"side":"LONG"},
+                             "reward_risk_targets":[1.5,2.0,3.0]})
+    assert targets["value"]["target_references"] == [107.5,110.0,115.0]
+    research = _autonomous_research({"strategy_candidates":[{
+        "name":"test-strategy","train_return":0.20,"validation_return":0.06,
+        "validation_drawdown":9,"validation_trades":45
+    }]})
+    assert research["status"] == "computed"
+    assert research["value"]["candidates"][0]["research_gate_passed"] is True
+    assert research["value"]["candidates"][0]["promotion"] == "MANUAL_REVIEW_REQUIRED"
+
+
+def test_operations_adapters_report_explicit_read_only_state():
+    from app.engine_suite import _event_bus, _data_replay, _watchdog, _audit_log
+    bus = _event_bus({"event_bus":{"published":12,"consumed":9}})
+    assert bus["value"]["backlog"] == 3
+    replay = _data_replay({"replay_events":[
+        {"timestamp":"2026-11-27T10:02:00Z","type":"b"},
+        {"timestamp":"2026-11-27T10:01:00Z","type":"a"}
+    ]})
+    assert replay["value"]["ordered_events"][0]["type"] == "a"
+    watchdog = _watchdog({"heartbeats":{"scanner":{"age_seconds":90}},
+                          "heartbeat_max_age_seconds":60})
+    assert watchdog["value"]["watchdog_alert"] is True
+    audit = _audit_log({"audit_events":[{"event_id":"x"},{"event_id":"x"}]})
+    assert audit["value"]["duplicate_event_ids"] == 1
+
+
+def test_remaining_backtest_metrics_and_optimization_adapters():
+    from app.engine_suite import _win_rate, _profit_factor, _expectancy, _strategy_optimizer, _parameter_optimizer
+    trades = [{"pnl": 12}, {"pnl": -4}, {"pnl": 8}, {"pnl": 0}]
+    win = _win_rate({"closed_trades": trades})
+    factor = _profit_factor({"closed_trades": trades})
+    expectancy = _expectancy({"closed_trades": trades})
+    assert win["value"]["win_rate_pct"] == 50
+    assert factor["value"]["profit_factor"] == 5
+    assert expectancy["value"]["expectancy_per_trade"] == 4
+    optimizer = _strategy_optimizer({"strategy_candidates": [
+        {"name":"A","validation_return":0.15,"validation_drawdown":8,"validation_trades":45},
+        {"name":"B","validation_return":0.20,"validation_drawdown":25,"validation_trades":80}
+    ]})
+    assert optimizer["value"]["selected_for_manual_review"]["name"] == "A"
+    params = _parameter_optimizer({"parameter_trials": [
+        {"parameters":{"fast":10},"validation_score":0.2,"validation_trades":45},
+        {"parameters":{"fast":20},"validation_score":0.3,"validation_trades":35}
+    ]})
+    assert params["value"]["best_trial"]["parameters"]["fast"] == 20
+
+
+def test_security_news_liquidation_and_scheduler_adapters_are_fail_closed():
+    from app.engine_suite import _security, _news_events, _liquidation_heatmap, _scheduler
+    security = _security({"security_policy":{
+        "trading_mode":"simulation","live_trading_enabled":False,
+        "exchange_trade_credentials_present":False,"https_enabled":True,
+        "secrets_redacted":True,"admin_auth_enabled":True
+    }})
+    assert security["value"]["secure"] is True
+    news = _news_events({"news_events":[
+        {"title":"Exchange announces new listing","source":"verified","published_at":"2026-11-27T00:00:00Z"}
+    ]})
+    assert news["value"]["events"][0]["sentiment"] == "POSITIVE"
+    heat = _liquidation_heatmap({"liquidations":[
+        {"price":100,"notional_usdt":1000},{"price":110,"notional_usdt":2000}
+    ]})
+    assert heat["status"] == "computed"
+    scheduler = _scheduler({"scheduled_jobs":[{"name":"scan","interval_seconds":5,"enabled":True}],
+                            "scheduler_backend_configured":False})
+    assert scheduler["value"]["enabled_jobs"] == 1
+    assert scheduler["value"]["scheduler_backend_configured"] is False
+
+
+def test_news_and_external_models_are_never_fabricated():
+    from app.engine_suite import _news_events
+    assert _news_events({})["status"] == "blocked_missing_input"
+    assert run_engine("E047", {"candles":make_candles(180)})["runtime"]["status"] == "blocked_missing_input"
+
+
+def test_options_greeks_and_implied_volatility_are_numerically_consistent():
+    from app.engine_suite import _options_analytics, _implied_volatility_engine, _gamma_exposure
+    context = {
+        "underlying_price": 100,
+        "options_chain": [
+            {"symbol":"TEST-C100","type":"CALL","strike":100,"days_to_expiry":30,
+             "implied_volatility":0.25,"open_interest":1000,"contract_multiplier":1,
+             "dealer_position_sign":-1},
+            {"symbol":"TEST-P100","type":"PUT","strike":100,"days_to_expiry":30,
+             "implied_volatility":0.25,"open_interest":500,"contract_multiplier":1,
+             "dealer_position_sign":1},
+        ]
+    }
+    analytics = _options_analytics(context)
+    iv = _implied_volatility_engine(context)
+    gex = _gamma_exposure(context)
+    assert analytics["status"] == iv["status"] == gex["status"] == "computed"
+    assert analytics["value"]["count"] == 2
+    assert analytics["value"]["contracts"][0]["gamma"] > 0
+    assert 0 < iv["value"]["mean_iv"] < 2
+    assert gex["value"]["net_gamma_available"] is True
+    assert gex["value"]["net_gamma_exposure_per_1pct_move"] is not None
+
+
+def test_implied_volatility_can_be_inverted_from_mid_price():
+    from app.engine_suite import _bs_price, _implied_volatility
+    spot, strike, years, rate, volatility = 100, 105, 0.5, 0.03, 0.32
+    market_price = _bs_price(spot, strike, years, rate, volatility, True)
+    recovered = _implied_volatility(market_price, spot, strike, years, rate, True)
+    assert recovered == pytest.approx(volatility, rel=1e-5)
+
+
+def test_deep_learning_mlp_and_q_learning_use_time_ordered_holdouts():
+    from app.engine_suite import _deep_learning_mlp, _rl_agent
+    context = {"candles": make_candles(190)}
+    mlp = _deep_learning_mlp(context)
+    assert mlp["status"] == "computed"
+    assert mlp["value"]["training_samples"] > mlp["value"]["holdout_samples"] > 0
+    assert 0 <= mlp["value"]["research_score_up"] <= 1
+    assert 0 <= mlp["value"]["chronological_holdout_accuracy_pct"] <= 100
+    rl = _rl_agent(context)
+    assert rl["status"] == "computed"
+    assert rl["value"]["training_transitions"] > rl["value"]["holdout_transitions"] > 0
+    assert set(rl["value"]["holdout_action_counts"]) == {"LONG", "SHORT", "FLAT"}
+    assert "Toy OHLCV simulator" in rl["value"]["warning"]
+
+
+def test_latest_completed_candle_features_are_used_for_live_model_inference():
+    from app.engine_suite import _live_market_features, _candles, _ml_dataset
+    rows = make_candles(190)
+    context = {"candles": rows}
+    live, error = _live_market_features(context)
+    dataset, dataset_error = _ml_dataset(context)
+    assert error is None and dataset_error is None
+    expected = rows[-1]["close"] / rows[-2]["close"] - 1
+    assert live[0] == pytest.approx(expected)
+    assert live[0] != pytest.approx(dataset[-1][0][0])
+
+
+def test_xgboost_style_classifier_runs_second_order_boosting_on_time_holdout():
+    from app.engine_suite import _xgboost_classifier
+    result = _xgboost_classifier({"candles": make_candles(190)})
+    assert result["status"] == "computed"
+    value = result["value"]
+    assert value["model"] == "xgboost_style_second_order_gradient_boosted_trees"
+    assert value["training_samples"] > value["holdout_samples"] > 0
+    assert 0 <= value["research_score_up"] <= 1
+    assert "not the upstream XGBoost library" in value["warning"]
