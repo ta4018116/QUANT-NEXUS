@@ -455,7 +455,7 @@ def test_responsive_card_dashboard_exposes_real_pages_opportunities_and_engine_r
     assert html.count("<script>") == 1
     assert html.count("</script>") == 1
     assert client.get("/api/engines").json()["live_trading_enabled"] is False
-    async def fake_suite(symbol, category, interval, limit):
+    async def fake_suite(symbol, category, interval, limit, request=None):
         return {"engine_readiness":{"total":156,"counts":{"ACTIVE":1,"PARTIAL":2,"BLOCKED":153,"PLANNED":0},
                                     "engines":[{"id":item["id"],"status":"ACTIVE" if item["id"] == "E001" else "BLOCKED"}
                                                for item in main.engine_catalog.__globals__["ENGINE_CATALOG"]],

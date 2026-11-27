@@ -39,7 +39,7 @@ def test_engine_catalog_covers_all_twelve_workstreams():
 
 
 def test_engine_catalog_api_exposes_dynamic_states_and_paper_only_mode(monkeypatch):
-    async def fake_suite(symbol, category, interval, limit):
+    async def fake_suite(symbol, category, interval, limit, request=None):
         readiness = {
             "total":156,
             "counts":{"ACTIVE":1,"PARTIAL":5,"BLOCKED":150,"PLANNED":0,"total":156},
@@ -65,7 +65,7 @@ def test_engine_catalog_api_exposes_dynamic_states_and_paper_only_mode(monkeypat
 
 
 def test_engine_suite_coverage_endpoint_returns_dynamic_not_adapter_counts(monkeypatch):
-    async def fake_suite(symbol, category, interval, limit):
+    async def fake_suite(symbol, category, interval, limit, request=None):
         readiness={"total":156,"counts":{"ACTIVE":2,"PARTIAL":4,"BLOCKED":149,"PLANNED":1,"total":156},
                    "engines":[],"last_checked_at":"2026-11-27T12:00:00+00:00",
                    "trading_mode":"simulation","live_trading_enabled":False}
