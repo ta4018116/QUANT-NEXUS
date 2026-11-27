@@ -37,6 +37,38 @@ def normalize_liquidations(rows: list[dict]) -> list[dict]:
     return events
 
 
+
+def normalize_binance_liquidation(payload: dict) -> list[dict]:
+    """Normalize Binance USD-M forceOrder snapshots; these are sampled liquidation prints."""
+    if not isinstance(payload, dict) or payload.get("e") != "forceOrder":
+        return []
+    row = payload.get("o")
+    if not isinstance(row, dict):
+        return []
+    try:
+        symbol = str(row.get("s") or "").upper()
+        side = str(row.get("S") or "").upper()
+        size = float(row.get("z") or row.get("l") or row.get("q"))
+        price = float(row.get("ap") or row.get("p"))
+        timestamp_ms = int(row.get("T") or payload.get("E"))
+    except (TypeError, ValueError, OverflowError):
+        return []
+    if not symbol.endswith("USDT") or side not in {"BUY", "SELL"} or size <= 0 or price <= 0 or timestamp_ms <= 0:
+        return []
+    return [{
+        "symbol": symbol,
+        "liquidated_position": "SHORT" if side == "BUY" else "LONG",
+        "side": side,
+        "size": size,
+        "bankruptcy_price": price,
+        "notional_usdt": round(size * price, 8),
+        "timestamp_ms": timestamp_ms,
+        "timestamp": datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).isoformat(),
+        "provider": "Binance",
+        "feed": "forceOrder",
+        "sampling_note": "Binance publishes the latest liquidation order snapshot per symbol at most once per 1000ms",
+    }]
+
 def summarize_liquidations(events: list[dict]) -> dict:
     valid = [x for x in events if isinstance(x, dict)]
     long_value = sum(float(x.get("notional_usdt") or 0) for x in valid if x.get("liquidated_position") == "LONG")
