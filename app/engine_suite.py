@@ -1499,6 +1499,117 @@ def _event_bus(ctx):
 
 
 
+def _market_data_ingestion(ctx):
+    rows = ctx.get("candles")
+    provider = str(ctx.get("provider") or "").strip()
+    if not isinstance(rows, list) or not rows:
+        return _blocked("market candle feed is absent", ["candles", "provider"])
+    valid = _candles(ctx)
+    if not provider:
+        return _blocked("provider identity is missing; source cannot be audited", ["provider"])
+    if len(valid) < 30:
+        return _blocked("market feed has fewer than 30 valid candles", ["30_valid_candles"])
+    return _ready({
+        "provider": provider, "symbol": ctx.get("symbol"),
+        "category": ctx.get("category"), "interval": ctx.get("interval"),
+        "received_candles": len(rows), "valid_candles": len(valid),
+        "rejected_candles": len(rows) - len(valid),
+        "source_timestamp": ctx.get("source_timestamp"),
+        "source_health": ctx.get("source_health", "not_reported"),
+    }, "validated provider-tagged market snapshot; provider health is reported separately")
+
+
+def _data_normalization(ctx):
+    raw = ctx.get("candles")
+    if not isinstance(raw, list) or not raw:
+        return _blocked("raw candle rows are required", ["candles"])
+    normalized = []
+    rejected = 0
+    for row in raw:
+        if not isinstance(row, dict):
+            rejected += 1
+            continue
+        try:
+            item = {k: float(row[k]) for k in ("open", "high", "low", "close", "volume")}
+            stamp = int(row.get("time"))
+        except (KeyError, TypeError, ValueError, OverflowError):
+            rejected += 1
+            continue
+        if not all(isfinite(v) for v in item.values()) or min(item["open"], item["high"], item["low"], item["close"]) <= 0 or item["volume"] < 0:
+            rejected += 1
+            continue
+        if item["high"] < max(item["open"], item["close"], item["low"]) or item["low"] > min(item["open"], item["close"], item["high"]):
+            rejected += 1
+            continue
+        normalized.append({"time": stamp, **item})
+    normalized.sort(key=lambda x: x["time"])
+    unique = []
+    seen = set()
+    duplicates = 0
+    for row in normalized:
+        if row["time"] in seen:
+            duplicates += 1
+            continue
+        seen.add(row["time"])
+        unique.append(row)
+    if len(unique) < 30:
+        return _blocked("fewer than 30 normalized unique candles remain", ["30_unique_valid_candles"])
+    return _ready({
+        "input_rows": len(raw), "normalized_rows": len(unique),
+        "rejected_rows": rejected, "duplicate_timestamps_removed": duplicates,
+        "ordered": True, "first_timestamp": unique[0]["time"],
+        "last_timestamp": unique[-1]["time"],
+    }, "finite OHLCV validation, UTC timestamp ordering and duplicate removal; output is an audit summary")
+
+
+def _liquidity(ctx):
+    book = ctx.get("orderbook")
+    if not isinstance(book, dict):
+        return _blocked("live order-book snapshot required", ["orderbook.bids", "orderbook.asks"])
+    bids, asks = book.get("bids") or [], book.get("asks") or []
+    try:
+        valid_bids = [(float(x[0]), float(x[1])) for x in bids if len(x) >= 2 and float(x[0]) > 0 and float(x[1]) > 0]
+        valid_asks = [(float(x[0]), float(x[1])) for x in asks if len(x) >= 2 and float(x[0]) > 0 and float(x[1]) > 0]
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return _blocked("order-book levels are malformed", ["positive_price_size_levels"])
+    if not valid_bids or not valid_asks:
+        return _blocked("both bid and ask sides are required", ["nonempty_bids", "nonempty_asks"])
+    best_bid = max(x[0] for x in valid_bids)
+    best_ask = min(x[0] for x in valid_asks)
+    if best_ask <= best_bid:
+        return _blocked("crossed or locked order book; spread is not trustworthy", ["uncrossed_orderbook"])
+    bid_depth = sum(p*q for p,q in valid_bids[:20])
+    ask_depth = sum(p*q for p,q in valid_asks[:20])
+    mid = (best_bid + best_ask) / 2
+    return _ready({
+        "best_bid": best_bid, "best_ask": best_ask, "mid_price": mid,
+        "spread_abs": best_ask-best_bid, "spread_bps": (best_ask-best_bid)/mid*10000,
+        "bid_depth_notional": bid_depth, "ask_depth_notional": ask_depth,
+        "total_depth_notional": bid_depth+ask_depth,
+        "depth_imbalance": (bid_depth-ask_depth)/(bid_depth+ask_depth) if bid_depth+ask_depth else 0,
+        "levels_used": min(20, len(valid_bids))+min(20, len(valid_asks)),
+        "provider": book.get("provider"),
+    }, "top-20 validated order-book depth and quoted spread; displayed liquidity can be cancelled")
+
+
+def _volatility(ctx):
+    rows, err = _base(ctx, 20)
+    if err:
+        return err
+    closes = [x["close"] for x in rows]
+    atr = _atr(rows, 14)
+    returns = [(closes[i]/closes[i-1]-1) for i in range(1, len(closes)) if closes[i-1] > 0]
+    window = returns[-20:]
+    realized = pstdev(window) * sqrt( periods_per_year := 365*24*4 ) * 100 if len(window) >= 2 and str(ctx.get("interval")) == "15m" else (pstdev(window)*100 if len(window)>=2 else None)
+    price = closes[-1]
+    return _ready({
+        "atr14": atr, "atr_pct": atr/price*100 if atr is not None and price else None,
+        "realized_return_volatility_pct": realized,
+        "return_observations": len(window), "interval": ctx.get("interval"),
+        "volatility_state": "HIGH" if atr is not None and atr/price >= 0.04 else "LOW" if atr is not None and atr/price <= 0.01 else "NORMAL" if atr is not None else "UNKNOWN",
+    }, "Wilder ATR14 and standard deviation of completed-bar returns; annualization only for 15m crypto bars")
+
+
 def _data_quality(ctx):
     rows,err=_base(ctx,20)
     if err:return err
@@ -2338,8 +2449,8 @@ _HANDLER_IDS.update({
 })
 # Final handler map: bind each engine to its most specific available implementation.
 _HANDLER_IDS.update({
-    "E001":_base, "E002":_orderbook, "E003":_orderbook, "E004":_compression,
-    "E005":_base, "E006":_data_quality, "E007":_news_events, "E008":_cross_market_correlation,
+    "E001":_market_data_ingestion, "E002":_orderbook, "E003":_liquidity, "E004":_volatility,
+    "E005":_data_normalization, "E006":_data_quality, "E007":_news_events, "E008":_cross_market_correlation,
     "E009":_trend, "E010":_market_structure, "E011":_support_resistance, "E012":_supply_demand,
     "E013":_smc, "E014":_order_block, "E015":_fvg, "E016":_breakout, "E017":_divergence,
     "E018":_momentum, "E019":_candlestick, "E020":_fibonacci, "E021":_vwap,
