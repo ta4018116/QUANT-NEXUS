@@ -35,7 +35,8 @@ def test_all_156_engine_ids_have_runtime_adapters():
     assert coverage["catalogue_engines"] == 156
     assert coverage["routed_adapters"] == 156
     assert coverage["callable_adapter_coverage_pct"] == 100
-    assert coverage["active_runtime_adapters"] == 156
+    assert coverage["callable_adapters"] == 156
+    assert coverage["active_runtime_adapters"] == 0
     assert coverage["external_or_model_blocked_ids"] == []
     assert coverage["catalogue_status_counts"]["planned"] == 0
     assert coverage["unrouted_adapters"] == []
@@ -136,7 +137,7 @@ def test_engine_suite_api_uses_completed_candles_and_stays_paper_only(monkeypatc
     assert payload["completed_candles"] == 120
     assert payload["engine_suite"]["total_requested"] == 156
     assert payload["engine_readiness"]["total"] == 156
-    assert sum(payload["engine_readiness"]["counts"][key] for key in ("implemented", "partial", "planned")) == 156
+    assert sum(payload["engine_readiness"]["counts"][key] for key in ("ACTIVE", "PARTIAL", "BLOCKED", "PLANNED")) == 156
     assert all("test_result" in item and "source_evidence" in item for item in payload["engine_readiness"]["engines"])
     assert payload["engine_readiness"]["live_trading_enabled"] is False
     assert payload["early_opportunity"]["live_trading_enabled"] is False

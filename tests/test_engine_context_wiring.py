@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from datetime import datetime, timezone
 
 from app import main
 
@@ -83,8 +84,27 @@ def test_multi_market_engine_suite_uses_twelve_data_and_keeps_paper_only(monkeyp
     assert payload["market"] == "stocks"
     assert payload["completed_candles"] == 120
     assert payload["engine_suite"]["total_requested"] == 156
+    assert payload["engine_readiness"]["total"] == 156
+    assert payload["engine_readiness"]["counts"]["ACTIVE"] + payload["engine_readiness"]["counts"]["PARTIAL"] + payload["engine_readiness"]["counts"]["BLOCKED"] + payload["engine_readiness"]["counts"]["PLANNED"] == 156
+    assert payload["engine_readiness"]["engines"][0]["source_evidence"]["market_snapshot"]["frequency"] == "daily"
+    assert payload["engine_readiness"]["engines"][0]["source_evidence"]["market_snapshot"]["data_quality"] == "daily_ohlcv"
     assert payload["live_trading_enabled"] is False
     assert payload["trading_mode"] == "simulation"
+
+
+def test_market_snapshot_marks_intraday_and_daily_fallbacks_distinctly():
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    candle = {"time":now_ms,"open":100,"high":101,"low":99,"close":100,"volume":1}
+    daily = main._market_snapshot_evidence([candle], "1d", "Stooq", {
+        "provider":"Stooq","interval":"1d","data_quality":"daily_ohlcv",
+        "freshness":"daily","limitations":"Daily bars only",
+    })
+    intraday = main._market_snapshot_evidence([candle], "5m", "Twelve Data")
+    assert daily["frequency"] == "daily"
+    assert daily["data_quality"] == "daily_ohlcv"
+    assert intraday["frequency"] == "intraday"
+    assert intraday["data_quality"] == "exchange_ohlcv"
+    assert daily["freshness_status"] == intraday["freshness_status"] == "fresh"
 
 
 def test_multi_market_engine_suite_rejects_intraday_without_key(monkeypatch):

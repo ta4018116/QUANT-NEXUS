@@ -100,7 +100,10 @@ def test_cryptopanic_without_token_fails_closed(monkeypatch):
 
 def test_provider_configuration_does_not_expose_secret_values(monkeypatch):
     monkeypatch.setenv("COINGLASS_API_KEY", "DO_NOT_RETURN_THIS")
+    monkeypatch.setenv("TWELVE_DATA_API_KEY", "TWELVE_DATA_SECRET_MUST_STAY_HIDDEN")
     report = provider_feeds.provider_configuration()
     serialized = str(report)
     assert "DO_NOT_RETURN_THIS" not in serialized
+    assert "TWELVE_DATA_SECRET_MUST_STAY_HIDDEN" not in serialized
     assert report["providers"]["coinglass_liquidations"]["status"] == "configured"
+    assert report["providers"]["twelve_data"]["status"] == "configured"

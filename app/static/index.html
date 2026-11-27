@@ -144,7 +144,7 @@
 .engine-card{padding:11px;border:1px solid #12465a;border-radius:10px;background:#061522;min-width:0}
 .engine-card b{display:block;margin-bottom:6px}.engine-card small{display:block;color:var(--muted);line-height:1.6}
 .engine-status{display:inline-block;border-radius:20px;padding:4px 8px;font-size:10px;margin-bottom:7px}
-.engine-status.implemented{color:#20ff83;border:1px solid #20ff83}.engine-status.partial{color:#ffc928;border:1px solid #ffc928}.engine-status.planned{color:#c58bff;border:1px solid #a66bdf}
+.engine-status.implemented{color:#20ff83;border:1px solid #20ff83}.engine-status.partial{color:#ffc928;border:1px solid #ffc928}.engine-status.blocked{color:#ff7373;border:1px solid #ff7373}.engine-status.planned{color:#c58bff;border:1px solid #a66bdf}
 .page-back{border:1px solid var(--green);background:#08251b;color:var(--green);border-radius:9px;padding:10px 14px;font-weight:900;min-height:42px}
 @media(max-width:900px){.dashboard-home{grid-template-columns:repeat(3,minmax(0,1fr))}.engine-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px){.dashboard-home{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:7px 5px}.home-card{min-height:105px;padding:11px;border-radius:11px}.home-card b{font-size:13px}.home-card small{font-size:10px}.home-card .card-icon{font-size:22px}.page-toolbar{margin:6px;padding:8px}.page-mode .layout{padding:0 6px}.opp-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.opp-score{font-size:18px}.engine-grid{grid-template-columns:1fr}.opportunity-card{padding:10px}.home-title{font-size:15px}}
@@ -369,20 +369,23 @@ async function loadEngines(){
  $('engineGrid').innerHTML='<div class="muted">جارٍ اختبار المحركات على لقطة سوق حقيقية...</div>';
  try{
   const symbol=selected||'BTCUSDT';
-  const d=await api('/api/engine-suite/'+encodeURIComponent(symbol)+'?category='+cat()+'&interval='+tf()+'&limit=180');
-  const readiness=d.engine_readiness;
+  const d=await api('/api/engine-suite/coverage?symbol='+encodeURIComponent(symbol)+'&category='+cat()+'&interval='+tf()+'&limit=180');
+  const readiness=d;
   if(!readiness||readiness.total!==156)throw Error('لم يصل تقييم ديناميكي كامل للمحركات الـ156');
   const counts=readiness.counts;
   $('engineCounts').textContent=readiness.total+' محرك · اختبار '+engineHtml(symbol);
-  $('engineSummary').innerHTML='<div><small>مكتملة بعد الاختبار</small><b class="positive">'+counts.implemented+'</b></div><div><small>جزئية / محجوبة</small><b class="gold">'+counts.partial+'</b></div><div><small>مخططة</small><b>'+counts.planned+'</b></div><div><small>مصدر اللقطة</small><b>'+engineHtml(d.provider)+'</b></div>';
+  $('engineSummary').innerHTML='<div><small>نشطة بدليل حالي</small><b class="positive">'+counts.ACTIVE+'</b></div><div><small>جزئية</small><b class="gold">'+counts.PARTIAL+'</b></div><div><small>محجوبة</small><b class="negative">'+counts.BLOCKED+'</b></div><div><small>مخططة</small><b>'+counts.PLANNED+'</b></div><div><small>مصدر اللقطة</small><b>'+engineHtml(d.provider)+'</b></div><div><small>آخر فحص</small><b>'+engineHtml(readiness.last_checked_at)+'</b></div>';
   $('engineGrid').innerHTML=readiness.engines.map(function(x){
    const status=x.status, test=x.test_result||{}, source=x.source_evidence||{};
-   const label=status==='implemented'?'مكتمل ومختبَر':status==='planned'?'مخطط':'جزئي / غير جاهز';
-   const tone=status==='implemented'?'implemented':status==='planned'?'planned':'partial';
+   const labels={ACTIVE:'نشط · اجتاز الأدلة',PARTIAL:'جزئي',BLOCKED:'محجوب',PLANNED:'مخطط'};
+   const label=labels[status]||status;
+   const tone=status==='ACTIVE'?'implemented':status==='PLANNED'?'planned':status==='BLOCKED'?'blocked':'partial';
    const reasons=(x.readiness_reasons||[]).map(engineHtml).join(' · ');
    const providers=(source.providers||[]).slice(0,4).map(engineHtml).join('، ');
    const testLabel=test.status==='passed'?'نجح على اللقطة الحالية':'لم يجتز / مدخلات ناقصة';
-   return '<article class="engine-card"><span class="engine-status '+tone+'">'+label+'</span><b>'+engineHtml(x.name_ar)+'</b><small>'+engineHtml(x.id)+' · '+engineHtml(x.name)+' · '+engineHtml(x.group)+'</small><small style="margin-top:7px">اختبار التشغيل: '+testLabel+' ('+engineHtml(test.runtime_status)+')</small><small style="margin-top:5px">مصدر البيانات: '+(source.mapped?'موثق':'غير مكتمل')+' · '+(providers||'لا يوجد مصدر محدد')+'</small>'+(reasons?'<small class="gold" style="margin-top:7px">سبب الحالة: '+reasons+'</small>':'<small class="positive" style="margin-top:7px">اجتاز شروط التفعيل على لقطة الاختبار الحالية</small>')+'</article>';
+   const snapshot=source.market_snapshot||{};
+   const sourceLabel=(snapshot.provider||source.market_snapshot_provider||providers||'لا يوجد مصدر محدد')+' · '+(snapshot.frequency||'تردد غير محدد')+' · '+(snapshot.freshness_status||'حداثة غير مثبتة');
+   return '<article class="engine-card"><span class="engine-status '+tone+'">'+label+'</span><b>'+engineHtml(x.name_ar)+'</b><small>'+engineHtml(x.id)+' · '+engineHtml(x.name)+' · '+engineHtml(x.group)+'</small><small style="margin-top:7px">اختبار التشغيل: '+testLabel+' ('+engineHtml(test.runtime_status)+')</small><small style="margin-top:5px">المصدر: '+engineHtml(sourceLabel)+'</small><small style="margin-top:5px">آخر فحص: '+engineHtml(x.last_checked_at||test.checked_at||readiness.last_checked_at)+'</small>'+(reasons?'<small class="gold" style="margin-top:7px">سبب الحالة: '+reasons+'</small>':'<small class="positive" style="margin-top:7px">اجتاز شروط التفعيل على لقطة الاختبار الحالية</small>')+'</article>';
   }).join('');
   if(readiness.live_trading_enabled!==false||d.live_trading_enabled!==false)throw Error('فشل فحص الأمان: التداول الحقيقي يجب أن يبقى معطلاً');
  }catch(e){

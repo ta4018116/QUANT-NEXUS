@@ -136,6 +136,39 @@ TWELVE_DATA_INTERVALS = {
     "1m":"1min","5m":"5min","15m":"15min","30m":"30min",
     "1h":"1h","2h":"2h","4h":"4h","1d":"1day","1w":"1week",
 }
+
+
+def _market_snapshot_evidence(candles: list[dict], interval: str, provider: str | dict,
+                              provider_info: dict | None = None) -> dict:
+    """Describe the observed market snapshot without treating a daily fallback as intraday."""
+    info = provider_info or (provider if isinstance(provider, dict) else {})
+    provider_name = info.get("provider") if info else provider
+    daily = info.get("interval") == "1d" or interval == "1d"
+    interval_seconds = 86400 if daily else int(INTERVALS.get(interval, interval)) * 60
+    latest = candles[-1].get("time") if candles else None
+    try:
+        timestamp = float(latest)
+        if timestamp > 10_000_000_000:
+            timestamp /= 1000
+        observed = datetime.fromtimestamp(timestamp, timezone.utc)
+        age = max(0.0, (datetime.now(timezone.utc) - observed).total_seconds())
+        source_timestamp = observed.isoformat()
+    except (TypeError, ValueError, OSError, OverflowError):
+        age = None
+        source_timestamp = None
+    max_age = 4 * 86400 if daily else max(180, 2 * interval_seconds + 90)
+    fresh = age is not None and age <= max_age
+    return {
+        "provider": provider_name,
+        "interval": "1d" if daily else interval,
+        "frequency": "daily" if daily else "intraday",
+        "data_quality": info.get("data_quality", "exchange_ohlcv"),
+        "source_timestamp": source_timestamp,
+        "age_seconds": round(age, 2) if age is not None else None,
+        "maximum_age_seconds": max_age,
+        "freshness_status": "fresh" if fresh else "stale_or_unknown",
+        "limitations": info.get("limitations"),
+    }
 TWELVE_DATA_MARKETS = {"forex","stocks","indices","commodities"}
 
 async def bybit_get(path: str, params: dict):
@@ -1033,9 +1066,15 @@ async def engines():
 
 
 @app.get("/api/engine-catalog")
-async def engine_catalog_endpoint():
-    """Return the auditable 156-engine catalogue and honest implementation states."""
-    return engine_catalog()
+async def engine_catalog_endpoint(symbol: str = "BTCUSDT", category: str = "spot",
+                                 interval: str = "15m", limit: int = Query(180, ge=60, le=500)):
+    """Return catalogue declarations joined to request-time runtime evidence."""
+    result = await market_engine_suite(symbol, category, interval, limit)
+    readiness = result["engine_readiness"]
+    catalog = engine_catalog(readiness)
+    catalog.update({"readiness":readiness, "last_checked_at":readiness["last_checked_at"],
+                    "symbol":result["symbol"], "provider":result["provider"]})
+    return catalog
 
 @app.get("/api/events/status")
 async def engine_event_status():
@@ -1075,9 +1114,15 @@ async def engine_sources_endpoint():
 
 
 @app.get("/api/engine-suite/coverage")
-async def engine_suite_coverage():
-    """Show how many catalogue entries have callable runtime adapters."""
-    return catalogue_runtime_coverage()
+async def engine_suite_coverage(symbol: str = "BTCUSDT", category: str = "spot",
+                                interval: str = "15m", limit: int = Query(180, ge=60, le=500)):
+    """Run the functional suite and return dynamic readiness counts and evidence."""
+    result = await market_engine_suite(symbol, category, interval, limit)
+    readiness = result["engine_readiness"]
+    return {**readiness, "adapter_coverage":result["engine_coverage"],
+            "symbol":result["symbol"], "category":result["category"],
+            "interval":result["interval"], "provider":result["provider"],
+            "provider_health":result["provider_health"]}
 
 
 async def _public_json(url: str, params: dict | None = None) -> dict:
@@ -1696,6 +1741,20 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         for event in context["notification_events"]
     ]
     selected = [x.strip().upper() for x in engine_ids.split(",") if x.strip()] if engine_ids else None
+    market_snapshot = _market_snapshot_evidence(completed, interval, provider)
+    context["market_snapshot"] = market_snapshot
+    provider_health["market_data"] = {
+        "status":"ok" if market_snapshot["freshness_status"] == "fresh" else "stale",
+        "provider":provider, "interval":market_snapshot["interval"],
+        "freshness":market_snapshot["freshness_status"],
+        "data_quality":market_snapshot["data_quality"],
+        "age_seconds":market_snapshot["age_seconds"],
+    }
+    provider_health["timeframes"] = {"status":"ok" if len(context.get("timeframes", {})) >= 2 else "unavailable",
+                                      "available_count":len(context.get("timeframes", {}))}
+    provider_health["orderbook"] = {"status":"ok" if context.get("orderbook") else "unavailable"}
+    provider_health["trades"] = {"status":"ok" if context.get("trades") else "unavailable"}
+    provider_health["twelve_data"] = provider_configuration()["providers"]["twelve_data"]
     suite = run_engine_suite(context, selected)
     return {
         "symbol": symbol, "category": category, "interval": interval,
@@ -1703,7 +1762,8 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
         "auxiliary_data": auxiliary, "market_regime": regime,
         "market_structure": structure, "early_opportunity": early,
         "engine_suite": suite, "engine_readiness": build_engine_readiness(
-            suite, market_provider=provider, provider_health=provider_health
+            suite, market_provider=provider, provider_health=provider_health,
+            market_snapshot=market_snapshot,
         ), "engine_coverage": catalogue_runtime_coverage(),
         "provider_health": provider_health,
         "notification_delivery": notification_delivery,
@@ -1913,14 +1973,25 @@ async def multi_market_engine_suite(
         for event in context["notification_events"]
     ]
     selected=[x.strip().upper() for x in engine_ids.split(",") if x.strip()] if engine_ids else None
+    market_snapshot=_market_snapshot_evidence(completed,interval,provider_info,provider_info)
+    context["market_snapshot"]=market_snapshot
     suite=run_engine_suite(context,selected)
+    provider_health={"market_data":{"status":"ok" if market_snapshot["freshness_status"]=="fresh" else "stale",
+                                     "provider":provider_info.get("provider"),"interval":market_snapshot["interval"],
+                                     "freshness":market_snapshot["freshness_status"],
+                                     "data_quality":market_snapshot["data_quality"],
+                                     "age_seconds":market_snapshot["age_seconds"]},
+                     "news":news_sources,
+                     "timeframes":{"status":"ok" if len(frames)>=2 else "unavailable","available_count":len(frames)},
+                     "twelve_data":provider_configuration()["providers"]["twelve_data"]}
+    readiness=build_engine_readiness(suite,market_provider=provider_info.get("provider"),
+                                     provider_health=provider_health,market_snapshot=market_snapshot)
     return {
         "symbol":symbol.upper(),"market":market,"interval":interval,
         "provider":provider_info,"completed_candles":len(completed),
         "early_opportunity":early,"engine_suite":suite,
-        "engine_coverage":catalogue_runtime_coverage(),
-        "provider_health":{"market_data":{"status":"ok","configured_provider":provider_info.get("provider"),**provider_info},
-                           "news":news_sources},
+        "engine_readiness":readiness,"engine_coverage":catalogue_runtime_coverage(),
+        "provider_health":provider_health,
         "notification_delivery":notification_delivery,
         "background_runtime":OPS_RUNTIME.status(),
         "trading_mode":"simulation","live_trading_enabled":False,
