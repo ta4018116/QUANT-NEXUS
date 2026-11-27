@@ -337,14 +337,6 @@ _ENGINE_OVERRIDES = {
         "credentials": "TELEGRAM_BOT_TOKEN_and_TELEGRAM_CHAT_ID_or_ALERT_WEBHOOK_URL",
         "limits": "Delivery is disabled until credentials are configured; delivery attempts and delivery confirmation are distinct states.",
     },
-    "E151": {
-        "source_class": "audit_event_records",
-        "providers": ["Internal paper trade records and structured application audit events"],
-        "endpoints": ["Internal PaperStore trade history", "Structured application audit log"],
-        "inputs": ["event ID", "actor/service", "action", "timestamp", "before/after reference", "integrity metadata"],
-        "credentials": "restricted_server_log_and_database_access",
-        "limits": "Current adapter validates supplied audit events; a separate tamper-evident append-only audit store is not provisioned.",
-    },
     "E152": {
         "source_class": "research_model_artifact_registry",
         "providers": ["Internal JSON model registry at MODEL_REGISTRY_PATH"],
