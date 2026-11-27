@@ -2387,6 +2387,26 @@ for _catalogue_item in ENGINE_CATALOG:
     _HANDLER_IDS.setdefault(_catalogue_item["id"], _external)
 
 
+def _sanitize_runtime_value(value: Any, path: str = "$", invalid_paths: list[str] | None = None):
+    """Prevent NaN/Infinity from escaping an engine adapter into strict JSON responses."""
+    if invalid_paths is None:
+        invalid_paths = []
+    if isinstance(value, float) and not isfinite(value):
+        invalid_paths.append(path)
+        return None
+    if isinstance(value, dict):
+        return {
+            str(key): _sanitize_runtime_value(item, f"{path}.{key}", invalid_paths)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [
+            _sanitize_runtime_value(item, f"{path}[{index}]", invalid_paths)
+            for index, item in enumerate(value)
+        ]
+    return value
+
+
 def run_engine(engine_id: str, context: dict) -> dict:
     item = next((x for x in ENGINE_CATALOG if x["id"] == engine_id), None)
     if item is None:
@@ -2402,6 +2422,15 @@ def run_engine(engine_id: str, context: dict) -> dict:
             value = handler(context)
         except (TypeError, ValueError, KeyError, ZeroDivisionError, OverflowError) as exc:
             value = {"status":"input_error","reason":type(exc).__name__}
+    invalid_numeric_paths: list[str] = []
+    value = _sanitize_runtime_value(value, invalid_paths=invalid_numeric_paths)
+    if invalid_numeric_paths:
+        value = {
+            "status": "invalid_numeric_output",
+            "reason": "Engine produced NaN or Infinity; unsafe numeric fields were suppressed.",
+            "invalid_numeric_paths": invalid_numeric_paths,
+            "sanitized_value": value,
+        }
     return {"engine_id":engine_id,"name":item["name"],"group":item["group"],
             "catalog_status":item["status"],"runtime":value,
             "trading_mode":"simulation","live_trading_enabled":False}
