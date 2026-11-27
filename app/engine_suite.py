@@ -2780,3 +2780,51 @@ def early_opportunity_assessment(context: dict) -> dict:
         elif br.get("status")=="computed" and br["value"]["breakout_up"]: parts["structure"]=8; reasons.append("اختراق صاعد مؤكد بإغلاق شمعة")
         elif not sweep["value"]["bearish_sweep"]: parts["structure"]=4
     else: missing.append("structure")
+    if reg.get("status")=="ok":
+        parts["regime"]=5 if reg.get("trend")=="UPTREND" else 2.5 if reg.get("trend")=="RANGE" else 0
+    else: missing.append("market_regime")
+    deriv=_derivatives(context)
+    if deriv.get("status")=="computed":
+        funding=deriv["value"]["funding_rate"]
+        parts["derivatives"]=5 if funding<=0.0005 else 2.5 if funding<=0.001 else 0
+    else: missing.append("derivatives")
+    score=round(sum(parts.values()),2)
+    confirmed=bool(br.get("status")=="computed" and br["value"]["breakout_up"])
+    if score>=80 and not confirmed: tier="GOLD_EARLY"
+    elif score>=65: tier="GREEN_WATCH"
+    elif score>=45: tier="SILVER_EARLY"
+    else: tier="NO_SETUP"
+    if confirmed: tier="BREAKOUT_CONFIRMED"
+    close=rows[-1]["close"]; atr=_atr(rows) or close*0.01
+    entry_low=close-0.15*atr; entry_high=close+0.1*atr
+    invalidation=close-1.5*atr
+    return {"status":"computed","symbol":context.get("symbol"),"category":context.get("category","spot"),
+            "interval":context.get("interval"),"score":score,"max_score":100,"components":parts,
+            "tier":tier,"breakout_confirmed":confirmed,"reasons":reasons,"missing_confirmations":missing,
+            "reference_price":close,"watch_entry_zone":[round(entry_low,10),round(entry_high,10)],
+            "invalidation_reference":round(invalidation,10),
+            "targets_reference":[round(close+2*atr,10),round(close+3*atr,10)],
+            "plan_note":"Research watch-zone only; not an order or probability. Confirm entry, liquidity and risk independently.",
+            "trading_mode":"simulation","live_trading_enabled":False}
+
+
+def catalogue_runtime_coverage() -> dict:
+    all_ids={x["id"] for x in ENGINE_CATALOG}
+    routed=all_ids.intersection(_HANDLER_IDS)
+    external_only=sorted(x for x in routed if _HANDLER_IDS.get(x) is _external)
+    callable_adapters=sorted(routed-set(external_only))
+    status_counts={status:sum(1 for x in ENGINE_CATALOG if x["status"]==status)
+                   for status in ("implemented","partial","planned")}
+    return {
+        "catalogue_engines":len(all_ids),
+        "routed_adapters":len(routed),
+        "callable_adapter_coverage_pct":round(len(routed)/len(all_ids)*100,2) if all_ids else 0,
+        "callable_adapters":len(callable_adapters),
+        "active_runtime_adapters":0,
+        "external_or_model_blocked_adapters":len(external_only),
+        "external_or_model_blocked_ids":external_only,
+        "unrouted_adapters":sorted(all_ids-routed),
+        "catalogue_status_counts":status_counts,
+        "trading_mode":"simulation","live_trading_enabled":False,
+        "note":"Adapter counts describe callable code only. ACTIVE counts are produced by request-time evidence evaluation, never by adapter presence."
+    }
