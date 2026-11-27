@@ -776,7 +776,7 @@ async def early_opportunity_scan(
                 }
                 if not isinstance(book_result, Exception):
                     bids, asks, _ = book_result
-                    context["orderbook"] = {"bids": bids, "asks": asks}
+                    context["orderbook"] = {"bids": bids, "asks": asks, "provider": book_provider, "source_timestamp": datetime.now(timezone.utc).isoformat()}
                 if not isinstance(trades_result, Exception):
                     trades, _ = trades_result
                     context["trades"] = trades
@@ -1505,6 +1505,8 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
     context = {
         "symbol": symbol, "category": category, "interval": interval,
         "candles": completed, "closes": closes,
+        "provider": provider, "source_timestamp": datetime.now(timezone.utc).isoformat(),
+        "source_health": "fetch_succeeded",
         "analysis": analysis, "regime": regime, "structure": structure,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "account": {"equity": paper_equity},
