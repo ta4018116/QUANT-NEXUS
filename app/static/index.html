@@ -384,7 +384,9 @@ async function loadEngines(){
    const providers=(source.providers||[]).slice(0,4).map(engineHtml).join('، ');
    const testLabel=test.status==='passed'?'نجح على اللقطة الحالية':'لم يجتز / مدخلات ناقصة';
    const snapshot=source.market_snapshot||{};
-   const sourceLabel=(snapshot.provider||source.market_snapshot_provider||providers||'لا يوجد مصدر محدد')+' · '+(snapshot.frequency||'تردد غير محدد')+' · '+(snapshot.freshness_status||'حداثة غير مثبتة');
+   const sourceLabel=source.market_snapshot_required===false
+    ?(providers||source.source_class||'مصدر داخلي')+' · فحص داخلي عند الطلب'
+    :(snapshot.provider||source.market_snapshot_provider||providers||'لا يوجد مصدر محدد')+' · '+(snapshot.frequency||'تردد غير محدد')+' · '+(snapshot.freshness_status||'حداثة غير مثبتة');
    return '<article class="engine-card"><span class="engine-status '+tone+'">'+label+'</span><b>'+engineHtml(x.name_ar)+'</b><small>'+engineHtml(x.id)+' · '+engineHtml(x.name)+' · '+engineHtml(x.group)+'</small><small style="margin-top:7px">اختبار التشغيل: '+testLabel+' ('+engineHtml(test.runtime_status)+')</small><small style="margin-top:5px">المصدر: '+engineHtml(sourceLabel)+'</small><small style="margin-top:5px">آخر فحص: '+engineHtml(x.last_checked_at||test.checked_at||readiness.last_checked_at)+'</small>'+(reasons?'<small class="gold" style="margin-top:7px">سبب الحالة: '+reasons+'</small>':'<small class="positive" style="margin-top:7px">اجتاز شروط التفعيل على لقطة الاختبار الحالية</small>')+'</article>';
   }).join('');
   if(readiness.live_trading_enabled!==false||d.live_trading_enabled!==false)throw Error('فشل فحص الأمان: التداول الحقيقي يجب أن يبقى معطلاً');

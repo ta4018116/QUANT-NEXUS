@@ -60,70 +60,81 @@ ENGINE_CATALOG = [
     "name": "Data Normalization",
     "name_ar": "محرك Data Normalization",
     "group": "Market Intelligence",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
-      "وجود مسار وظيفي مرتبط في النسخة الحالية"
+      "توحيد حقول OHLCV والتحقق من القيم المالية والطوابع الزمنية",
+      "ترتيب الشموع وإزالة التكرارات وإرجاع البيانات المعيارية"
     ],
     "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
     ],
-    "evidence": "partial_existing_capability"
+    "limitations": [
+      "لا يستنتج الشموع المفقودة؛ يعرض الصفوف المرفوضة والتكرارات بدلاً من اختلاق بيانات"
+    ],
+    "evidence": "dedicated_normalization_acceptance_tests"
   },
   {
     "id": "E006",
     "name": "Data Quality",
     "name_ar": "محرك Data Quality",
     "group": "Market Intelligence",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
-      "وجود مسار وظيفي مرتبط في النسخة الحالية"
+      "فحص الشموع الخام للقيم المالية غير الصالحة والحدود المنطقية لـ OHLCV",
+      "كشف الطوابع الزمنية المفقودة أو المكررة أو غير المرتبة"
     ],
     "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
     ],
-    "evidence": "partial_existing_capability"
+    "limitations": [
+      "يكشف الترتيب والتكرار ولا يحكم على فجوات جلسات السوق من دون تقويم المصدر"
+    ],
+    "evidence": "dedicated_raw_data_quality_acceptance_tests"
   },
   {
     "id": "E007",
     "name": "News and Events",
     "name_ar": "محرك News and Events",
     "group": "Market Intelligence",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
-      "تصنيف أولي للأخبار والأحداث من عناوين وملخصات مزود موثوق عند تمريرها"
+      "اكتشاف عناوين من RSS وGDELT وتطبيع المصدر والتوقيت والرابط",
+      "فرز كلمات مفتاحية أولي مع حفظ الإسناد لمصدر الخبر"
     ],
-    "gaps": [
-      "لا يوجد مزود أخبار مباشر مربوط حالياً والتحليل بالكلمات لا يتحقق من صحة الخبر"
+    "gaps": [],
+    "limitations": [
+      "تصنيف الكلمات للفرز فقط ولا يتحقق من صحة الخبر أو أثره السببي على السعر"
     ],
-    "evidence": "partial_engine_runtime_adapter"
+    "evidence": "public_news_feed_and_keyword_triage_acceptance_tests"
   },
   {
     "id": "E008",
     "name": "Cross-Market Correlation",
     "name_ar": "محرك Cross-Market Correlation",
     "group": "Market Intelligence",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
-      "حساب Pearson correlation من سلاسل إغلاقات متزامنة لأصول أخرى"
+      "حساب ارتباط Pearson لعوائد الأصول المتزامنة زمنياً",
+      "اشتراط تداخل كافٍ واستبعاد الأطر غير المتزامنة"
     ],
-    "gaps": [
-      "يتطلب سلاسل متعددة الأصول متزامنة من مزود بيانات"
+    "gaps": [],
+    "limitations": [
+      "يفحص سلة صغيرة من الأصول السائلة ولا يثبت علاقة سببية أو تنبؤية"
     ],
-    "evidence": "partial_engine_runtime_adapter"
+    "evidence": "aligned_peer_feed_and_correlation_acceptance_tests"
   },
   {
     "id": "E009",
     "name": "Trend",
     "name_ar": "محرك Trend",
     "group": "Technical Analysis",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
-      "وجود مسار وظيفي مرتبط في النسخة الحالية"
+      "تصنيف اتجاه EMA20 وEMA50 مع ميل إغلاق 20 شمعة مكتملة"
     ],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
+    "gaps": [],
+    "limitations": [
+      "مرشح اتجاهي محدد؛ لا يمثل توقعاً أو احتمال ربح"
     ],
-    "evidence": "partial_existing_capability"
+    "evidence": "dedicated_trend_acceptance_tests"
   },
   {
     "id": "E010",
@@ -336,38 +347,37 @@ ENGINE_CATALOG = [
     "group": "Multi-Timeframe",
     "status": "implemented",
     "capabilities": [
-      "وجود مسار وظيفي مرتبط في النسخة الحالية"
+      "اتفاق اتجاهي لأطر متعددة من شموع مكتملة وحديثة"
     ],
     "gaps": [],
-    "evidence": "verified_existing_capability"
+    "limitations": ["توافق الاتجاه لا يثبت علاقة سببية ولا يتضمن اختبار تأخر زمني"],
+    "evidence": "fresh_completed_multi_timeframe_acceptance_tests"
   },
   {
     "id": "E026",
     "name": "Higher Timeframe Analysis",
     "name_ar": "محرك Higher Timeframe Analysis",
     "group": "Multi-Timeframe",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
       "قراءة اتجاه إطار 4 ساعات من لقطة مكتملة"
     ],
-    "gaps": [
-      "تعتمد على توفر مزود الإطار الزمني"
-    ],
-    "evidence": "partial_engine_runtime_adapter"
+    "gaps": [],
+    "limitations": ["لقطة 4 ساعات اتجاهية للقراءة فقط ومقيدة بعمر الشمعة المكتملة"],
+    "evidence": "fresh_completed_higher_timeframe_acceptance_tests"
   },
   {
     "id": "E027",
     "name": "Lower Timeframe Analysis",
     "name_ar": "محرك Lower Timeframe Analysis",
     "group": "Multi-Timeframe",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
       "قراءة اتجاه إطار 5 أو 15 دقيقة"
     ],
-    "gaps": [
-      "تحتاج مزود إطار قصير مكتمل"
-    ],
-    "evidence": "partial_engine_runtime_adapter"
+    "gaps": [],
+    "limitations": ["يستخدم إطار 5 أو 15 دقيقة عند وجود لقطة مكتملة وحديثة فقط"],
+    "evidence": "fresh_completed_lower_timeframe_acceptance_tests"
   },
   {
     "id": "E028",
@@ -526,14 +536,13 @@ ENGINE_CATALOG = [
     "name": "Volume Anomaly Detector",
     "name_ar": "محرك Volume Anomaly Detector",
     "group": "Opportunity Hunter",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
       "كشف حجم تداول غير طبيعي عبر z-score"
     ],
-    "gaps": [
-      "يحتاج حجم موثوق وفترات مكتملة"
-    ],
-    "evidence": "partial_engine_runtime_adapter"
+    "gaps": [],
+    "limitations": ["z-score أحادي المصدر يقيس شذوذ الحجم ولا يحدد سببه أو هوية المتداول"],
+    "evidence": "positive_volume_baseline_and_anomaly_acceptance_tests"
   },
   {
     "id": "E040",
@@ -1014,14 +1023,14 @@ ENGINE_CATALOG = [
     "name": "Risk Reward",
     "name_ar": "محرك Risk Reward",
     "group": "Opportunity Scoring",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
-      "وجود مسار وظيفي مرتبط في النسخة الحالية"
+      "حساب مسافة المخاطرة والعائد ونسبة R:R من خطة ورقية مكتملة",
+      "مقارنة النسبة بحد أدنى معلن من دون إصدار أمر"
     ],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
-    ],
-    "evidence": "partial_existing_capability"
+    "gaps": [],
+    "limitations": ["لا يخصم الرسوم والتمويل والانزلاق أو احتمال عدم التنفيذ"],
+    "evidence": "dedicated_reward_risk_acceptance_tests"
   },
   {
     "id": "E075",
@@ -1054,14 +1063,13 @@ ENGINE_CATALOG = [
     "name": "Take Profit",
     "name_ar": "محرك Take Profit",
     "group": "Opportunity Scoring",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
       "حساب أهداف مرجعية متعددة من نسبة العائد إلى المخاطرة"
     ],
-    "gaps": [
-      "أهداف حسابية لا تمثل أوامر جني أرباح"
-    ],
-    "evidence": "partial_engine_runtime_adapter"
+    "gaps": [],
+    "limitations": ["أهداف مرجعية حسابية فقط؛ لا تنشئ أوامر جني أرباح"],
+    "evidence": "take_profit_reference_acceptance_tests"
   },
   {
     "id": "E078",
@@ -1082,14 +1090,13 @@ ENGINE_CATALOG = [
     "name": "Signal Confirmation",
     "name_ar": "محرك Signal Confirmation",
     "group": "Opportunity Scoring",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
-      "وجود مسار وظيفي مرتبط في النسخة الحالية"
+      "اشتراط تأكيد الشمعة المكتملة وموافقة جميع فحوص المخاطر قبل جاهزية المراقبة"
     ],
-    "gaps": [
-      "يحتاج تنفيذ مستقل واختبارات قبول قبل اعتباره جاهزاً"
-    ],
-    "evidence": "partial_existing_capability"
+    "gaps": [],
+    "limitations": ["يعتمد على نتائج التأكيد والمخاطر الموقعة من المحركات السابقة"],
+    "evidence": "signal_confirmation_acceptance_tests"
   },
   {
     "id": "E080",
@@ -1110,28 +1117,26 @@ ENGINE_CATALOG = [
     "name": "Signal Conflict Resolver",
     "name_ar": "محرك Signal Conflict Resolver",
     "group": "Opportunity Scoring",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
       "حل تعارض اتجاهات وكلاء التحليل بالتصويت"
     ],
-    "gaps": [
-      "التصويت غير موزون ولا يضمن استقلال الوكلاء"
-    ],
-    "evidence": "partial_engine_runtime_adapter"
+    "gaps": [],
+    "limitations": ["تصويت شفاف غير موزون؛ الوكلاء قواعد مترابطة من اللقطة نفسها"],
+    "evidence": "agent_conflict_acceptance_tests"
   },
   {
     "id": "E082",
     "name": "Opportunity Ranking",
     "name_ar": "محرك Opportunity Ranking",
     "group": "Opportunity Scoring",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
       "ترتيب فرص مزودة مسبقاً حسب درجاتها"
     ],
-    "gaps": [
-      "لا يجمع الكون بنفسه ولا يتحقق من جودة كل مدخل"
-    ],
-    "evidence": "partial_engine_runtime_adapter"
+    "gaps": [],
+    "limitations": ["يرتب المرشحين المزودين فقط؛ لا يمسح الكون ولا يعيد احتساب جودة مصادرهم"],
+    "evidence": "opportunity_ranking_acceptance_tests"
   },
   {
     "id": "E083",
@@ -1166,14 +1171,13 @@ ENGINE_CATALOG = [
     "name": "Entry Readiness",
     "name_ar": "محرك Entry Readiness",
     "group": "Opportunity Scoring",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
       "جاهزية الدخول عبر اجتماع التأكيد وموافقة المخاطر"
     ],
-    "gaps": [
-      "يتطلب نتائج تأكيد ومخاطر مزودة صراحة"
-    ],
-    "evidence": "partial_engine_runtime_adapter"
+    "gaps": [],
+    "limitations": ["يتطلب نتائج تأكيد ومخاطر حديثة من المحركات السابقة"],
+    "evidence": "entry_readiness_acceptance_tests"
   },
   {
     "id": "E086",
@@ -1304,14 +1308,13 @@ ENGINE_CATALOG = [
     "name": "Volatility Stop",
     "name_ar": "محرك Volatility Stop",
     "group": "Risk Management",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
       "وقف مرجعي متكيف مع ATR"
     ],
-    "gaps": [
-      "مرجع بحثي وليس تعديل أمر فعلي"
-    ],
-    "evidence": "partial_engine_runtime_adapter"
+    "gaps": [],
+    "limitations": ["يعرض مرجع وقف ATR ولا يغيّر مراكز أو أوامر"],
+    "evidence": "volatility_stop_acceptance_tests"
   },
   {
     "id": "E096",
@@ -1346,14 +1349,13 @@ ENGINE_CATALOG = [
     "name": "Daily Loss Limit",
     "name_ar": "محرك Daily Loss Limit",
     "group": "Risk Management",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
       "قياس خسارة اليوم مقابل حد خسارة محدد"
     ],
-    "gaps": [
-      "يتطلب تزويد صافي PnL اليومي بصورة موثوقة"
-    ],
-    "evidence": "partial_engine_runtime_adapter"
+    "gaps": [],
+    "limitations": ["يعتمد على PnL المحقق الممرر من سجل المحاكاة ولا يشمل الربح العائم"],
+    "evidence": "paper_daily_loss_limit_acceptance_tests"
   },
   {
     "id": "E099",
@@ -1374,14 +1376,13 @@ ENGINE_CATALOG = [
     "name": "Risk Approval",
     "name_ar": "محرك Risk Approval",
     "group": "Risk Management",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
       "بوابة موافقة تفشل عند أي فحص مخاطرة مفقود أو مرفوض"
     ],
-    "gaps": [
-      "يتطلب نتائج الفحوص المستقلة قبل الموافقة"
-    ],
-    "evidence": "partial_engine_runtime_adapter"
+    "gaps": [],
+    "limitations": ["يجمع نتائج الفحوص؛ لا ينشئ أوامر أو يوقف منصة خارجية"],
+    "evidence": "fail_closed_risk_approval_acceptance_tests"
   },
   {
     "id": "E101",

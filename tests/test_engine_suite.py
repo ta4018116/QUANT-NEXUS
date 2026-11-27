@@ -249,6 +249,41 @@ def test_smart_money_regime_and_exhaustion_adapters_are_explainable():
     assert _trend_exhaustion(context)["status"] == "computed"
 
 
+def test_multi_timeframe_engines_require_fresh_completed_source_stamped_frames():
+    from datetime import datetime, timedelta, timezone
+    from app.engine_suite import _timeframes, _higher_timeframe, _lower_timeframe, _regime_timeframe_sync
+
+    now = datetime.now(timezone.utc)
+    frames = {
+        "15m": {"timeframe":"15m", "direction":"UP", "score":70,
+                "last_completed_at":(now-timedelta(minutes=4)).isoformat()},
+        "4h": {"timeframe":"4h", "direction":"DOWN", "score":35,
+               "last_completed_at":(now-timedelta(minutes=40)).isoformat()},
+    }
+    result = _timeframes({"timeframes":frames})
+    assert result["status"] == "computed"
+    assert result["value"]["frames_used"] == ["15m", "4h"]
+    assert _higher_timeframe({"timeframes":frames})["status"] == "computed"
+    assert _lower_timeframe({"timeframes":frames})["status"] == "computed"
+    assert _regime_timeframe_sync({"timeframes":frames})["status"] == "computed"
+
+    stale = {**frames, "4h":{**frames["4h"],
+                              "last_completed_at":(now-timedelta(hours=10)).isoformat()}}
+    assert _higher_timeframe({"timeframes":stale})["status"] == "blocked_missing_input"
+    assert _timeframes({"timeframes":{"15m":frames["15m"], "4h":{"timeframe":"4h", "direction":"UP"}}})["status"] == "blocked_missing_input"
+
+
+def test_volume_anomaly_requires_real_positive_baseline_and_uses_completed_bars():
+    from app.engine_suite import _volume
+    rows = make_candles(30)
+    rows[-1]["volume"] = 3000
+    result = _volume({"candles":rows})
+    assert result["status"] == "computed"
+    assert result["value"]["volume_zscore"] > 2.5
+    assert result["value"]["anomaly"] is True
+    assert _volume({"candles":[{**row,"volume":0} for row in rows]})["status"] == "blocked_missing_input"
+
+
 def test_risk_controls_fail_closed_and_bound_exposure():
     from app.engine_suite import _leverage_risk, _risk_approval, _dynamic_risk
     leverage = _leverage_risk({"plan": {
@@ -327,6 +362,73 @@ def test_signal_expiry_target_and_autonomous_research_are_fail_closed():
     assert research["status"] == "computed"
     assert research["value"]["candidates"][0]["research_gate_passed"] is True
     assert research["value"]["candidates"][0]["promotion"] == "MANUAL_REVIEW_REQUIRED"
+
+
+def test_reward_risk_and_take_profit_engines_use_explicit_paper_plan_inputs():
+    good = run_engine("E074", {"plan":{"side":"LONG","entry":100,"stop":95,"target":110}})
+    assert good["runtime"]["status"] == "computed"
+    assert good["runtime"]["value"]["reward_risk_ratio"] == 2
+    assert good["runtime"]["value"]["meets_minimum"] is True
+    wrong_side = run_engine("E074", {"plan":{"side":"LONG","entry":100,"stop":95,"target":90}})
+    assert wrong_side["runtime"]["status"] == "blocked_missing_input"
+
+    targets = run_engine("E077", {
+        "plan":{"entry":100,"stop":95,"side":"LONG"},
+        "reward_risk_targets":[1.5,2.0],
+    })
+    assert targets["runtime"]["status"] == "computed"
+    assert targets["runtime"]["value"]["target_references"] == [107.5,110.0]
+    assert targets["live_trading_enabled"] is False
+
+
+def test_readiness_conflict_and_ranking_adapters_use_supplied_engine_evidence():
+    confirmed = {"entry_confirmation":{"state":"CONFIRMED"},
+                 "risk_approval":{"approved":True}}
+    for engine_id in ("E079", "E085"):
+        ready = run_engine(engine_id, confirmed)
+        assert ready["runtime"]["status"] == "computed"
+        assert ready["runtime"]["value"]["ready"] is True
+        assert run_engine(engine_id, {**confirmed,"risk_approval":{"approved":False}})["runtime"]["value"]["ready"] is False
+
+    candles = make_candles(120)
+    conflict = run_engine("E081", {
+        "candles":candles,
+        "orderbook":{"bids":[[100,1]],"asks":[[101,100]]},
+    })
+    assert conflict["runtime"]["status"] == "computed"
+    assert conflict["runtime"]["value"]["conflict"] is True
+
+    ranked = run_engine("E082", {"opportunity_candidates":[
+        {"symbol":"AAAUSDT","score":40,"tier":"SILVER"},
+        {"symbol":"BBBUSDT","score":80,"tier":"GOLD"},
+    ]})
+    assert ranked["runtime"]["status"] == "computed"
+    assert ranked["runtime"]["value"]["ranked"][0]["symbol"] == "BBBUSDT"
+
+
+def test_volatility_stop_daily_limit_and_risk_gate_have_paper_acceptance_cases():
+    missing_side = run_engine("E095", {"candles":make_candles(80)})
+    assert missing_side["runtime"]["status"] == "blocked_missing_input"
+    long_stop = run_engine("E095", {
+        "candles":make_candles(80),"plan":{"side":"LONG"}
+    })
+    short_stop = run_engine("E095", {
+        "candles":make_candles(80),"plan":{"side":"SHORT"}
+    })
+    last_price=make_candles(80)[-1]["close"]
+    assert long_stop["runtime"]["value"]["stop_reference"] < last_price
+    assert short_stop["runtime"]["value"]["stop_reference"] > last_price
+
+    limit = run_engine("E098", {
+        "account":{"equity":10000},"daily_pnl":-301,"daily_loss_limit_pct":3
+    })
+    assert limit["runtime"]["status"] == "computed"
+    assert limit["runtime"]["value"]["limit_breached"] is True
+
+    approval = run_engine("E100", {"risk_checks":{"equity":True,"stop":True}})
+    assert approval["runtime"]["status"] == "computed"
+    assert approval["runtime"]["value"]["approved"] is True
+    assert run_engine("E100", {})["runtime"]["status"] == "blocked_missing_input"
 
 
 def test_operations_adapters_report_explicit_read_only_state():

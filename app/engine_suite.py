@@ -25,6 +25,20 @@ def _num(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _fresh_observation(context: dict, key: str, max_age_seconds: int = 60) -> bool:
+    value = context.get(key)
+    if not value:
+        return False
+    try:
+        timestamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - timestamp.astimezone(timezone.utc)).total_seconds()
+        return 0 <= age <= max_age_seconds
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
     return max(low, min(high, value))
 
@@ -41,6 +55,23 @@ def _candles(ctx: dict) -> list[dict]:
         if item["high"] < max(item["open"], item["close"], item["low"]) or item["low"] > min(item["open"], item["close"], item["high"]):
             continue
         result.append(item)
+    return result
+
+
+def _raw_candle_records(ctx: dict) -> list:
+    """Preserve raw provider rows for normalization and quality adapters."""
+    rows = ctx.get("raw_candle_rows")
+    if not isinstance(rows, list):
+        rows = ctx.get("candles") or []
+    result = []
+    for row in rows:
+        if isinstance(row, dict):
+            result.append(row)
+        elif isinstance(row, (list, tuple)) and len(row) >= 6:
+            result.append({"time":row[0],"open":row[1],"high":row[2],
+                           "low":row[3],"close":row[4],"volume":row[5]})
+        else:
+            result.append(row)
     return result
 
 
@@ -143,6 +174,8 @@ def _volume(ctx):
     if err: return err
     volumes = [x["volume"] for x in rows]
     baseline = mean(volumes[-21:-1])
+    if baseline <= 0 or volumes[-1] <= 0:
+        return _blocked("positive completed-candle volume and a positive 20-bar baseline are required",["positive_volume_history"])
     ratio = volumes[-1] / baseline if baseline > 0 else None
     dispersion = pstdev(volumes[-21:-1]) if len(volumes) >= 21 else 0
     z = (volumes[-1]-baseline)/dispersion if dispersion else 0
@@ -367,6 +400,25 @@ def _risk(ctx):
                   "fixed-fraction sizing before fees and slippage; simulation only")
 
 
+def _risk_reward(ctx):
+    plan=ctx.get("plan") or {}
+    entry=_num(plan.get("entry"));stop=_num(plan.get("stop"));target=_num(plan.get("target"))
+    side=str(plan.get("side","")).upper()
+    if entry<=0 or stop<=0 or target<=0 or side not in ("LONG","SHORT") or entry==stop:
+        return _blocked("valid entry, stop, target and side required",["plan.entry","plan.stop","plan.target","plan.side"])
+    risk=abs(entry-stop)
+    reward=(target-entry) if side=="LONG" else (entry-target)
+    if reward<=0:
+        return _blocked("target is on the wrong side of the entry",["target_beyond_entry_in_trade_direction"])
+    minimum=max(0.1,_num(ctx.get("minimum_reward_risk"),1.5))
+    ratio=reward/risk
+    return _ready({"entry":entry,"stop":stop,"target":target,"side":side,
+                   "risk_distance":risk,"reward_distance":reward,
+                   "reward_risk_ratio":round(ratio,5),"minimum_ratio":minimum,
+                   "meets_minimum":ratio>=minimum},
+                  "paper-plan reward/risk arithmetic; excludes fees, funding, slippage and fill probability")
+
+
 def _portfolio(ctx):
     positions=ctx.get("positions")
     if not isinstance(positions,list): return _blocked("paper positions required",["positions"])
@@ -468,15 +520,16 @@ def _whale_activity(ctx):
 def _higher_timeframe(ctx):
     frames=ctx.get("timeframes")
     item=frames.get("4h") if isinstance(frames,dict) else None
-    if not isinstance(item,dict): return _blocked("4h snapshot required",["timeframes.4h"])
+    if not _valid_timeframe_snapshot(item): return _blocked("fresh completed 4h snapshot required",["timeframes.4h"])
     return _ready({"timeframe":"4h","direction":item.get("direction"),"score":item.get("score")},
                   "higher timeframe snapshot supplied by multi-timeframe provider")
 
 
 def _lower_timeframe(ctx):
     frames=ctx.get("timeframes")
-    item=(frames.get("5m") or frames.get("15m")) if isinstance(frames,dict) else None
-    if not isinstance(item,dict): return _blocked("5m or 15m snapshot required",["timeframes.5m_or_15m"])
+    candidates=(frames.get("5m"),frames.get("15m")) if isinstance(frames,dict) else ()
+    item=next((candidate for candidate in candidates if _valid_timeframe_snapshot(candidate)),None)
+    if not isinstance(item,dict): return _blocked("fresh completed 5m or 15m snapshot required",["timeframes.5m_or_15m"])
     return _ready({"timeframe":item.get("timeframe","5m_or_15m"),
                    "direction":item.get("direction"),"score":item.get("score")},
                   "lower timeframe snapshot supplied by multi-timeframe provider")
@@ -484,7 +537,8 @@ def _lower_timeframe(ctx):
 
 def _regime_timeframe_sync(ctx):
     frames=ctx.get("timeframes")
-    if not isinstance(frames,dict) or len(frames)<2: return _blocked("multiple timeframe snapshots required",["timeframes"])
+    valid=[item for item in frames.values() if _valid_timeframe_snapshot(item)] if isinstance(frames,dict) else []
+    if len(valid)<2: return _blocked("at least two fresh completed timeframe snapshots required",["timeframes"])
     return _timeframes(ctx)
 
 
@@ -629,15 +683,37 @@ def _generic_score(ctx):
 
 def _timeframes(ctx):
     frames=ctx.get("timeframes")
-    if not isinstance(frames,dict) or len(frames)<2: return _blocked("at least two timeframe analyses required",["timeframes"])
-    directions=[str(x.get("direction","NEUTRAL")).upper() for x in frames.values() if isinstance(x,dict)]
+    valid=[(name,item) for name,item in frames.items() if _valid_timeframe_snapshot(item)] if isinstance(frames,dict) else []
+    if len(valid)<2: return _blocked("at least two fresh completed timeframe analyses required",["timeframes"])
+    directions=[str(item.get("direction","NEUTRAL")).upper() for _,item in valid]
     directional=[x for x in directions if x in ("UP","DOWN","LONG","SHORT")]
     if not directional: return _blocked("timeframe direction values missing",["timeframes.*.direction"])
     up=sum(x in ("UP","LONG") for x in directional); down=sum(x in ("DOWN","SHORT") for x in directional)
     return _ready({"up_frames":up,"down_frames":down,"total_directional_frames":len(directional),
+                   "frames_used":[name for name,_ in valid],
+                   "latest_completed_at":max(item["last_completed_at"] for _,item in valid),
                    "consensus":"UP" if up>down else "DOWN" if down>up else "MIXED",
                    "agreement_pct":max(up,down)/len(directional)*100},
                   "directional agreement across provided frame snapshots")
+
+
+_TIMEFRAME_SECONDS={"1m":60,"3m":180,"5m":300,"15m":900,"30m":1800,
+                    "1h":3600,"2h":7200,"4h":14400,"1d":86400,"1w":604800}
+
+
+def _valid_timeframe_snapshot(item):
+    if not isinstance(item,dict): return False
+    frame=str(item.get("timeframe", ""))
+    interval=_TIMEFRAME_SECONDS.get(frame)
+    direction=str(item.get("direction", "")).upper()
+    if interval is None or direction not in ("UP","DOWN","LONG","SHORT","NEUTRAL"): return False
+    try:
+        timestamp=datetime.fromisoformat(str(item.get("last_completed_at","")).replace("Z","+00:00"))
+        if timestamp.tzinfo is None: timestamp=timestamp.replace(tzinfo=timezone.utc)
+        age=(datetime.now(timezone.utc)-timestamp.astimezone(timezone.utc)).total_seconds()
+    except (TypeError,ValueError,OverflowError):
+        return False
+    return 0 <= age <= max(120,interval*2)
 
 
 def _paper_positions(ctx):
@@ -1063,6 +1139,10 @@ def _false_breakout(ctx):
 
 def _conflict_resolver(ctx):
     agents=ctx.get("agent_results")
+    if not isinstance(agents,list) or not agents:
+        aggregate=_agents(ctx)
+        if aggregate.get("status")!="computed":return _blocked("agent directions required",["agent_results"])
+        agents=aggregate["value"].get("agent_assessments")
     if not isinstance(agents,list) or not agents:return _blocked("agent directions required",["agent_results"])
     directions=[x.get("direction") for x in agents if isinstance(x,dict) and x.get("direction") in ("LONG","SHORT","NEUTRAL")]
     if not directions:return _blocked("no recognized agent direction",["agent_results.*.direction"])
@@ -1198,8 +1278,9 @@ def _volatility_stop(ctx):
     rows,err=_base(ctx,20)
     if err:return err
     price=rows[-1]["close"]; atr=_atr(rows); multiplier=min(5.0,max(0.5,_num(ctx.get("atr_multiple"),1.5)))
-    side=str(ctx.get("side","LONG")).upper()
-    if not atr or side not in ("LONG","SHORT"):return _blocked("ATR and valid side required",["atr14","side"])
+    plan=ctx.get("plan") or {}
+    side=str(ctx.get("side") or plan.get("side") or "").upper()
+    if not atr or side not in ("LONG","SHORT"):return _blocked("ATR and explicit position side required",["atr14","side"])
     stop=price-multiplier*atr if side=="LONG" else price+multiplier*atr
     return _ready({"reference_price":price,"atr14":atr,"atr_multiple":multiplier,"stop_reference":stop},
                   "ATR-based volatility stop reference; not exchange order")
@@ -1521,7 +1602,7 @@ def _market_data_ingestion(ctx):
 
 
 def _data_normalization(ctx):
-    raw = ctx.get("candles")
+    raw = _raw_candle_records(ctx)
     if not isinstance(raw, list) or not raw:
         return _blocked("raw candle rows are required", ["candles"])
     normalized = []
@@ -1560,7 +1641,9 @@ def _data_normalization(ctx):
         "rejected_rows": rejected, "duplicate_timestamps_removed": duplicates,
         "ordered": True, "first_timestamp": unique[0]["time"],
         "last_timestamp": unique[-1]["time"],
-    }, "finite OHLCV validation, UTC timestamp ordering and duplicate removal; output is an audit summary")
+        "timestamp_policy": "source_epoch_preserved_and_sorted",
+        "normalized_candles": unique,
+    }, "finite OHLCV validation, millisecond epoch ordering, duplicate removal, and normalized output")
 
 
 def _liquidity(ctx):
@@ -1612,22 +1695,42 @@ def _volatility(ctx):
 
 
 def _data_quality(ctx):
-    rows,err=_base(ctx,20)
-    if err:return err
-    times=[int(_num(x.get("time"))) for x in rows if _num(x.get("time"))>0]
+    raw=_raw_candle_records(ctx)
+    if not isinstance(raw,list):return _blocked("raw candles are required for quality checks",["candles"])
+    if len(raw)<20:return _blocked("at least 20 raw candles are required for quality checks",["20_raw_candles"])
+    times=[]
+    invalid_timestamp_rows=0
+    invalid_ohlc=0
+    for row in raw:
+        if not isinstance(row,dict):
+            invalid_timestamp_rows+=1;invalid_ohlc+=1
+            continue
+        timestamp=_num(row.get("time"),float("nan"))
+        if not isfinite(timestamp) or timestamp<0 or not timestamp.is_integer():
+            invalid_timestamp_rows+=1
+        else:
+            times.append(int(timestamp))
+        try:
+            values=[float(row[key]) for key in ("open","high","low","close","volume")]
+            op,high,low,close,volume=values
+            valid=all(isfinite(value) for value in values) and min(op,high,low,close)>0 and volume>=0
+            valid=valid and high>=max(op,close,low) and low<=min(op,close,high)
+        except (KeyError,TypeError,ValueError,OverflowError):
+            valid=False
+        if not valid:invalid_ohlc+=1
     duplicate_count=len(times)-len(set(times))
-    ordered=all(times[i]>=times[i-1] for i in range(1,len(times)))
-    gaps=sum(1 for i in range(1,len(times)) if times[i]<=times[i-1])
-    invalid_ohlc=sum(
-        1 for x in rows
-        if x["high"]<max(x["open"],x["close"],x["low"])
-        or x["low"]>min(x["open"],x["close"],x["high"])
-    )
-    return _ready({"candles":len(rows),"timestamps_present":len(times),
+    ascending=all(times[i]>=times[i-1] for i in range(1,len(times)))
+    descending=all(times[i]<=times[i-1] for i in range(1,len(times)))
+    ordered=ascending or descending
+    source_order="ascending" if ascending else "descending" if descending else "mixed"
+    gaps=sum(1 for i in range(1,len(times)) if times[i]==times[i-1])
+    return _ready({"candles":len(raw),"timestamps_present":len(times),
                    "duplicate_timestamps":duplicate_count,"timestamps_ordered":ordered,
-                   "non_increasing_timestamp_pairs":gaps,"invalid_ohlc_rows":invalid_ohlc,
-                   "quality_passed":duplicate_count==0 and ordered and invalid_ohlc==0},
-                  "schema, OHLC range and candle timestamp integrity checks")
+                   "source_timestamp_order":source_order,"duplicate_timestamp_pairs":gaps,
+                   "invalid_timestamp_rows":invalid_timestamp_rows,
+                   "invalid_ohlc_rows":invalid_ohlc,
+                   "quality_passed":duplicate_count==0 and ordered and invalid_timestamp_rows==0 and invalid_ohlc==0},
+                  "raw-row schema, finite OHLCV, price/volume bounds, unique timestamps and monotonic provider ordering checks")
 
 
 def _funding_rate(ctx):
@@ -2447,6 +2550,7 @@ _HANDLER_IDS.update({
     "E149":_duplicate_signal_filter,
     "E150":_notification,
     "E154":_security,
+    "E074":_risk_reward,
 })
 # Final handler map: bind each engine to its most specific available implementation.
 _HANDLER_IDS.update({
@@ -2469,7 +2573,7 @@ _HANDLER_IDS.update({
     "E063":_liquidation_heatmap, "E064":_liquidation_tracker, "E065":_basis, "E066":_derivatives,
     "E067":_leverage_risk, "E068":_derivative_divergence, "E069":_options_analytics,
     "E070":_implied_volatility_engine, "E071":_gamma_exposure, "E072":_generic_score,
-    "E073":_confidence, "E074":_risk, "E075":_entry_precision, "E076":_risk,
+    "E073":_confidence, "E074":_risk_reward, "E075":_entry_precision, "E076":_risk,
     "E077":_take_profit, "E078":_trade_quality, "E079":_entry_readiness, "E080":_false_breakout,
     "E081":_conflict_resolver, "E082":_rank_opportunities, "E083":_signal_expiration, "E084":_expectancy,
     "E085":_entry_readiness, "E086":_risk, "E087":_dynamic_risk, "E088":_portfolio_risk,
@@ -2554,14 +2658,34 @@ def run_engine(engine_id: str, context: dict) -> dict:
     input_signals = {
         "market_snapshot_valid":bool(context.get("candles") and market_snapshot.get("freshness_status") == "fresh"),
         "orderbook_available":bool(context.get("orderbook")),
+        "orderbook_fresh":bool(context.get("orderbook") and _fresh_observation(context,"orderbook_observed_at")),
         "trades_available":bool(context.get("trades")),
+        "trades_fresh":bool(context.get("trades") and _fresh_observation(context,"trades_observed_at")),
         "timeframes_available":len(context.get("timeframes") or {}) >= 2,
+        "timeframes_fresh":sum(1 for item in (context.get("timeframes") or {}).values()
+                                if _valid_timeframe_snapshot(item)) >= 2,
         "portfolio_context_available":"account" in context and "positions" in context,
         "trade_history_available":bool(context.get("closed_trades")),
         "position_marks_available":bool(context.get("positions") and context.get("current_prices")),
         "entry_confirmation_available":bool(context.get("entry_confirmation")),
         "api_heartbeat_fresh":api_age <= 60,
         "system_health_ok":bool(system_health) and all(value == "ok" for value in system_health.values()),
+        "system_health_available":bool(system_health),
+        "opportunity_history_available":isinstance(context.get("opportunity_events"), list),
+        "scheduler_jobs_available":isinstance(context.get("scheduler_jobs", context.get("scheduled_jobs")), list),
+        "event_bus_available":isinstance(context.get("event_bus"), dict),
+        "cache_available":isinstance(context.get("cache"), dict),
+        "database_available":isinstance(context.get("database"), dict),
+        "websocket_available":isinstance(context.get("websocket"), dict),
+        "failure_log_available":isinstance(context.get("recent_failures"), list),
+        "signal_list_available":isinstance(context.get("signals"), list),
+        "notification_transport_available":bool(context.get("notification_transport_available")),
+        "audit_log_available":isinstance(context.get("audit_events"), list),
+        "model_registry_available":isinstance(context.get("model_versions"), list),
+        "replay_log_available":isinstance(context.get("replay_events"), list),
+        "security_policy_available":isinstance(context.get("security_policy"), dict),
+        "resource_snapshot_available":isinstance(context.get("resource_snapshot"), dict),
+        "heartbeat_records_available":isinstance(heartbeats, dict) and bool(heartbeats),
     }
     return {"engine_id":engine_id,"name":item["name"],"group":item["group"],
             "catalog_status":item["status"],"runtime":value,

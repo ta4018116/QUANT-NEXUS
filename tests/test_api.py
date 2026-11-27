@@ -447,6 +447,8 @@ def test_responsive_card_dashboard_exposes_real_pages_opportunities_and_engine_r
     assert "counts.ACTIVE" in html and "counts.BLOCKED" in html
     assert "readiness.counts" in html
     assert "سبب الحالة" in html
+    assert "source.market_snapshot_required===false" in html
+    assert "فحص داخلي عند الطلب" in html
     assert "أسلوب الدخول" in html
     assert "وقف الخسارة" in html
     assert "الهدف الأول" in html
