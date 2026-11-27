@@ -2053,7 +2053,19 @@ def early_opportunity_assessment(context: dict) -> dict:
 def catalogue_runtime_coverage() -> dict:
     all_ids={x["id"] for x in ENGINE_CATALOG}
     routed=all_ids.intersection(_HANDLER_IDS)
-    return {"catalogue_engines":len(all_ids),"routed_adapters":len(routed),
-            "unrouted_adapters":sorted(all_ids-routed),
-            "requires_external_or_model_inputs":sum(_HANDLER_IDS.get(x) is _external for x in routed),
-            "trading_mode":"simulation","live_trading_enabled":False}
+    external_only=sorted(x for x in routed if _HANDLER_IDS.get(x) is _external)
+    active_adapters=sorted(routed-set(external_only))
+    status_counts={status:sum(1 for x in ENGINE_CATALOG if x["status"]==status)
+                   for status in ("implemented","partial","planned")}
+    return {
+        "catalogue_engines":len(all_ids),
+        "routed_adapters":len(routed),
+        "callable_adapter_coverage_pct":round(len(routed)/len(all_ids)*100,2) if all_ids else 0,
+        "active_runtime_adapters":len(active_adapters),
+        "external_or_model_blocked_adapters":len(external_only),
+        "external_or_model_blocked_ids":external_only,
+        "unrouted_adapters":sorted(all_ids-routed),
+        "catalogue_status_counts":status_counts,
+        "trading_mode":"simulation","live_trading_enabled":False,
+        "note":"A callable adapter may still return blocked_missing_input when its market feed, portfolio record or runtime snapshot is absent."
+    }
