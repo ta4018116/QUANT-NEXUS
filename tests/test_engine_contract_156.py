@@ -177,3 +177,30 @@ def test_watchdog_missing_heartbeat_age_is_json_safe():
     assert value["heartbeat_ages_seconds"]["background_scheduler"] is None
     assert value["unknown_services"] == ["background_scheduler"]
     json.dumps(result, allow_nan=False)
+
+
+def test_sqlite_event_store_context_activates_infrastructure_engines():
+    context = {
+        "opportunity_events": [
+            {"event_id": "op-1", "event_type": "opportunity", "timestamp": "2026-11-27T10:00:00Z"}
+        ],
+        "event_bus": {"published": 8, "consumed": 3},
+        "audit_events": [
+            {"event_id": "audit-1", "event_type": "audit", "timestamp": "2026-11-27T10:01:00Z"}
+        ],
+        "replay_events": [
+            {"event_id": "audit-1", "timestamp": "2026-11-27T10:01:00Z"},
+            {"event_id": "op-1", "timestamp": "2026-11-27T10:00:00Z"},
+        ],
+    }
+    expected = {
+        "E138": "event_count",
+        "E142": "published",
+        "E151": "events",
+        "E153": "event_count",
+    }
+    for engine_id, key in expected.items():
+        result = run_engine(engine_id, context)
+        assert result["runtime"]["status"] == "computed"
+        assert key in result["runtime"]["value"]
+        assert result["live_trading_enabled"] is False
