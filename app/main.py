@@ -28,6 +28,7 @@ from .engine_sources import engine_source_registry
 from .command_engine import COMMANDS, matches_command, evaluate_entry
 from .derivatives_engine import summarize_derivatives, normalize_liquidations
 from .okx_derivatives import get_okx_derivatives_snapshot
+from .coinalyze_derivatives import get_coinalyze_derivatives_snapshot
 from .advanced_engines import market_regime, market_structure, opportunity_assessment, learning_monitoring
 from .provider_feeds import (
     fetch_gdelt_news, fetch_cryptopanic_news, fetch_coinglass_liquidations,
@@ -208,6 +209,23 @@ async def _binance_get(category: str, path: str, params: dict):
     if last_error:
         raise last_error
     raise HTTPException(status_code=502, detail="Binance market data unavailable")
+
+
+async def _get_derivatives_fallback(symbol: str) -> dict:
+    """Use OKX first, then Coinalyze only when its server-side key is configured."""
+    try:
+        return await get_okx_derivatives_snapshot(okx_get, symbol)
+    except HTTPException as okx_error:
+        if not os.getenv("COINALYZE_API_KEY"):
+            raise
+        try:
+            return await get_coinalyze_derivatives_snapshot(shared_http_client(), symbol)
+        except Exception as coinalyze_error:
+            logger.warning(
+                "OKX and Coinalyze derivatives unavailable for %s (Coinalyze: %s)",
+                symbol, type(coinalyze_error).__name__,
+            )
+            raise okx_error
 
 
 async def get_derivatives_snapshot(symbol: str) -> dict:
