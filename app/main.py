@@ -1539,25 +1539,81 @@ async def multi_market_engine_suite(
     entry_confirmation=evaluate_entry(analysis)
     analysis["candles"]=completed
     last_price=completed[-1]["close"]
+    direction=str(analysis.get("direction","NEUTRAL")).upper()
+    entry=safe_float(analysis.get("entry"))
+    stop=safe_float(analysis.get("stopLoss"))
+    plan={"side":direction,"entry":entry,"stop":stop} if direction in ("LONG","SHORT") and entry>0 and stop>0 and entry!=stop else {}
+    volatility_ranges=[]
+    previous_close=completed[0]["close"]
+    for candle in completed[1:]:
+        volatility_ranges.append(max(candle["high"]-candle["low"],abs(candle["high"]-previous_close),abs(candle["low"]-previous_close)))
+        previous_close=candle["close"]
+    atr14=sum(volatility_ranges[-14:])/min(14,len(volatility_ranges)) if volatility_ranges else 0.0
+    volatility_pct=atr14/last_price*100 if last_price>0 else 0.0
+    today_utc=datetime.now(timezone.utc).date().isoformat()
+    daily_pnl=sum(safe_float(x.get("pnl")) for x in closed_trades if str(x.get("closedAt","")).startswith(today_utc))
+    daily_loss_limit_pct=min(10.0,max(0.1,safe_float(os.getenv("PAPER_DAILY_LOSS_LIMIT_PCT"),3.0)))
+    risk_checks={
+        "paper_equity_positive":paper_equity>0,
+        "fresh_completed_candle_confirmation":entry_confirmation.get("confirmed") is True,
+        "valid_entry_and_stop_plan":bool(plan),
+        "daily_loss_limit_not_breached":not (paper_equity>0 and max(0.0,-daily_pnl)/paper_equity*100>=daily_loss_limit_pct),
+        "visible_orderbook_available":False,
+        "recent_trade_flow_available":False,
+        "live_trading_disabled":LIVE_TRADING_ENABLED is False,
+    }
+    timeframe_jobs=await asyncio.gather(
+        *(get_twelve_data_klines(symbol,frame,min(limit,180)) for frame in ("5m","1h","4h")),
+        return_exceptions=True,
+    )
+    frames={}
+    for frame,result in zip(("5m","1h","4h"),timeframe_jobs):
+        if isinstance(result,Exception):
+            continue
+        frame_rows,frame_provider=result
+        try:
+            frame_analysis=analyze_klines(frame_rows,include_all_candles=True)
+            frame_candles=frame_analysis["candles"][:-1]
+            if frame_candles:
+                frames[frame]={"timeframe":frame,"direction":frame_analysis["direction"],
+                               "score":frame_analysis["score"],"provider":"Twelve Data",
+                               "completed_bars":len(frame_candles)}
+        except HTTPException:
+            continue
     context={
         "symbol":symbol.upper(),"category":market,"market_type":market,"interval":interval,
         "candles":completed,"closes":closes,"analysis":analysis,"regime":regime,"structure":structure,
         "timestamp_utc":datetime.now(timezone.utc).isoformat(),
         "account":{"equity":paper_equity},"positions":paper_positions,"closed_trades":closed_trades,
         "current_prices":{symbol.upper():last_price},
-        "timeframes":{},
+        "timeframes":frames,
         "entry_confirmation":entry_confirmation,
-        "plan":{},"risk_pct":1.0,"risk_approval":{"approved":False,"failed_checks":["multi_market_plan_not_configured"]},
+        "plan":plan,"risk_pct":1.0,"volatility_pct":volatility_pct,
+        "daily_pnl":daily_pnl,"daily_loss_limit_pct":daily_loss_limit_pct,
+        "risk_checks":risk_checks,
+        "risk_approval":{"approved":all(risk_checks.values()),"failed_checks":[k for k,v in risk_checks.items() if not v]},
         "reward_risk_targets":[1.5,2.0,3.0],
-        "system_health":{"api":"ok","candles":"ok","paper_ledger":"ok","orderbook":"degraded","trade_flow":"degraded"},
+        "system_health":{"api":"ok","candles":"ok","paper_ledger":"ok","orderbook":"degraded","trade_flow":"degraded",
+                         "timeframes":"ok" if len(frames)>=2 else "degraded"},
         "cache":{"status":"ok","backend":"process-local","persistent":False},
         "database":{"status":"ok" if getattr(PAPER_STORE,"durable_configured",False) else "degraded",
                     "backend":"sqlite","persistent":bool(getattr(PAPER_STORE,"durable_configured",False))},
         "security_policy":{
             "trading_mode":"simulation","live_trading_enabled":False,
-            "exchange_trade_credentials_present":False,"https_enabled":str(os.getenv("RENDER_EXTERNAL_URL","")).startswith("https://"),
+            "exchange_trade_credentials_present":any(os.getenv(k) for k in (
+                "BYBIT_API_KEY","BYBIT_API_SECRET","BINANCE_API_KEY","BINANCE_API_SECRET",
+                "BYBIT_TRADE_API_KEY","BYBIT_TRADE_API_SECRET","BINANCE_TRADE_API_KEY","BINANCE_TRADE_API_SECRET")),
+            "https_enabled":str(os.getenv("RENDER_EXTERNAL_URL","")).startswith("https://"),
             "secrets_redacted":True,"admin_auth_enabled":False,
         },
+        "model_versions":[{"name":name,"version":"research-per-request","artifact_persisted":False}
+                          for name in ("logistic_regression","random_forest","mlp","lstm_reservoir","transformer_reservoir","xgboost_style_booster")],
+        "audit_events":[{"event_id":f"paper-trade-{x.get('id')}"} for x in paper_positions if x.get("id") is not None],
+        "notification_events":[],
+        "scheduled_jobs":[],"scheduler_backend_configured":False,"recent_failures":[],
+        "resource_snapshot":_runtime_memory_snapshot(),
+        "heartbeats":{"api":{"age_seconds":0,"scope":"current_request_only"}},
+        "heartbeat_scope":"current API request only; no independent worker heartbeat backend is configured",
     }
     early=early_opportunity_assessment(context)
     if early.get("status")=="computed" and early.get("score",0)>=65:
