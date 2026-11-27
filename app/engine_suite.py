@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 39411)
-Total output lines: 2831
-
 """Runtime adapters for the 156-engine QUANT NEXUS catalogue.
 
 Every catalogue entry has a callable contract. A result is either computed from
@@ -1330,7 +1327,328 @@ def _daily_limit(ctx):
 
 def _circuit_breaker(ctx):
     daily=_daily_limit(ctx)
-    …4411 tokens truncated…dered": True, "first_timestamp": unique[0]["time"],
+    if daily.get("status")!="computed":return daily
+    health=ctx.get("system_health") or {}
+    unhealthy=[k for k,v in health.items() if str(v).lower() not in ("ok","healthy","up")]
+    stopped=daily["value"]["limit_breached"] or bool(unhealthy)
+    return _ready({"tripped":stopped,"daily_loss_limit_breached":daily["value"]["limit_breached"],
+                   "unhealthy_services":unhealthy},"read-only circuit-breaker state; execution remains paper-only")
+
+
+def _risk_approval(ctx):
+    checks=ctx.get("risk_checks")
+    if not isinstance(checks,dict) or not checks:return _blocked("explicit risk-check results required",["risk_checks"])
+    failed=[k for k,v in checks.items() if v is not True]
+    return _ready({"approved":not failed,"failed_checks":failed},
+                  "fail-closed aggregation; any missing or false check rejects approval")
+
+
+def _walk_forward(ctx):
+    values=ctx.get("strategy_returns")
+    if not isinstance(values,list) or len(values)<20:return _blocked("at least 20 ordered strategy returns required",["strategy_returns"])
+    cut=int(len(values)*0.6);train=[_num(x) for x in values[:cut]];test=[_num(x) for x in values[cut:]]
+    return _ready({"train_samples":len(train),"test_samples":len(test),
+                   "train_mean_return":mean(train),"test_mean_return":mean(test),
+                   "train_positive_rate":sum(x>0 for x in train)/len(train),
+                   "test_positive_rate":sum(x>0 for x in test)/len(test)},
+                  "chronological 60/40 single split; not a full rolling walk-forward grid")
+
+
+def _monte_carlo(ctx):
+    values=ctx.get("strategy_returns")
+    if not isinstance(values,list) or len(values)<10:return _blocked("at least 10 ordered trade returns required",["strategy_returns"])
+    rng=random.Random(27112026); sims=300; horizon=len(values); endings=[]
+    for _ in range(sims):
+        equity=1.0
+        for _ in range(horizon):equity*=1+_num(values[rng.randrange(horizon)])
+        endings.append(equity)
+    ordered=sorted(endings)
+    return _ready({"simulations":sims,"median_terminal_equity_multiple":ordered[sims//2],
+                   "p05_terminal_equity_multiple":ordered[int(sims*0.05)],
+                   "p95_terminal_equity_multiple":ordered[int(sims*0.95)],
+                   "fraction_below_start":sum(x<1 for x in endings)/sims},
+                  "bootstrap resampling of supplied historical returns; scenarios are not forecasts")
+
+
+def _overfit(ctx):
+    train=ctx.get("train_metrics");valid=ctx.get("validation_metrics")
+    if not isinstance(train,dict) or not isinstance(valid,dict):return _blocked("train and validation metrics required",["train_metrics","validation_metrics"])
+    key="accuracy"
+    if train.get(key) is None or valid.get(key) is None:return _blocked("accuracy metrics required",["train_metrics.accuracy","validation_metrics.accuracy"])
+    gap=_num(train[key])-_num(valid[key])
+    return _ready({"train_accuracy":_num(train[key]),"validation_accuracy":_num(valid[key]),
+                   "generalization_gap":gap,"overfit_warning":gap>0.1},
+                  "train-validation accuracy gap heuristic; threshold 10 percentage points")
+
+
+def _out_of_sample(ctx):
+    valid=ctx.get("validation_metrics")
+    if not isinstance(valid,dict):return _blocked("untouched validation metrics required",["validation_metrics"])
+    required=("trade_count","net_return","max_drawdown")
+    if any(valid.get(k) is None for k in required):return _blocked("validation metrics incomplete",list(required))
+    return _ready({k:valid[k] for k in required},"reporting on separately supplied untouched validation results")
+
+
+def _attribution(ctx):
+    trades=ctx.get("closed_trades")
+    if not isinstance(trades,list):return _blocked("closed trades with strategy labels required",["closed_trades"])
+    groups={}
+    for trade in trades:
+        if not isinstance(trade,dict):continue
+        key=str(trade.get("strategy") or trade.get("signal_source") or "UNATTRIBUTED")
+        groups[key]=groups.get(key,0)+_num(trade.get("pnl"))
+    return _ready({"net_pnl_by_strategy":groups},"sum realized paper PnL by recorded strategy/source label")
+
+
+def _strategy_compare(ctx):
+    items=ctx.get("strategy_results")
+    if not isinstance(items,list) or not items:return _blocked("strategy result set required",["strategy_results"])
+    clean=[{"name":str(x.get("name","unnamed")),"net_return":_num(x.get("net_return")),
+            "max_drawdown":_num(x.get("max_drawdown")),"trade_count":int(_num(x.get("trade_count")))}
+           for x in items if isinstance(x,dict)]
+    return _ready({"ranked":sorted(clean,key=lambda x:(x["net_return"],-x["max_drawdown"]),reverse=True)},
+                  "ranking of supplied backtest results; not live strategy selection")
+
+
+def _model_drift(ctx):
+    baseline=ctx.get("baseline_metrics");recent=ctx.get("recent_metrics")
+    if not isinstance(baseline,dict) or not isinstance(recent,dict):return _blocked("baseline and recent model metrics required",["baseline_metrics","recent_metrics"])
+    metrics=("accuracy","brier_score","loss")
+    drift={k:(_num(recent[k])-_num(baseline[k])) for k in metrics if baseline.get(k) is not None and recent.get(k) is not None}
+    if not drift:return _blocked("no shared model metric",["shared_accuracy_or_loss_metric"])
+    return _ready({"metric_deltas":drift,"drift_detected":any(abs(v)>0.1 for v in drift.values())},
+                  "simple absolute metric-shift threshold; monitor only")
+
+
+def _position_monitor(ctx):
+    positions=ctx.get("positions");prices=ctx.get("current_prices")
+    if not isinstance(positions,list) or not isinstance(prices,dict):return _blocked("paper positions and current marks required",["positions","current_prices"])
+    output=[]
+    for pos in positions:
+        if not isinstance(pos,dict) or pos.get("status")!="OPEN":continue
+        symbol=str(pos.get("symbol",""));mark=_num(prices.get(symbol))
+        entry=_num(pos.get("entry"));qty=_num(pos.get("quantity"))
+        if mark<=0 or entry<=0:continue
+        pnl=(mark-entry)*qty if str(pos.get("side")).upper()=="LONG" else (entry-mark)*qty
+        stop=_num(pos.get("stop_loss",pos.get("stopLoss")));target=_num(pos.get("take_profit",pos.get("takeProfit")))
+        output.append({"symbol":symbol,"mark":mark,"unrealized_gross_pnl":pnl,
+                       "stop_touched":bool(stop and ((mark<=stop) if pos.get("side")=="LONG" else (mark>=stop))),
+                       "target_touched":bool(target and ((mark>=target) if pos.get("side")=="LONG" else (mark<=target)))})
+    return _ready({"positions":output,"checked":len(output)},"read-only mark-to-market checks; no automatic order mutation")
+
+
+def _knowledge_memory(ctx):
+    events=ctx.get("opportunity_events")
+    if not isinstance(events,list):return _blocked("persisted opportunity event history required",["opportunity_events"])
+    counts={}
+    for event in events:
+        if isinstance(event,dict):
+            key=str(event.get("event_type","unknown"));counts[key]=counts.get(key,0)+1
+    return _ready({"event_count":len(events),"event_types":counts},
+                  "read-only aggregation of persisted opportunity event history")
+
+
+def _adaptive_router(ctx):
+    regime=_regime_detector(ctx)
+    if regime.get("status")!="computed":return regime
+    name=regime["value"]["regime"]
+    route="BREAKOUT_WATCH" if name=="LOW_VOLATILITY_RANGE" else "TREND_FOLLOW" if name=="TRENDING" else "RISK_REDUCTION"
+    return _ready({"market_regime":name,"research_route":route,"automatic_strategy_promotion":False},
+                  "rules-based research routing; does not execute or promote strategies")
+
+
+def _duplicate_signal_filter(ctx):
+    items=ctx.get("signals")
+    if not isinstance(items,list):return _blocked("signal list with stable identifiers required",["signals"])
+    seen=set();unique=[];duplicates=[]
+    for item in items:
+        if not isinstance(item,dict):continue
+        key=(item.get("symbol"),item.get("category"),item.get("direction"),item.get("signal_time"))
+        if key in seen:duplicates.append(key)
+        else:seen.add(key);unique.append(item)
+    return _ready({"unique_signals":unique,"duplicate_count":len(duplicates)},
+                  "deduplication by symbol/category/direction/signal_time; persistence still required")
+
+
+
+
+def _take_profit(ctx):
+    plan=ctx.get("plan") or {}
+    entry=_num(plan.get("entry")); stop=_num(plan.get("stop")); side=str(plan.get("side","LONG")).upper()
+    if entry<=0 or stop<=0 or entry==stop or side not in ("LONG","SHORT"):
+        return _blocked("valid entry, stop and side required",["plan.entry","plan.stop","plan.side"])
+    risk=abs(entry-stop)
+    ratios=ctx.get("reward_risk_targets") or [1.5,2.0,3.0]
+    ratios=[_num(x) for x in ratios if _num(x)>0]
+    if not ratios:return _blocked("positive reward/risk targets required",["reward_risk_targets"])
+    targets=[entry+risk*x if side=="LONG" else entry-risk*x for x in ratios]
+    return _ready({"entry":entry,"risk_distance":risk,"reward_risk_ratios":ratios,
+                   "target_references":targets,"side":side},
+                  "mechanical reward/risk target calculation; not a recommendation or order")
+
+
+def _signal_expiration(ctx):
+    from datetime import datetime, timezone
+    created=ctx.get("signal_created_at"); now=ctx.get("now_utc")
+    max_age=max(1,_num(ctx.get("max_age_seconds"),900))
+    if not created or not now:return _blocked("signal timestamp and current UTC time required",["signal_created_at","now_utc"])
+    try:
+        created_at=datetime.fromisoformat(str(created).replace("Z","+00:00"))
+        now_at=datetime.fromisoformat(str(now).replace("Z","+00:00"))
+        if created_at.tzinfo is None or now_at.tzinfo is None:raise ValueError("timezone_required")
+        age=(now_at-created_at).total_seconds()
+    except (TypeError,ValueError):
+        return _blocked("timestamps must be timezone-aware ISO-8601 values",["timezone_aware_signal_created_at","now_utc"])
+    return _ready({"age_seconds":age,"max_age_seconds":max_age,"expired":age>max_age or age<0},
+                  "UTC age check with explicit expiry threshold")
+
+
+def _autonomous_research(ctx):
+    candidates=ctx.get("strategy_candidates")
+    if not isinstance(candidates,list) or not candidates:return _blocked("research strategy candidates and validation metrics required",["strategy_candidates"])
+    evaluated=[]
+    for item in candidates:
+        if not isinstance(item,dict):continue
+        train=_num(item.get("train_return")); validation=_num(item.get("validation_return"))
+        dd=_num(item.get("validation_drawdown"),100)
+        enough=int(_num(item.get("validation_trades")))>=30
+        passed=validation>0 and dd<20 and enough and validation<=train+0.05
+        evaluated.append({"name":str(item.get("name","unnamed")),"validation_return":validation,
+                          "validation_drawdown":dd,"validation_trades":int(_num(item.get("validation_trades"))),
+                          "research_gate_passed":passed,"promotion":"MANUAL_REVIEW_REQUIRED"})
+    return _ready({"candidates":evaluated,"research_only":True},
+                  "screening against supplied out-of-sample metrics; no autonomous promotion or deployment")
+
+
+def _data_replay(ctx):
+    events=ctx.get("replay_events")
+    if not isinstance(events,list) or not events:return _blocked("timestamped replay events required",["replay_events"])
+    valid=[x for x in events if isinstance(x,dict) and x.get("timestamp") is not None]
+    return _ready({"ordered_events":sorted(valid,key=lambda x:str(x["timestamp"])),"event_count":len(valid)},
+                  "stable timestamp ordering of supplied events; does not fetch historical venue packets")
+
+
+def _audit_log(ctx):
+    events=ctx.get("audit_events")
+    if not isinstance(events,list):return _blocked("audit event records required",["audit_events"])
+    ids=[str(x.get("event_id")) for x in events if isinstance(x,dict) and x.get("event_id")]
+    return _ready({"events":len(events),"identified_events":len(ids),
+                   "duplicate_event_ids":len(ids)-len(set(ids))},
+                  "read-only audit event integrity check")
+
+
+def _model_registry(ctx):
+    models=ctx.get("model_versions")
+    if not isinstance(models,list):return _blocked("registered model metadata required",["model_versions"])
+    valid=[x for x in models if isinstance(x,dict) and x.get("name") and x.get("version")]
+    return _ready({"registered_models":valid,"count":len(valid)},
+                  "read-only model metadata inventory; no artifact loading or deployment")
+
+
+def _resource_monitor(ctx):
+    resources=ctx.get("resource_snapshot")
+    if not isinstance(resources,dict):return _blocked("CPU, memory and worker metrics required",["resource_snapshot"])
+    return _ready({"resources":resources,"pressure_detected":_num(resources.get("cpu_pct"))>=90 or _num(resources.get("memory_pct"))>=90},
+                  "threshold alert on supplied runtime metrics")
+
+
+def _watchdog(ctx):
+    heartbeats=ctx.get("heartbeats")
+    if not isinstance(heartbeats,dict) or not heartbeats:return _blocked("service heartbeat timestamps required",["heartbeats"])
+    max_age=max(1,_num(ctx.get("heartbeat_max_age_seconds"),60))
+    # Missing heartbeat ages are unknown, never infinity: JSON responses must
+    # remain standards-compliant and must not turn an unreported metric into
+    # a fabricated stale-service duration.
+    ages={}
+    unknown=[]
+    for name, heartbeat in heartbeats.items():
+        raw_age=heartbeat.get("age_seconds") if isinstance(heartbeat,dict) else None
+        if raw_age is None:
+            ages[name]=None
+            unknown.append(name)
+            continue
+        age=_num(raw_age,float("nan"))
+        if not isfinite(age) or age < 0:
+            ages[name]=None
+            unknown.append(name)
+        else:
+            ages[name]=age
+    stale=[name for name,age in ages.items() if age is not None and age>max_age]
+    return _ready({"heartbeat_ages_seconds":ages,"stale_services":stale,
+                   "unknown_services":unknown,"watchdog_alert":bool(stale or unknown),
+                   "scope":ctx.get("heartbeat_scope","provided heartbeat set only")},
+                  "read-only heartbeat age check; unknown ages are reported separately and no external service is restarted")
+
+
+def _event_bus(ctx):
+    stats=ctx.get("event_bus")
+    if not isinstance(stats,dict):return _blocked("event-bus counters required",["event_bus"])
+    published=int(_num(stats.get("published"))); consumed=int(_num(stats.get("consumed")))
+    return _ready({"published":published,"consumed":consumed,"backlog":max(0,published-consumed)},
+                  "read-only event-bus counters supplied by runtime")
+
+
+
+
+def _market_data_ingestion(ctx):
+    rows = ctx.get("candles")
+    provider = str(ctx.get("provider") or "").strip()
+    if not isinstance(rows, list) or not rows:
+        return _blocked("market candle feed is absent", ["candles", "provider"])
+    valid = _candles(ctx)
+    if not provider:
+        return _blocked("provider identity is missing; source cannot be audited", ["provider"])
+    if len(valid) < 30:
+        return _blocked("market feed has fewer than 30 valid candles", ["30_valid_candles"])
+    return _ready({
+        "provider": provider, "symbol": ctx.get("symbol"),
+        "category": ctx.get("category"), "interval": ctx.get("interval"),
+        "received_candles": len(rows), "valid_candles": len(valid),
+        "rejected_candles": len(rows) - len(valid),
+        "source_timestamp": ctx.get("source_timestamp"),
+        "source_health": ctx.get("source_health", "not_reported"),
+    }, "validated provider-tagged market snapshot; provider health is reported separately")
+
+
+def _data_normalization(ctx):
+    raw = _raw_candle_records(ctx)
+    if not isinstance(raw, list) or not raw:
+        return _blocked("raw candle rows are required", ["candles"])
+    normalized = []
+    rejected = 0
+    for row in raw:
+        if not isinstance(row, dict):
+            rejected += 1
+            continue
+        try:
+            item = {k: float(row[k]) for k in ("open", "high", "low", "close", "volume")}
+            stamp = int(row.get("time"))
+        except (KeyError, TypeError, ValueError, OverflowError):
+            rejected += 1
+            continue
+        if not all(isfinite(v) for v in item.values()) or min(item["open"], item["high"], item["low"], item["close"]) <= 0 or item["volume"] < 0:
+            rejected += 1
+            continue
+        if item["high"] < max(item["open"], item["close"], item["low"]) or item["low"] > min(item["open"], item["close"], item["high"]):
+            rejected += 1
+            continue
+        normalized.append({"time": stamp, **item})
+    normalized.sort(key=lambda x: x["time"])
+    unique = []
+    seen = set()
+    duplicates = 0
+    for row in normalized:
+        if row["time"] in seen:
+            duplicates += 1
+            continue
+        seen.add(row["time"])
+        unique.append(row)
+    if len(unique) < 30:
+        return _blocked("fewer than 30 normalized unique candles remain", ["30_unique_valid_candles"])
+    return _ready({
+        "input_rows": len(raw), "normalized_rows": len(unique),
+        "rejected_rows": rejected, "duplicate_timestamps_removed": duplicates,
+        "ordered": True, "first_timestamp": unique[0]["time"],
         "last_timestamp": unique[-1]["time"],
         "timestamp_policy": "source_epoch_preserved_and_sorted",
         "normalized_candles": unique,
@@ -2462,52 +2780,3 @@ def early_opportunity_assessment(context: dict) -> dict:
         elif br.get("status")=="computed" and br["value"]["breakout_up"]: parts["structure"]=8; reasons.append("اختراق صاعد مؤكد بإغلاق شمعة")
         elif not sweep["value"]["bearish_sweep"]: parts["structure"]=4
     else: missing.append("structure")
-    if reg.get("status")=="ok":
-        parts["regime"]=5 if reg.get("trend")=="UPTREND" else 2.5 if reg.get("trend")=="RANGE" else 0
-    else: missing.append("market_regime")
-    deriv=_derivatives(context)
-    if deriv.get("status")=="computed":
-        funding=deriv["value"]["funding_rate"]
-        parts["derivatives"]=5 if funding<=0.0005 else 2.5 if funding<=0.001 else 0
-    else: missing.append("derivatives")
-    score=round(sum(parts.values()),2)
-    confirmed=bool(br.get("status")=="computed" and br["value"]["breakout_up"])
-    if score>=80 and not confirmed: tier="GOLD_EARLY"
-    elif score>=65: tier="GREEN_WATCH"
-    elif score>=45: tier="SILVER_EARLY"
-    else: tier="NO_SETUP"
-    if confirmed: tier="BREAKOUT_CONFIRMED"
-    close=rows[-1]["close"]; atr=_atr(rows) or close*0.01
-    entry_low=close-0.15*atr; entry_high=close+0.1*atr
-    invalidation=close-1.5*atr
-    return {"status":"computed","symbol":context.get("symbol"),"category":context.get("category","spot"),
-            "interval":context.get("interval"),"score":score,"max_score":100,"components":parts,
-            "tier":tier,"breakout_confirmed":confirmed,"reasons":reasons,"missing_confirmations":missing,
-            "reference_price":close,"watch_entry_zone":[round(entry_low,10),round(entry_high,10)],
-            "invalidation_reference":round(invalidation,10),
-            "targets_reference":[round(close+2*atr,10),round(close+3*atr,10)],
-            "plan_note":"Research watch-zone only; not an order or probability. Confirm entry, liquidity and risk independently.",
-            "trading_mode":"simulation","live_trading_enabled":False}
-
-
-def catalogue_runtime_coverage() -> dict:
-    all_ids={x["id"] for x in ENGINE_CATALOG}
-    routed=all_ids.intersection(_HANDLER_IDS)
-    external_only=sorted(x for x in routed if _HANDLER_IDS.get(x) is _external)
-    callable_adapters=sorted(routed-set(external_only))
-    status_counts={status:sum(1 for x in ENGINE_CATALOG if x["status"]==status)
-                   for status in ("implemented","partial","planned")}
-    return {
-        "catalogue_engines":len(all_ids),
-        "routed_adapters":len(routed),
-        "callable_adapter_coverage_pct":round(len(routed)/len(all_ids)*100,2) if all_ids else 0,
-        "callable_adapters":len(callable_adapters),
-        "active_runtime_adapters":0,
-        "external_or_model_blocked_adapters":len(external_only),
-        "external_or_model_blocked_ids":external_only,
-        "unrouted_adapters":sorted(all_ids-routed),
-        "catalogue_status_counts":status_counts,
-        "trading_mode":"simulation","live_trading_enabled":False,
-        "note":"Adapter counts describe callable code only. ACTIVE counts are produced by request-time evidence evaluation, never by adapter presence."
-    }
-
