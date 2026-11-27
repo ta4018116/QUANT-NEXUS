@@ -72,6 +72,16 @@ def test_stale_source_missing_adapter_or_missing_inputs_cannot_activate():
         item = next(row for row in readiness["engines"] if row["id"] == "E001")
         assert item["status"] != "ACTIVE"
         assert item["activation_eligible"] is False
+        if not evidence["input_evidence"]["available"]:
+            assert item["status"] == "BLOCKED"
+
+
+def test_missing_engine_specific_source_health_blocks_otherwise_computed_adapter():
+    result = _readiness(_suite({"E002": _evidence("E002")}))
+    item = next(row for row in result["engines"] if row["id"] == "E002")
+    assert item["test_result"]["status"] == "passed"
+    assert item["status"] == "BLOCKED"
+    assert any("مصدر" in reason or "المصدر" in reason for reason in item["readiness_reasons"])
 
 
 def test_declared_planned_engine_stays_planned_after_smoke_test(monkeypatch):

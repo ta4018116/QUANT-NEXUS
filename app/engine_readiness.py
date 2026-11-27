@@ -159,12 +159,27 @@ def _source_health_ok(source_class, health, market_provider, snapshot_fresh, inp
         return inputs.get("market_snapshot_valid") is True
     requirements = {
         "multi_timeframe_market_data": ("timeframes",),
+        "live_orderbook_depth": ("orderbook",),
+        "orderbook_liquidity_metrics": ("orderbook",),
         "market_and_microstructure_data": ("orderbook", "trades"),
         "derivatives_and_options_data": ("derivatives", "options"),
         "observed_liquidation_events": ("aggregate_liquidations",),
         "news_and_event_discovery": ("news",),
     }
+    signal_requirements = {
+        "live_orderbook_depth": ("orderbook_available",),
+        "orderbook_liquidity_metrics": ("orderbook_available",),
+        "validated_signal_evidence": ("entry_confirmation_available",),
+        "portfolio_and_paper_ledger": ("portfolio_context_available",),
+        "historical_market_data_and_trade_records": ("market_snapshot_valid", "trade_history_available"),
+        "paper_position_and_mark_data": ("position_marks_available",),
+        "api_gateway_runtime": ("api_heartbeat_fresh",),
+        "service_health_probes": ("system_health_ok",),
+    }
     required = requirements.get(source_class, ())
     if required and not all((health.get(key) or {}).get("status") in {"ok", "healthy"} for key in required):
+        return False
+    required_signals = signal_requirements.get(source_class, ())
+    if required_signals and not all(inputs.get(key) is True for key in required_signals):
         return False
     return True
