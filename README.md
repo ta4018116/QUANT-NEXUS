@@ -122,6 +122,23 @@ scores are heuristic and are not calibrated win probabilities.
 - A missing provider result is recorded as a missing confirmation rather than silently treated as positive evidence.
 - The endpoint never creates paper or live orders. It returns research watch-ranks and the exact scan/deep-scan counts.
 
+## Runtime feed integrations added
+
+The engine-suite endpoint now attempts read-only public enrichment on each analysis request:
+- Provider failover for linear derivatives context (open interest, funding, and account long/short ratio) is fetched for spot and futures symbols where a matching linear contract exists.
+- Cross-market correlation uses timestamp-aligned completed candles from a small BTC/ETH/SOL/BNB/XRP peer basket.
+- Cross-exchange marks are collected from Bybit, OKX and Binance where reachable. The arbitrage adapter reports gross spread only unless verified round-trip fee and slippage inputs are supplied; it never claims a positive net edge by assuming zero costs.
+- Spot-versus-linear prices are sampled to feed basis analysis.
+- Public Cointelegraph and CoinDesk RSS headlines are passed to a keyword-triage adapter. This is not fact-checking, and feeds can be unavailable.
+- Public Deribit option summaries are used for BTC and ETH only. Greeks/IV are research analytics; dealer-side positioning is not supplied, so net dealer gamma remains unavailable.
+- Liquidation prints are cached in process memory only while a client is connected to the public liquidation stream. This is not a complete historical liquidation feed.
+
+The provider_health field in the engine-suite response reports each integration's availability. A missing or unsupported source remains explicitly blocked. No source credentials are needed for the public feeds above. Forex, equities, indices and commodities still require a configured dedicated provider such as Twelve Data. No API key has been invented or inserted.
+
+The runtime now supplies paper-ledger, SQLite, process-cache, model-registry, service-health, security-policy and process-memory snapshots where available. The free Render filesystem is not claimed to be durable, no background scheduler/event bus is claimed, and the notification engine creates intents rather than delivering externally. Admin authentication is not enabled and is reported as such by the security engine.
+
+The catalogue still labels approximations and research-only models as partial; changing labels without end-to-end production capability and evidence would be misleading. LSTM/Transformer projection weights are not fully trained, models are not persisted, and no model is calibrated as a production probability. Real trading remains disabled.
+
 ## Additional research engines
 - A small two-hidden-layer MLP and tabular Q-learning simulator are included as research adapters with chronological holdouts. Neither is a persisted production model, and neither can authorize an order.
 - Options analytics calculate Black-Scholes Greeks and implied volatility only when a valid options chain and underlying mark are supplied. Net dealer gamma is omitted unless dealer-side positioning is explicitly supplied.
