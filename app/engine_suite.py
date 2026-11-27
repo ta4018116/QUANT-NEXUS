@@ -1442,9 +1442,9 @@ _HANDLER_IDS = {
     "E060":_derivatives, "E061":_derivatives, "E062":_derivatives,
     "E063":_external, "E064":_external, "E065":_external, "E066":_external,
     "E067":_leverage_risk, "E068":_derivative_divergence, "E069":_external, "E070":_external, "E071":_external,
-    "E073":_external, "E074":_risk, "E075":_entry_precision, "E076":_risk, "E077":_risk,
+    "E073":_external, "E074":_risk, "E075":_entry_precision, "E076":_risk, "E077":_take_profit,
     "E078":_external, "E079":_external, "E080":_false_breakout, "E081":_external,
-    "E082":_external, "E083":_external, "E084":_backtest, "E085":_external,
+    "E082":_external, "E083":_signal_expiration, "E084":_backtest, "E085":_external,
     "E086":_risk, "E087":_dynamic_risk, "E088":_portfolio_risk, "E089":_max_drawdown,
     "E090":_correlation_risk, "E091":_portfolio, "E092":_liquidation_protection, "E093":_slippage_estimate,
     "E094":_fee_calc, "E095":_volatility_stop, "E096":_breakeven, "E097":_trailing_stop,
@@ -1457,11 +1457,11 @@ _HANDLER_IDS = {
     "E124":_backtest, "E125":_portfolio,
     "E127":_ai_analyst, "E128":_orderbook, "E129":_smc, "E130":_derivatives,
     "E131":_trend, "E132":_external, "E133":_risk, "E134":_external,
-    "E135":_agents, "E136":_conflict_resolver, "E137":_agents, "E138":_knowledge_memory, "E139":_external, "E140":_external,
-    "E141":_external, "E142":_external, "E143":_external, "E144":_external,
+    "E135":_agents, "E136":_conflict_resolver, "E137":_agents, "E138":_knowledge_memory, "E139":_external, "E140":_autonomous_research,
+    "E141":_external, "E142":_event_bus, "E143":_external, "E144":_external,
     "E145":_external, "E146":_external, "E147":_external, "E148":_external,
-    "E149":_duplicate_signal_filter, "E150":_external, "E151":_external, "E152":_external,
-    "E153":_external, "E154":_external, "E155":_external, "E156":_external,
+    "E149":_duplicate_signal_filter, "E150":_external, "E151":_audit_log, "E152":_model_registry,
+    "E153":_data_replay, "E154":_external, "E155":_resource_monitor, "E156":_watchdog,
 }
 
 
