@@ -1935,6 +1935,23 @@ async def derivatives_liquidation_stream(websocket: WebSocket, symbol: str):
                         cache = LIQUIDATION_EVENTS.setdefault(symbol, [])
                         cache.extend(events)
                         LIQUIDATION_EVENTS[symbol] = cache[-200:]
+                    # Persist normalized public liquidation prints to the append-only
+                    # event log. Storage durability still depends on a mounted volume.
+                    for event in events:
+                        dedupe_key = ":".join(str(event.get(key, "")) for key in (
+                            "symbol", "timestamp_ms", "side", "size", "bankruptcy_price"
+                        ))
+                        try:
+                            await asyncio.to_thread(
+                                ENGINE_EVENT_STORE.publish,
+                                "liquidation",
+                                event,
+                                symbol=symbol,
+                                source="bybit_allLiquidation_websocket",
+                                dedupe_key=dedupe_key,
+                            )
+                        except Exception:
+                            logger.exception("Could not persist liquidation event for %s", symbol)
                     await websocket.send_json({"type": "liquidations", "events": events, "trading_mode": "simulation", "live_trading_enabled": False})
     except WebSocketDisconnect:
         return
