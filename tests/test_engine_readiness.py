@@ -39,7 +39,7 @@ def _readiness(suite, *, snapshot=None, health=None):
 
 
 def test_all_four_statuses_require_distinct_evidence():
-    partial = next(item for item in ENGINE_CATALOG if item["id"] == "E011")
+    partial = next(item for item in ENGINE_CATALOG if item["id"] == "E019")
     overrides = {
         "E001": _evidence("E001"),
         partial["id"]: _evidence(partial["id"]),
@@ -114,6 +114,47 @@ def test_market_engine_still_requires_a_fresh_timestamped_market_snapshot():
     assert item["source_evidence"]["observed_input"] is False
 
 
+def test_paper_position_engines_activate_for_a_verified_empty_ledger():
+    from app.engine_suite import run_engine_suite
+
+    ids = ["E103", "E116", "E117", "E125"]
+    context = {
+        "account": {"equity": 10000},
+        "positions": [],
+        "current_prices": {},
+        "market_snapshot": {"freshness_status": "fresh"},
+    }
+    suite = run_engine_suite(context, ids)
+    result = _readiness(suite)
+    by_id = {item["id"]: item for item in result["engines"]}
+
+    for engine_id in ids:
+        assert by_id[engine_id]["status"] == "ACTIVE"
+        assert by_id[engine_id]["input_evidence"]["paper_positions_known"] is True
+        assert by_id[engine_id]["input_evidence"]["open_positions_count"] == 0
+        assert by_id[engine_id]["input_evidence"]["position_marks_available"] is True
+
+
+def test_open_paper_positions_still_require_each_symbol_mark():
+    from app.engine_suite import run_engine_suite
+
+    ids = ["E103", "E116", "E117", "E125"]
+    context = {
+        "account": {"equity": 10000},
+        "positions": [{"symbol": "ETHUSDT", "status": "OPEN", "entry": 3000, "quantity": 1}],
+        "current_prices": {"BTCUSDT": 90000},
+        "market_snapshot": {"freshness_status": "fresh"},
+    }
+    suite = run_engine_suite(context, ids)
+    result = _readiness(suite)
+    by_id = {item["id"]: item for item in result["engines"]}
+
+    for engine_id in ids:
+        assert by_id[engine_id]["status"] == "BLOCKED"
+        assert by_id[engine_id]["input_evidence"]["position_marks_available"] is False
+        assert by_id[engine_id]["input_evidence"]["missing_position_mark_symbols"] == ["ETHUSDT"]
+
+
 def test_live_news_source_can_be_healthy_when_it_returns_no_matching_headlines():
     evidence = _evidence("E007")
     result = _readiness(
@@ -184,3 +225,4 @@ def test_every_engine_has_adapter_test_source_and_last_check_evidence():
         assert "test_result" in item
         assert "last_checked_at" in item
         assert item["status"] in {"ACTIVE", "PARTIAL", "BLOCKED", "PLANNED"}
+

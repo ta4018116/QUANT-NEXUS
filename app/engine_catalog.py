@@ -153,84 +153,90 @@ ENGINE_CATALOG = [
     "name": "Support and Resistance",
     "name_ar": "محرك Support and Resistance",
     "group": "Technical Analysis",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
-      "دعم ومقاومة من قمم وقيعان النطاق المتحرك"
+      "نطاقات دعم ومقاومة من ترتيب القيعان والقمم ضمن آخر 50 شمعة مكتملة"
     ],
-    "gaps": [
-      "النطاقات تقريبية وتتطلب تحققاً من بنية السوق والسيولة"
+    "gaps": [],
+    "limitations": [
+      "مستويات نطاقية حسابية وليست إثباتاً لوجود أوامر معلقة أو سيولة مؤسسية"
     ],
-    "evidence": "partial_engine_runtime_adapter"
+    "evidence": "dedicated_rolling_extrema_support_resistance_acceptance_tests"
   },
   {
     "id": "E012",
     "name": "Supply and Demand",
     "name_ar": "محرك Supply and Demand",
     "group": "Technical Analysis",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
-      "مناطق عرض وطلب تقريبية من نطاقات الدعم والمقاومة"
+      "تصنيف نطاق الدعم المحسوب طلباً ونطاق المقاومة المحسوب عرضاً مع فحص قرب السعر"
     ],
-    "gaps": [
-      "ليست دفتر أوامر مؤسسياً ولا تثبت وجود أوامر معلقة"
+    "gaps": [],
+    "limitations": [
+      "مناطق مشتقة من نطاقات القمم والقيعان، ولا تثبت وجود أوامر معلقة"
     ],
-    "evidence": "partial_engine_runtime_adapter"
+    "evidence": "dedicated_supply_demand_zone_acceptance_tests"
   },
   {
     "id": "E013",
     "name": "Smart Money Concepts",
     "name_ar": "محرك Smart Money Concepts",
     "group": "Technical Analysis",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
-      "دمج بنية السوق وسحب السيولة ومرشحات Order Block وFVG"
+      "تجميع نتائج بنية السوق وسحب السيولة ومرشح Order Block وFair Value Gap"
     ],
-    "gaps": [
-      "مفاهيم SMC هنا تقريبية ولا تثبت تدفقات أوامر مؤسسية"
+    "gaps": [],
+    "limitations": [
+      "تجميع شفاف لمؤشرات حركة السعر؛ لا يثبت تدفقات أوامر مؤسسية"
     ],
-    "evidence": "partial_engine_runtime_adapter"
+    "evidence": "dedicated_smc_component_acceptance_tests"
   },
   {
     "id": "E014",
     "name": "Order Block",
     "name_ar": "محرك Order Block",
     "group": "Technical Analysis",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
-      "مرشح Order Block من آخر شمعة عكسية قبل كسر نطاقها"
+      "كشف آخر شمعة عكسية قبل إغلاق الشمعة التالية خارج نطاقها الكامل"
     ],
-    "gaps": [
-      "تعريف تقريبي ولا يثبت تمركز جهة مؤسسية"
+    "gaps": [],
+    "limitations": [
+      "قاعدة سعرية محددة لا تثبت تمركز جهة مؤسسية أو استمرار أثر المنطقة"
     ],
-    "evidence": "partial_engine_runtime_adapter"
+    "evidence": "dedicated_order_block_breakout_acceptance_tests"
   },
   {
     "id": "E015",
     "name": "Fair Value Gap",
     "name_ar": "محرك Fair Value Gap",
     "group": "Technical Analysis",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
-      "كشف فجوة ثلاث شمعات غير متداخلة"
+      "كشف الفجوات الصاعدة والهابطة بين الشمعة الأولى والثالثة من كل نافذة ثلاثية"
     ],
-    "gaps": [
-      "مرشح هندسي لا يثبت استمرار الفجوة أو أهميتها"
+    "gaps": [],
+    "limitations": [
+      "هندسة شموع مكتملة؛ لا تقيس احتمال بقاء الفجوة أو أهميتها المستقبلية"
     ],
-    "evidence": "partial_engine_runtime_adapter"
+    "evidence": "dedicated_three_candle_fvg_acceptance_tests"
   },
   {
     "id": "E016",
     "name": "Breakout",
     "name_ar": "محرك Breakout",
     "group": "Technical Analysis",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
-      "تأكيد اختراق بإغلاق شمعة مكتملة خارج نطاق 20 شمعة"
+      "رصد إغلاق شمعة مكتملة خارج أعلى أو أدنى نطاق 20 شمعة سابقة مع نسبة حجم مرجعية"
     ],
-    "gaps": [
-      "يتطلب تأكيد الحجم والسياق قبل اعتماد إشارة"
+    "gaps": [],
+    "limitations": [
+      "إشارة نطاق وحجم محددة؛ لا تثبت استمرار الاختراق أو ربحية الصفقة"
     ],
-    "evidence": "partial_engine_runtime_adapter"
+    "evidence": "dedicated_completed_candle_breakout_acceptance_tests"
   },
   {
     "id": "E017",
@@ -277,14 +283,15 @@ ENGINE_CATALOG = [
     "name": "Fibonacci",
     "name_ar": "محرك Fibonacci",
     "group": "Technical Analysis",
-    "status": "partial",
+    "status": "implemented",
     "capabilities": [
-      "مستويات ارتداد فيبوناتشي من نطاق 100 شمعة"
+      "مستويات 23.6% و38.2% و50% و61.8% و78.6% من نطاق أعلى وأدنى آخر 100 شمعة مكتملة"
     ],
-    "gaps": [
-      "اختيار القمة والقاع تقريبي وقابل للتغير"
+    "gaps": [],
+    "limitations": [
+      "مرجع ارتداد حسابي يتغير مع نافذة 100 شمعة ولا يحدد وحده نقطة انعكاس"
     ],
-    "evidence": "partial_engine_runtime_adapter"
+    "evidence": "dedicated_fibonacci_window_level_acceptance_tests"
   },
   {
     "id": "E021",
@@ -2173,3 +2180,4 @@ def engine_catalog(readiness: dict | None = None) -> dict:
             "priority":"early_opportunity_detection","trading_mode":"simulation",
             "live_trading_enabled":False,"execution_capability":"paper_only",
             "disclaimer":"Statuses are request-time evidence when readiness is supplied. Catalogue declarations and documented limitations remain visible."}
+

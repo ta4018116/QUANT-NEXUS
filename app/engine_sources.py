@@ -291,6 +291,19 @@ _ENGINE_OVERRIDES = {
         "credentials": "public_option_market_data; optional paid options data",
         "limits": "Open interest alone does not reveal dealer-side sign. Net dealer gamma must remain unavailable unless signed positioning is sourced.",
     },
+    "E103": {
+        "source_class": "paper_position_and_mark_data",
+        "providers": ["Internal PaperStore", "Bybit/OKX/Binance public market marks"],
+        "endpoints": [
+            "Internal paper-position ledger and simulation state",
+            "Bybit /v5/market/tickers",
+            "OKX /api/v5/market/ticker",
+            "Binance /api/v3/ticker/price or /fapi/v1/ticker/price",
+        ],
+        "inputs": ["observed paper ledger, including an explicit empty state", "current mark for every open paper position"],
+        "credentials": "internal_paper_records_and_public_read_only_marks",
+        "limits": "Simulation only; no private account endpoints or exchange orders are used.",
+    },
     "E138": {
         "source_class": "sqlite_opportunity_event_history",
         "providers": ["Internal SQLite append-only EngineEventStore"],
@@ -484,3 +497,4 @@ def engine_source_registry() -> dict:
         "live_trading_enabled": False,
         "disclaimer": "A source contract documents where evidence should come from; it does not claim that optional credentials are configured or that a provider is currently reachable.",
     }
+

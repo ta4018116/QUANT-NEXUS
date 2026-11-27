@@ -249,6 +249,61 @@ def test_smart_money_regime_and_exhaustion_adapters_are_explainable():
     assert _trend_exhaustion(context)["status"] == "computed"
 
 
+def test_technical_price_action_engines_activate_only_after_their_acceptance_paths_pass():
+    from datetime import datetime, timezone
+    from app.engine_readiness import build_engine_readiness
+
+    now = datetime.now(timezone.utc).isoformat()
+    base = make_candles(120)
+    contexts = {
+        "E011": {"candles": base},
+        "E012": {"candles": base},
+        "E013": {"candles": base},
+        "E014": {"candles": [
+            *base[:-3],
+            {"open": 100, "high": 101, "low": 98, "close": 99, "volume": 1000},
+            {"open": 100, "high": 103, "low": 99.5, "close": 102, "volume": 1800},
+            base[-1],
+        ]},
+        "E015": {"candles": [
+            {"open": 100, "high": 101, "low": 99, "close": 100, "volume": 1000},
+            {"open": 103, "high": 105, "low": 102, "close": 104, "volume": 1100},
+            {"open": 106, "high": 108, "low": 105, "close": 107, "volume": 1200},
+        ]},
+        "E016": {"candles": [
+            *base[:-1],
+            {"open": base[-1]["close"], "high": base[-1]["close"] + 1.2,
+             "low": base[-1]["close"] - 0.2, "close": base[-1]["close"] + 1.0,
+             "volume": 5000},
+        ]},
+        "E020": {"candles": [
+            {"open": 150, "high": 200 if i == 0 else 160, "low": 100 if i == 0 else 140,
+             "close": 151, "volume": 1000}
+            for i in range(20)
+        ]},
+    }
+    for engine_id, context in contexts.items():
+        context["symbol"] = "BTCUSDT"
+        context["market_snapshot"] = {"freshness_status": "fresh", "source_timestamp": now}
+        run = run_engine(engine_id, context)
+        assert run["runtime"]["status"] == "computed", engine_id
+        suite = {"results": [run]}
+        readiness = build_engine_readiness(
+            suite,
+            market_provider="Bybit",
+            provider_health={"market_data": {"status": "ok"}},
+            market_snapshot={"freshness_status": "fresh", "source_timestamp": now},
+        )
+        item = next(row for row in readiness["engines"] if row["id"] == engine_id)
+        assert item["status"] == "ACTIVE", (engine_id, item["readiness_reasons"])
+
+    # A zero-volume breakout is not supported by the named volume-confirmed
+    # contract and therefore must not activate on price-only input.
+    no_volume = list(contexts["E016"]["candles"])
+    no_volume[-1] = {**no_volume[-1], "volume": 0}
+    assert run_engine("E016", {"candles": no_volume})["runtime"]["status"] == "blocked_missing_input"
+
+
 def test_multi_timeframe_engines_require_fresh_completed_source_stamped_frames():
     from datetime import datetime, timedelta, timezone
     from app.engine_suite import _timeframes, _higher_timeframe, _lower_timeframe, _regime_timeframe_sync
@@ -645,3 +700,4 @@ def test_agent_consensus_can_build_transparent_rule_agents_from_market_inputs():
     assert result["status"] == "computed"
     assert result["value"]["agents"] >= 2
     assert result["value"]["independence"].startswith("shared snapshot")
+

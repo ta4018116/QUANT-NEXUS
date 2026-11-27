@@ -221,7 +221,10 @@ def _source_health_ok(source_class, health, market_provider, snapshot_fresh, inp
         "validated_signal_evidence": ("entry_confirmation_available",),
         "portfolio_and_paper_ledger": ("portfolio_context_available",),
         "historical_market_data_and_trade_records": ("market_snapshot_valid", "trade_history_available"),
-        "paper_position_and_mark_data": ("position_marks_available",),
+        # Empty is a meaningful paper-ledger state. Only an open position
+        # requires an instrument-specific price mark; do not mark an idle
+        # monitor as unhealthy because there is nothing to mark.
+        "paper_position_and_mark_data": ("portfolio_context_available", "paper_positions_known"),
         "api_gateway_runtime": ("api_heartbeat_fresh",),
         "service_health_probes": ("system_health_ok",),
     }
@@ -231,4 +234,9 @@ def _source_health_ok(source_class, health, market_provider, snapshot_fresh, inp
     required_signals = signal_requirements.get(source_class, ())
     if required_signals and not all(inputs.get(key) is True for key in required_signals):
         return False
+    if (source_class == "paper_position_and_mark_data"
+            and inputs.get("open_positions_count", 0) > 0
+            and inputs.get("position_marks_available") is not True):
+        return False
     return True
+

@@ -147,13 +147,13 @@ def _support_resistance(ctx):
     current = rows[-1]["close"]
     highs = sorted(x["high"] for x in window)
     lows = sorted(x["low"] for x in window)
-    resistance = highs[-3]
-    support = lows[2]
-    return _ready({"support_zone": [lows[0], lows[min(4, len(lows)-1)]],
-                   "resistance_zone": [highs[max(0, len(highs)-5)], highs[-1]],
-                   "nearest_support_distance_pct": round((current-support)/current*100, 4),
-                   "nearest_resistance_distance_pct": round((resistance-current)/current*100, 4)},
-                  "rolling extrema zones; not institutional order-flow claims")
+    support_zone = [lows[0], lows[min(4, len(lows)-1)]]
+    resistance_zone = [highs[max(0, len(highs)-5)], highs[-1]]
+    return _ready({"support_zone": support_zone,
+                   "resistance_zone": resistance_zone,
+                   "nearest_support_distance_pct": round((current-support_zone[1])/current*100, 4),
+                   "nearest_resistance_distance_pct": round((resistance_zone[0]-current)/current*100, 4)},
+                  "lowest/highest five extrema of the trailing 50 completed candles")
 
 
 def _compression(ctx):
@@ -223,6 +223,9 @@ def _breakout(ctx):
     last = rows[-1]
     hi, lo = max(x["high"] for x in prior), min(x["low"] for x in prior)
     vol_base = mean(x["volume"] for x in prior)
+    if vol_base <= 0 or last["volume"] <= 0:
+        return _blocked("positive breakout-candle volume and prior 20-bar volume baseline are required",
+                        ["positive_completed_candle_volume", "positive_prior_volume_baseline"])
     vol_ratio = last["volume"]/vol_base if vol_base else 0
     return _ready({"breakout_up": last["close"] > hi, "breakout_down": last["close"] < lo,
                    "prior_20_high": hi, "prior_20_low": lo, "volume_ratio": round(vol_ratio, 4),
@@ -1052,6 +1055,12 @@ def _trend_exhaustion(ctx):
 
 def _smc(ctx):
     structure=_market_structure(ctx); sweep=_sweep(ctx); blocks=_order_block(ctx); gaps=_fvg(ctx)
+    unavailable = [name for name, result in (
+        ("market_structure", structure), ("liquidity_sweep", sweep),
+        ("order_block", blocks), ("fair_value_gap", gaps),
+    ) if result.get("status") != "computed"]
+    if unavailable:
+        return _blocked("required price-action components did not pass", unavailable)
     return _ready({"structure":structure,"liquidity_sweep":sweep,
                    "order_block_proxy":blocks,"fair_value_gaps":gaps},
                   "transparent price-action components; no claim of identifying institutional orders")
@@ -2655,6 +2664,18 @@ def run_engine(engine_id: str, context: dict) -> dict:
     api_heartbeat = heartbeats.get("api") if isinstance(heartbeats.get("api"), dict) else {}
     api_age = _num(api_heartbeat.get("age_seconds"), 61.0)
     system_health = context.get("system_health") if isinstance(context.get("system_health"), dict) else {}
+    positions = context.get("positions")
+    known_positions = positions if isinstance(positions, list) else None
+    open_positions = [
+        position for position in (known_positions or [])
+        if isinstance(position, dict) and str(position.get("status", "")).upper() == "OPEN"
+    ]
+    current_prices = context.get("current_prices") if isinstance(context.get("current_prices"), dict) else {}
+    missing_position_marks = [
+        str(position.get("symbol", "")).upper()
+        for position in open_positions
+        if _num(current_prices.get(str(position.get("symbol", "")).upper())) <= 0
+    ]
     input_signals = {
         "market_snapshot_valid":bool(context.get("candles") and market_snapshot.get("freshness_status") == "fresh"),
         "orderbook_available":bool(context.get("orderbook")),
@@ -2666,7 +2687,13 @@ def run_engine(engine_id: str, context: dict) -> dict:
                                 if _valid_timeframe_snapshot(item)) >= 2,
         "portfolio_context_available":"account" in context and "positions" in context,
         "trade_history_available":bool(context.get("closed_trades")),
-        "position_marks_available":bool(context.get("positions") and context.get("current_prices")),
+        # An explicitly observed empty paper ledger is a valid idle state: no
+        # position needs a mark. Every open paper position still needs its own
+        # fresh, positive mark before position-monitoring readiness can pass.
+        "paper_positions_known":known_positions is not None,
+        "open_positions_count":len(open_positions),
+        "position_marks_available":not missing_position_marks,
+        "missing_position_mark_symbols":missing_position_marks,
         "entry_confirmation_available":bool(context.get("entry_confirmation")),
         "api_heartbeat_fresh":api_age <= 60,
         "system_health_ok":bool(system_health) and all(value == "ok" for value in system_health.values()),
