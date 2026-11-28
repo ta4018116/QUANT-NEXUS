@@ -1,4 +1,4 @@
-from app.engine_suite import run_engine
+import time\n\nfrom app.engine_suite import run_engine
 
 
 def candles(count=80):
@@ -6,7 +6,7 @@ def candles(count=80):
     for i in range(count):
         close = 100 + i * 0.1
         rows.append({
-            "time": (count-i) * 900000,
+            "time": int(time.time() * 1000) - (count-i) * 900000,
             "open": close - 0.05,
             "high": close + 0.2,
             "low": close - 0.2,
@@ -24,11 +24,11 @@ def test_market_ingestion_requires_provider_identity_and_valid_candles():
     good = run_engine("E001", {
         "candles": candles(), "provider": "OKX",
         "symbol": "BTCUSDT", "category": "spot", "interval": "15m",
-        "source_health": "ok",
+        "source_health": "ok", "source_timestamp": candles()[-1]["time"],
     })
     assert good["runtime"]["status"] == "computed"
     assert good["runtime"]["value"]["provider"] == "OKX"
-    assert good["runtime"]["value"]["valid_candles"] == 80
+    assert good["runtime"]["value"]["valid_candles"] == 80\n\n    stale = run_engine("E001", {\n        "candles": candles(), "provider": "OKX", "category": "spot",\n        "interval": "15m", "source_health": "ok",\n        "source_timestamp": int(time.time() * 1000) - 86_400_000,\n    })\n    assert stale["runtime"]["status"] == "blocked_missing_input"
 
 
 def test_data_normalization_sorts_deduplicates_and_rejects_invalid_rows():
