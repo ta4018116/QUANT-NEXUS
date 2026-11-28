@@ -1559,6 +1559,9 @@ async def market_engine_suite(symbol: str, category: str = "spot", interval: str
     context = {
         "symbol": symbol, "category": category, "interval": interval,
         "candles": completed, "raw_candle_rows": raw_rows, "closes": closes,
+        "provider": provider,
+        "source_timestamp": completed[-1].get("time"),
+        "source_health": "ok",
         "analysis": analysis, "regime": regime, "structure": structure,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "account": {"equity": paper_equity},
