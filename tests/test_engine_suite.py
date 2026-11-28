@@ -517,7 +517,7 @@ def test_market_data_normalization_rejects_invalid_rows_and_deduplicates_timesta
     from app.engine_suite import run_engine
 
     candles = make_candles(40)
-    rows = [dict(row, time=i * 60000) for i, row in enumerate(candles)]
+    rows = [dict(row, time=int(__import__("time").time() * 1000) - (40-i) * 60000) for i, row in enumerate(candles)]
     rows.append(dict(rows[-1]))
     rows.append({"time": 999999, "open": float("nan"), "high": 2, "low": 1, "close": 1.5, "volume": 3})
     result = run_engine("E005", {"candles": rows})
