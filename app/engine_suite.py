@@ -1600,14 +1600,31 @@ def _market_data_ingestion(ctx):
         return _blocked("provider identity is missing; source cannot be audited", ["provider"])
     if len(valid) < 30:
         return _blocked("market feed has fewer than 30 valid candles", ["30_valid_candles"])
+    source_health = str(ctx.get("source_health") or "").strip().lower()
+    if source_health not in {"ok", "healthy"}:
+        return _blocked("provider health is not confirmed healthy", ["source_health_ok"])
+    try:
+        stamp = float(ctx.get("source_timestamp"))
+        stamp_seconds = stamp / 1000.0 if stamp > 100_000_000_000 else stamp
+    except (TypeError, ValueError, OverflowError):
+        return _blocked("source timestamp is missing or invalid", ["source_timestamp"])
+    age_seconds = time.time() - stamp_seconds
+    interval_seconds = {
+        "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
+        "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400, "1w": 604800,
+    }.get(str(ctx.get("interval")))
+    if interval_seconds is None:
+        return _blocked("unsupported interval for freshness validation", ["supported_interval"])
+    if age_seconds < -300 or age_seconds > max(300, interval_seconds * 2):
+        return _blocked("market snapshot is stale or timestamp is in the future", ["fresh_source_timestamp"])
     return _ready({
         "provider": provider, "symbol": ctx.get("symbol"),
         "category": ctx.get("category"), "interval": ctx.get("interval"),
         "received_candles": len(rows), "valid_candles": len(valid),
         "rejected_candles": len(rows) - len(valid),
-        "source_timestamp": ctx.get("source_timestamp"),
-        "source_health": ctx.get("source_health", "not_reported"),
-    }, "validated provider-tagged market snapshot; provider health is reported separately")
+        "source_timestamp": stamp_seconds, "source_age_seconds": round(max(0, age_seconds), 2),
+        "source_health": source_health,
+    }, "provider-tagged snapshot with healthy source and interval-bounded timestamp freshness")
 
 
 def _data_normalization(ctx):
@@ -1622,8 +1639,13 @@ def _data_normalization(ctx):
             continue
         try:
             item = {k: float(row[k]) for k in ("open", "high", "low", "close", "volume")}
-            stamp = int(row.get("time"))
+            raw_stamp = float(row.get("time"))
+            stamp = int(raw_stamp * 1000 if raw_stamp < 100_000_000_000 else raw_stamp)
         except (KeyError, TypeError, ValueError, OverflowError):
+            rejected += 1
+            continue
+        now_ms = int(time.time() * 1000)
+        if stamp < 946684800000 or stamp > now_ms + 300000:
             rejected += 1
             continue
         if not all(isfinite(v) for v in item.values()) or min(item["open"], item["high"], item["low"], item["close"]) <= 0 or item["volume"] < 0:
@@ -1650,7 +1672,7 @@ def _data_normalization(ctx):
         "rejected_rows": rejected, "duplicate_timestamps_removed": duplicates,
         "ordered": True, "first_timestamp": unique[0]["time"],
         "last_timestamp": unique[-1]["time"],
-        "timestamp_policy": "source_epoch_preserved_and_sorted",
+        "timestamp_policy": "normalized_unix_ms_utc_and_sorted",
         "normalized_candles": unique,
     }, "finite OHLCV validation, millisecond epoch ordering, duplicate removal, and normalized output")
 
@@ -1693,14 +1715,14 @@ def _volatility(ctx):
     atr = _atr(rows, 14)
     returns = [(closes[i]/closes[i-1]-1) for i in range(1, len(closes)) if closes[i-1] > 0]
     window = returns[-20:]
-    realized = pstdev(window) * sqrt( periods_per_year := 365*24*4 ) * 100 if len(window) >= 2 and str(ctx.get("interval")) == "15m" else (pstdev(window)*100 if len(window)>=2 else None)
+    crypto_periods_per_year = {"1m": 365 * 24 * 60, "3m": 365 * 24 * 20, "5m": 365 * 24 * 12, "15m": 365 * 24 * 4, "30m": 365 * 24 * 2, "1h": 365 * 24, "2h": 365 * 12, "4h": 365 * 6, "1d": 365}\n    annualize = str(ctx.get("category") or "").lower() in {"spot", "linear"} and str(ctx.get("interval")) in crypto_periods_per_year\n    realized = pstdev(window) * sqrt(crypto_periods_per_year[str(ctx.get("interval"))]) * 100 if len(window) >= 2 and annualize else (pstdev(window) * 100 if len(window) >= 2 else None)
     price = closes[-1]
     return _ready({
         "atr14": atr, "atr_pct": atr/price*100 if atr is not None and price else None,
         "realized_return_volatility_pct": realized,
         "return_observations": len(window), "interval": ctx.get("interval"),
         "volatility_state": "HIGH" if atr is not None and atr/price >= 0.04 else "LOW" if atr is not None and atr/price <= 0.01 else "NORMAL" if atr is not None else "UNKNOWN",
-    }, "Wilder ATR14 and standard deviation of completed-bar returns; annualization only for 15m crypto bars")
+    }, "Wilder ATR14 and standard deviation of completed-bar returns; annualization only for supported crypto intervals")
 
 
 def _data_quality(ctx):
