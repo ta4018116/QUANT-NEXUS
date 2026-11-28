@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from math import exp, isfinite, sqrt
 import random
+import time
 from statistics import NormalDist, mean, median, pstdev
 from typing import Any
 
@@ -1715,7 +1716,9 @@ def _volatility(ctx):
     atr = _atr(rows, 14)
     returns = [(closes[i]/closes[i-1]-1) for i in range(1, len(closes)) if closes[i-1] > 0]
     window = returns[-20:]
-    crypto_periods_per_year = {"1m": 365 * 24 * 60, "3m": 365 * 24 * 20, "5m": 365 * 24 * 12, "15m": 365 * 24 * 4, "30m": 365 * 24 * 2, "1h": 365 * 24, "2h": 365 * 12, "4h": 365 * 6, "1d": 365}\n    annualize = str(ctx.get("category") or "").lower() in {"spot", "linear"} and str(ctx.get("interval")) in crypto_periods_per_year\n    realized = pstdev(window) * sqrt(crypto_periods_per_year[str(ctx.get("interval"))]) * 100 if len(window) >= 2 and annualize else (pstdev(window) * 100 if len(window) >= 2 else None)
+    crypto_periods_per_year = {"1m": 365 * 24 * 60, "3m": 365 * 24 * 20, "5m": 365 * 24 * 12, "15m": 365 * 24 * 4, "30m": 365 * 24 * 2, "1h": 365 * 24, "2h": 365 * 12, "4h": 365 * 6, "1d": 365}
+    annualize = str(ctx.get("category") or "").lower() in {"spot", "linear"} and str(ctx.get("interval")) in crypto_periods_per_year
+    realized = pstdev(window) * sqrt(crypto_periods_per_year[str(ctx.get("interval"))]) * 100 if len(window) >= 2 and annualize else (pstdev(window) * 100 if len(window) >= 2 else None)
     price = closes[-1]
     return _ready({
         "atr14": atr, "atr_pct": atr/price*100 if atr is not None and price else None,
