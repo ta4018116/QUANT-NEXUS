@@ -20,7 +20,7 @@ def make_candles(count=120):
         close = 100 + i * 0.08 + (i % 5) * 0.025
         open_price = close - 0.025
         rows.append({
-            "time": i * 60,
+            "time": now_ms - (count-i) * 60_000,
             "open": open_price,
             "high": close + 0.16,
             "low": open_price - 0.14,
