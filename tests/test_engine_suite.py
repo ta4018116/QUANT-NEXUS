@@ -482,3 +482,47 @@ def test_agent_consensus_can_build_transparent_rule_agents_from_market_inputs():
     assert result["status"] == "computed"
     assert result["value"]["agents"] >= 2
     assert result["value"]["independence"].startswith("shared snapshot")
+
+
+def test_market_intelligence_core_engines_require_real_provider_evidence():
+    from app.engine_suite import run_engine
+
+    candles = make_candles(120)
+    missing = run_engine("E001", {"candles": candles})
+    assert missing["runtime"]["status"] == "blocked_missing_input"
+    assert "provider" in missing["runtime"]["missing_inputs"]
+
+    ingested = run_engine("E001", {
+        "candles": candles, "provider": "TEST_PUBLIC_FEED",
+        "symbol": "BTCUSDT", "category": "spot", "interval": "15m",
+    })
+    assert ingested["runtime"]["status"] == "computed"
+    assert ingested["runtime"]["value"]["provider"] == "TEST_PUBLIC_FEED"
+
+    book = {"bids": [[100, 5], [99.9, 4]], "asks": [[100.1, 3], [100.2, 4]]}
+    liquidity = run_engine("E003", {"orderbook": book})
+    assert liquidity["runtime"]["status"] == "computed"
+    assert liquidity["runtime"]["value"]["spread_bps"] > 0
+    assert liquidity["runtime"]["value"]["total_depth_notional"] > 0
+
+    crossed = run_engine("E003", {"orderbook": {"bids": [[101, 2]], "asks": [[100, 3]]}})
+    assert crossed["runtime"]["status"] == "blocked_missing_input"
+
+    volatility = run_engine("E004", {"candles": candles, "interval": "15m"})
+    assert volatility["runtime"]["status"] == "computed"
+    assert volatility["runtime"]["value"]["atr14"] > 0
+
+
+def test_market_data_normalization_rejects_invalid_rows_and_deduplicates_timestamps():
+    from app.engine_suite import run_engine
+
+    candles = make_candles(40)
+    rows = [dict(row, time=i * 60000) for i, row in enumerate(candles)]
+    rows.append(dict(rows[-1]))
+    rows.append({"time": 999999, "open": float("nan"), "high": 2, "low": 1, "close": 1.5, "volume": 3})
+    result = run_engine("E005", {"candles": rows})
+    assert result["runtime"]["status"] == "computed"
+    value = result["runtime"]["value"]
+    assert value["normalized_rows"] == 40
+    assert value["duplicate_timestamps_removed"] == 1
+    assert value["rejected_rows"] == 1
